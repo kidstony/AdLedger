@@ -255,41 +255,53 @@ export default function ProjectsPage() {
       )}
 
       {assigningProjectId && (
-        <div className="border border-slate-200 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-slate-700">
-              Phân công nhân viên cho:{' '}
-              <strong>{projects.find(p => p.project_id === assigningProjectId)?.name}</strong>
-            </h3>
-            <button onClick={() => setAssigningProjectId(null)} className="text-xs text-slate-400 hover:text-slate-600">Đóng</button>
-          </div>
-          {assignmentLoading ? (
-            <div className="text-xs text-slate-400">Đang tải...</div>
-          ) : employees.length === 0 ? (
-            <div className="text-xs text-slate-400">Chưa có nhân viên nào trong hệ thống.</div>
-          ) : (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 max-h-60 overflow-y-auto">
-              {employees.map(emp => {
-                const assigned = (projectAssignments[assigningProjectId] ?? []).includes(emp.user_id)
-                return (
-                  <label
-                    key={emp.user_id}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-xs ${
-                      assigned ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={assigned}
-                      onChange={() => toggleAssignment(assigningProjectId, emp.user_id, assigned)}
-                      className="accent-blue-600"
-                    />
-                    {emp.full_name || emp.email}
-                  </label>
-                )
-              })}
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-semibold text-slate-800">Phân công nhân viên</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {projects.find(p => p.project_id === assigningProjectId)?.name}
+                </p>
+              </div>
+              <button
+                onClick={() => setAssigningProjectId(null)}
+                className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                ✕
+              </button>
             </div>
-          )}
+            {assignmentLoading ? (
+              <div className="py-6 text-center text-sm text-slate-400">Đang tải...</div>
+            ) : employees.length === 0 ? (
+              <div className="py-6 text-center text-sm text-slate-400">Chưa có nhân viên nào trong hệ thống.</div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto">
+                {employees.map(emp => {
+                  const assigned = (projectAssignments[assigningProjectId] ?? []).includes(emp.user_id)
+                  return (
+                    <label
+                      key={emp.user_id}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer text-sm transition-colors ${
+                        assigned ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={assigned}
+                        onChange={() => toggleAssignment(assigningProjectId, emp.user_id, assigned)}
+                        className="accent-blue-600"
+                      />
+                      {emp.full_name || emp.email}
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+            <div className="mt-4 flex justify-end">
+              <Button variant="outline" onClick={() => setAssigningProjectId(null)}>Xong</Button>
+            </div>
+          </div>
         </div>
       )}
 
