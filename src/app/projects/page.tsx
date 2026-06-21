@@ -1,20 +1,31 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Pencil, Trash2, Search } from 'lucide-react'
+import { Plus, Pencil, Trash2, Search, UserCheck } from 'lucide-react'
 import { useProjects } from '@/hooks/useProjects'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
 import { Project } from '@/lib/types'
 import { Button } from '@/components/ui/button'
+import { useAuth } from '@/context/AuthContext'
+import { supabase } from '@/lib/supabase'
+
+interface UserRow { user_id: string; email: string; full_name: string; role: string }
 
 export default function ProjectsPage() {
   const { projects, isLoading, addProject, updateProject, deleteProject, deleteProjects } = useProjects()
+  const { role } = useAuth()
   const [dialog, setDialog] = useState<{ mode: 'add' | 'edit'; data?: Project } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Project | null>(null)
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const headerCheckboxRef = useRef<HTMLInputElement>(null)
+
+  const [employees, setEmployees] = useState<UserRow[]>([])
+  const [employeesLoaded, setEmployeesLoaded] = useState(false)
+  const [assigningProjectId, setAssigningProjectId] = useState<string | null>(null)
+  const [projectAssignments, setProjectAssignments] = useState<Record<string, string[]>>({})
+  const [assignmentLoading, setAssignmentLoading] = useState(false)
 
   const filtered = projects.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -70,6 +81,36 @@ export default function ProjectsPage() {
     deleteProjects([...selectedIds])
     setSelectedIds(new Set())
     setConfirmBulkDelete(false)
+  }
+
+  async function loadEmployees() {
+    if (employeesLoaded) return
+    const res = await fetch('/api/admin/list-users')
+    const data: UserRow[] = await res.json()
+    setEmployees(Array.isArray(data) ? data.filter(u => u.role === 'employee') : [])
+    setEmployeesLoaded(true)
+  }
+
+  async function openAssignPanel(projectId: string) {
+    if (assigningProjectId === projectId) { setAssigningProjectId(null); return }
+    setAssignmentLoading(true)
+    await loadEmployees()
+    if (projectAssignments[projectId] === undefined) {
+      const { data } = await supabase.from('project_assignments').select('user_id').eq('project_id', projectId)
+      setProjectAssignments(prev => ({ ...prev, [projectId]: (data ?? []).map((a: { user_id: string }) => a.user_id) }))
+    }
+    setAssigningProjectId(projectId)
+    setAssignmentLoading(false)
+  }
+
+  async function toggleAssignment(projectId: string, userId: string, currentlyAssigned: boolean) {
+    if (currentlyAssigned) {
+      await supabase.from('project_assignments').delete().eq('project_id', projectId).eq('user_id', userId)
+      setProjectAssignments(prev => ({ ...prev, [projectId]: prev[projectId].filter(uid => uid !== userId) }))
+    } else {
+      await supabase.from('project_assignments').insert({ project_id: projectId, user_id: userId })
+      setProjectAssignments(prev => ({ ...prev, [projectId]: [...(prev[projectId] ?? []), userId] }))
+    }
   }
 
   return (
@@ -170,6 +211,24 @@ export default function ProjectsPage() {
                   <td className="px-4 py-3 text-xs text-slate-500">{p.mcc_id}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1 justify-end">
+                      {role === 'admin' && projectAssignments[p.project_id] !== undefined && (
+                        <span className="text-xs text-slate-400 mr-1">
+                          {projectAssignments[p.project_id].length} NV
+                        </span>
+                      )}
+                      {role === 'admin' && (
+                        <button
+                          onClick={() => openAssignPanel(p.project_id)}
+                          className={`p-1.5 rounded transition-colors ${
+                            assigningProjectId === p.project_id
+                              ? 'bg-blue-100 text-blue-600'
+                              : 'hover:bg-slate-200 text-slate-500'
+                          }`}
+                          title="Phân công nhân viên"
+                        >
+                          <UserCheck size={13} />
+                        </button>
+                      )}
                       <button
                         onClick={() => setDialog({ mode: 'edit', data: p })}
                         className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors"
@@ -193,6 +252,45 @@ export default function ProjectsPage() {
           <div className="py-10 text-center text-sm text-slate-500">Không tìm thấy dự án.</div>
         )}
       </div>
+      )}
+
+      {assigningProjectId && (
+        <div className="border border-slate-200 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-slate-700">
+              Phân công nhân viên cho:{' '}
+              <strong>{projects.find(p => p.project_id === assigningProjectId)?.name}</strong>
+            </h3>
+            <button onClick={() => setAssigningProjectId(null)} className="text-xs text-slate-400 hover:text-slate-600">Đóng</button>
+          </div>
+          {assignmentLoading ? (
+            <div className="text-xs text-slate-400">Đang tải...</div>
+          ) : employees.length === 0 ? (
+            <div className="text-xs text-slate-400">Chưa có nhân viên nào trong hệ thống.</div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 max-h-60 overflow-y-auto">
+              {employees.map(emp => {
+                const assigned = (projectAssignments[assigningProjectId] ?? []).includes(emp.user_id)
+                return (
+                  <label
+                    key={emp.user_id}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-xs ${
+                      assigned ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={assigned}
+                      onChange={() => toggleAssignment(assigningProjectId, emp.user_id, assigned)}
+                      className="accent-blue-600"
+                    />
+                    {emp.full_name || emp.email}
+                  </label>
+                )
+              })}
+            </div>
+          )}
+        </div>
       )}
 
       {dialog && (
