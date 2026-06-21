@@ -44,7 +44,7 @@ export default function LoginPage() {
       setError('Email hoặc mật khẩu không đúng.')
       setLoading(false)
     } else {
-      router.push('/dashboard')
+      window.location.href = '/dashboard'
     }
   }
 
