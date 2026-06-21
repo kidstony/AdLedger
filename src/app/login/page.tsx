@@ -57,7 +57,7 @@ export default function LoginPage() {
       setError('Lỗi: ' + error.message)
       setLoading(false)
     } else {
-      router.push('/dashboard')
+      window.location.href = '/dashboard'
     }
   }
 
