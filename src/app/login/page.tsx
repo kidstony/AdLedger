@@ -12,12 +12,17 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [isRecovery, setIsRecovery] = useState(false)
+  const [sessionReady, setSessionReady] = useState(false)
 
   useEffect(() => {
-    if (window.location.hash.includes('type=recovery')) setIsRecovery(true)
+    const hasRecoveryHash = window.location.hash.includes('type=recovery')
+    if (hasRecoveryHash) setIsRecovery(true)
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') setIsRecovery(true)
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsRecovery(true)
+        setSessionReady(true)
+      }
     })
     return () => subscription.unsubscribe()
   }, [])
@@ -54,30 +59,39 @@ export default function LoginPage() {
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 w-full max-w-sm p-8">
           <div className="mb-8">
             <h1 className="text-xl font-bold text-slate-800">Đặt lại mật khẩu</h1>
-            <p className="text-sm text-slate-500 mt-1">Nhập mật khẩu mới của bạn</p>
+            <p className="text-sm text-slate-500 mt-1">
+              {sessionReady ? 'Nhập mật khẩu mới của bạn' : 'Đang xác thực liên kết...'}
+            </p>
           </div>
-          <form onSubmit={handleResetPassword} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Mật khẩu mới</label>
-              <input
-                type="password"
-                required
-                minLength={6}
-                value={newPassword}
-                onChange={e => setNewPassword(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-300"
-                placeholder="Tối thiểu 6 ký tự"
-              />
+          {!sessionReady ? (
+            <div className="flex justify-center py-4">
+              <div className="w-6 h-6 border-2 border-slate-300 border-t-slate-700 rounded-full animate-spin" />
             </div>
-            {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-slate-800 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-700 disabled:opacity-50 transition-colors"
-            >
-              {loading ? 'Đang cập nhật...' : 'Đặt mật khẩu mới'}
-            </button>
-          </form>
+          ) : (
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Mật khẩu mới</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-300"
+                  placeholder="Tối thiểu 6 ký tự"
+                  autoFocus
+                />
+              </div>
+              {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-slate-800 text-white py-2 rounded-lg text-sm font-medium hover:bg-slate-700 disabled:opacity-50 transition-colors"
+              >
+                {loading ? 'Đang cập nhật...' : 'Đặt mật khẩu mới'}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     )
