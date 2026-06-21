@@ -46,8 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    if (user && role) setIsLoading(false)
-    if (!user) setIsLoading(false)
+    if (user !== undefined) setIsLoading(false)
   }, [user, role])
 
   async function signOut() {
