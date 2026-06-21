@@ -14,6 +14,8 @@ export default function LoginPage() {
   const [isRecovery, setIsRecovery] = useState(false)
 
   useEffect(() => {
+    if (window.location.hash.includes('type=recovery')) setIsRecovery(true)
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'PASSWORD_RECOVERY') setIsRecovery(true)
     })
