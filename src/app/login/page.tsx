@@ -15,14 +15,22 @@ export default function LoginPage() {
   const [sessionReady, setSessionReady] = useState(false)
 
   useEffect(() => {
-    const hasRecoveryHash = window.location.hash.includes('type=recovery')
-    if (hasRecoveryHash) setIsRecovery(true)
+    const hash = window.location.hash.substring(1)
+    const params = new URLSearchParams(hash)
+    const type = params.get('type')
+    const accessToken = params.get('access_token')
+    const refreshToken = params.get('refresh_token')
+
+    if (type === 'recovery' && accessToken && refreshToken) {
+      setIsRecovery(true)
+      supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+        .then(({ error }) => {
+          if (!error) setSessionReady(true)
+        })
+    }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setIsRecovery(true)
-        setSessionReady(true)
-      }
+      if (event === 'PASSWORD_RECOVERY') { setIsRecovery(true); setSessionReady(true) }
     })
     return () => subscription.unsubscribe()
   }, [])
