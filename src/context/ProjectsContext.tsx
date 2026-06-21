@@ -25,7 +25,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) { setProjects([]); setIsLoading(false); return }
 
-    if (role === 'manager') loadAllProjects()
+    if (role === 'admin' || role === 'manager') loadAllProjects()
     else if (role === 'employee') loadAssignedProjects(user.id)
   }, [user, role])
 

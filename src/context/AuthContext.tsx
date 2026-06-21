@@ -4,7 +4,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import { User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 
-type Role = 'manager' | 'employee' | null
+type Role = 'admin' | 'manager' | 'employee' | null
 
 interface AuthContextValue {
   user: User | null
