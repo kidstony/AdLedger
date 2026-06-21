@@ -1,9 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { BarChart3, FolderOpen, DollarSign } from 'lucide-react'
+import { usePathname, useRouter } from 'next/navigation'
+import { BarChart3, FolderOpen, DollarSign, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/context/AuthContext'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard P&L', icon: BarChart3 },
@@ -13,6 +14,13 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const router = useRouter()
+  const { user, role, signOut } = useAuth()
+
+  async function handleSignOut() {
+    await signOut()
+    router.push('/login')
+  }
 
   return (
     <aside className="fixed left-0 top-0 h-screen w-60 bg-slate-900 flex flex-col z-20">
@@ -42,8 +50,24 @@ export default function Sidebar() {
         })}
       </nav>
 
-      <div className="px-6 py-3 border-t border-slate-700">
-        <p className="text-slate-500 text-xs">100 CID · 10 MCC</p>
+      <div className="px-4 py-4 border-t border-slate-700 space-y-2">
+        {user && (
+          <div className="px-2">
+            <p className="text-slate-300 text-xs font-medium truncate">{user.email}</p>
+            <span className={cn(
+              'inline-block text-[10px] px-1.5 py-0.5 rounded mt-0.5 font-medium',
+              role === 'manager' ? 'bg-blue-900 text-blue-300' : 'bg-slate-700 text-slate-400'
+            )}>
+              {role === 'manager' ? 'Trưởng phòng' : 'Nhân viên'}
+            </span>
+          </div>
+        )}
+        <button
+          onClick={handleSignOut}
+          className="flex items-center gap-2 w-full px-2 py-1.5 text-slate-400 hover:text-white text-xs rounded hover:bg-slate-800 transition-colors"
+        >
+          <LogOut size={13} /> Đăng xuất
+        </button>
       </div>
     </aside>
   )

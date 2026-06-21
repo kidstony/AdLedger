@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/context/AuthContext'
 import { MOCK_PROJECTS } from '@/lib/mock-data'
 import { Project } from '@/lib/types'
 
@@ -17,41 +18,53 @@ interface ProjectsContextValue {
 const ProjectsContext = createContext<ProjectsContextValue | null>(null)
 
 export function ProjectsProvider({ children }: { children: ReactNode }) {
+  const { user, role } = useAuth()
   const [projects, setProjects] = useState<Project[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    async function load() {
-      setIsLoading(true)
-      const { data, error } = await supabase
-        .from('projects')
-        .select('*')
-        .order('project_id')
+    if (!user) { setProjects([]); setIsLoading(false); return }
 
-      if (error) {
-        console.error('Lỗi tải dự án:', error)
-        setIsLoading(false)
-        return
-      }
+    if (role === 'manager') loadAllProjects()
+    else if (role === 'employee') loadAssignedProjects(user.id)
+  }, [user, role])
 
-      // Auto-seed lần đầu nếu bảng trống
-      if (data.length === 0) {
-        const { data: seeded, error: seedError } = await supabase
-          .from('projects')
-          .insert(MOCK_PROJECTS)
-          .select()
+  async function loadAllProjects() {
+    setIsLoading(true)
+    const { data, error } = await supabase
+      .from('projects').select('*').order('project_id')
 
-        if (seedError) console.error('Lỗi seed data:', seedError)
-        else setProjects(seeded ?? [])
-      } else {
-        setProjects(data as Project[])
-      }
+    if (error) { console.error('Lỗi tải dự án:', error); setIsLoading(false); return }
 
-      setIsLoading(false)
+    if (data.length === 0) {
+      const { data: seeded, error: seedError } = await supabase
+        .from('projects').insert(MOCK_PROJECTS).select()
+      if (seedError) console.error('Lỗi seed data:', seedError)
+      else setProjects(seeded ?? [])
+    } else {
+      setProjects(data as Project[])
     }
+    setIsLoading(false)
+  }
 
-    load()
-  }, [])
+  async function loadAssignedProjects(userId: string) {
+    setIsLoading(true)
+    const { data: assignments } = await supabase
+      .from('project_assignments')
+      .select('project_id')
+      .eq('user_id', userId)
+
+    const ids = (assignments ?? []).map((a: { project_id: string }) => a.project_id)
+
+    if (ids.length === 0) { setProjects([]); setIsLoading(false); return }
+
+    const { data, error } = await supabase
+      .from('projects').select('*').in('project_id', ids).order('project_id')
+
+    if (error) console.error('Lỗi tải dự án được phân công:', error)
+    else setProjects(data as Project[])
+    setIsLoading(false)
+  }
 
   async function addProject(p: Project) {
     setProjects(prev => [...prev, p])
@@ -70,7 +83,6 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       .eq('project_id', updated.project_id)
     if (error) {
       console.error('Lỗi cập nhật dự án:', error)
-      // Reload để đồng bộ lại
       const { data } = await supabase.from('projects').select('*').order('project_id')
       if (data) setProjects(data as Project[])
     }
