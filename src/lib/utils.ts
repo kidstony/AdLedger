@@ -9,7 +9,7 @@ export function cn(...inputs: ClassValue[]) {
 const usdFormatter = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 export function formatVND(amount: number): string {
-  return usdFormatter.format(amount)
+  return '$' + usdFormatter.format(amount)
 }
 
 export function formatVNDFull(amount: number): string {

@@ -44,9 +44,9 @@ export default function ProfitChart({ data }: Props) {
         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
         <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} />
         <YAxis
-          tickFormatter={v => (v / 1_000_000).toFixed(1) + 'M'}
+          tickFormatter={v => Math.abs(v) >= 1000 ? '$' + (v / 1000).toFixed(1) + 'K' : '$' + v.toFixed(0)}
           tick={{ fontSize: 11, fill: '#94a3b8' }}
-          width={50}
+          width={60}
         />
         <Tooltip content={<CustomTooltip />} />
         <Legend wrapperStyle={{ fontSize: 12 }} />

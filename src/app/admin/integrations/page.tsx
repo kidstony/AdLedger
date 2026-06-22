@@ -39,11 +39,8 @@ function buildDiscoverScript(secret: string, webhookUrl: string) {
   var mccId   = AdsApp.currentAccount().getCustomerId().replace(/-/g, '');
 
   var campaigns = [];
-  var accountIt = MccApp.accounts().get();
-  while (accountIt.hasNext()) {
-    var account = accountIt.next();
-    MccApp.select(account);
-    var customerId = account.getCustomerId().replace(/-/g, '');
+
+  function scanAccount(customerId) {
     var campaignIt = AdsApp.campaigns().get();
     while (campaignIt.hasNext()) {
       var c = campaignIt.next();
@@ -56,11 +53,86 @@ function buildDiscoverScript(secret: string, webhookUrl: string) {
       });
     }
   }
+
+  if (typeof MccApp !== 'undefined') {
+    var accountIt = MccApp.accounts().get();
+    while (accountIt.hasNext()) {
+      var account = accountIt.next();
+      MccApp.select(account);
+      scanAccount(account.getCustomerId().replace(/-/g, ''));
+    }
+  } else {
+    scanAccount(AdsApp.currentAccount().getCustomerId().replace(/-/g, ''));
+  }
+
   UrlFetchApp.fetch(WEBHOOK, {
     method: 'post',
     contentType: 'application/json',
     payload: JSON.stringify({ secret: SECRET, type: 'discover', campaigns: campaigns })
   });
+}`
+}
+
+function buildBackfillScript(secret: string, webhookUrl: string) {
+  return `function main() {
+  var SECRET     = '${secret}';
+  var WEBHOOK    = '${webhookUrl}';
+  var START_DATE = '2026-06-01';   // ← Đổi ngày bắt đầu trước khi chạy
+
+  var mccName = AdsApp.currentAccount().getName();
+  var mccId   = AdsApp.currentAccount().getCustomerId().replace(/-/g, '');
+
+  var start = new Date(START_DATE + 'T00:00:00Z');
+  var end   = new Date();
+  end.setDate(end.getDate() - 1);
+
+  var startStr = Utilities.formatDate(start, 'UTC', 'yyyyMMdd');
+  var endStr   = Utilities.formatDate(end,   'UTC', 'yyyyMMdd');
+
+  var records = [];
+
+  function scanAccount(customerId) {
+    var report = AdsApp.report(
+      'SELECT CampaignId, CampaignName, Date, Cost ' +
+      'FROM CAMPAIGN_PERFORMANCE_REPORT ' +
+      'DURING ' + startStr + ',' + endStr
+    );
+    var rows = report.rows();
+    while (rows.hasNext()) {
+      var row = rows.next();
+      var spend = parseFloat(row['Cost'].replace(/,/g, ''));
+      if (spend > 0) records.push({
+        campaign_id:   row['CampaignId'],
+        campaign_name: row['CampaignName'],
+        customer_id:   customerId,
+        mcc_id:        mccId,
+        mcc_name:      mccName,
+        date:          row['Date'],
+        spend:         spend
+      });
+    }
+  }
+
+  if (typeof MccApp !== 'undefined') {
+    var accountIt = MccApp.accounts().get();
+    while (accountIt.hasNext()) {
+      var account = accountIt.next();
+      MccApp.select(account);
+      scanAccount(account.getCustomerId().replace(/-/g, ''));
+    }
+  } else {
+    scanAccount(AdsApp.currentAccount().getCustomerId().replace(/-/g, ''));
+  }
+
+  var BATCH = 500;
+  for (var i = 0; i < records.length; i += BATCH) {
+    UrlFetchApp.fetch(WEBHOOK, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ secret: SECRET, type: 'spend', records: records.slice(i, i + BATCH) })
+    });
+  }
+  Logger.log('Done: ' + records.length + ' records sent');
 }`
 }
 
@@ -77,11 +149,8 @@ function buildSpendScript(secret: string, webhookUrl: string) {
   var mccId   = AdsApp.currentAccount().getCustomerId().replace(/-/g, '');
 
   var records = [];
-  var accountIt = MccApp.accounts().get();
-  while (accountIt.hasNext()) {
-    var account = accountIt.next();
-    MccApp.select(account);
-    var customerId = account.getCustomerId().replace(/-/g, '');
+
+  function scanAccount(customerId) {
     var campaignIt = AdsApp.campaigns().get();
     while (campaignIt.hasNext()) {
       var c = campaignIt.next();
@@ -96,6 +165,18 @@ function buildSpendScript(secret: string, webhookUrl: string) {
       });
     }
   }
+
+  if (typeof MccApp !== 'undefined') {
+    var accountIt = MccApp.accounts().get();
+    while (accountIt.hasNext()) {
+      var account = accountIt.next();
+      MccApp.select(account);
+      scanAccount(account.getCustomerId().replace(/-/g, ''));
+    }
+  } else {
+    scanAccount(AdsApp.currentAccount().getCustomerId().replace(/-/g, ''));
+  }
+
   UrlFetchApp.fetch(WEBHOOK, {
     method: 'post',
     contentType: 'application/json',
@@ -249,11 +330,25 @@ export default function IntegrationsPage() {
               {buildSpendScript(secret, webhookUrl)}
             </pre>
           </div>
+          <div className="border border-dashed border-slate-200 rounded-lg p-4 space-y-3 bg-slate-50/50">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-700">Script đồng bộ lịch sử <span className="ml-1 text-xs font-normal text-slate-400">(chạy 1 lần)</span></p>
+                <p className="text-xs text-slate-400 mt-0.5">Đổ toàn bộ dữ liệu chi phí từ <code className="bg-slate-100 px-1 rounded">START_DATE</code> đến hôm qua. Nhớ đổi biến trước khi chạy.</p>
+              </div>
+              <CopyButton text={buildBackfillScript(secret, webhookUrl)} label="Copy code" />
+            </div>
+            <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto leading-relaxed font-mono">
+              {buildBackfillScript(secret, webhookUrl)}
+            </pre>
+          </div>
+
           <div className="text-sm text-slate-600 bg-amber-50 border border-amber-100 rounded-md p-3 space-y-1">
             <p className="font-medium text-amber-800">Cách cài đặt trong Google Ads MCC:</p>
             <p>1. Vào <strong>Tools &amp; Settings → Scripts → + Create</strong></p>
             <p>2. Dán script quét, click <strong>Run</strong> → sau đó dán script hàng ngày</p>
             <p>3. Đặt lịch script hàng ngày: <strong>Daily — 8:00 AM</strong> → Save</p>
+            <p>4. <strong>Lần đầu:</strong> chạy script lịch sử 1 lần (đổi <code>START_DATE</code>) để backfill dữ liệu quá khứ</p>
           </div>
         </div>
       </div>
