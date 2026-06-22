@@ -5,6 +5,8 @@ interface CampaignRecord {
   campaign_id: string
   campaign_name: string
   customer_id: string
+  mcc_id?: string
+  mcc_name?: string
 }
 
 interface SpendRecord extends CampaignRecord {
@@ -38,6 +40,8 @@ export async function POST(req: NextRequest) {
         campaign_id:   c.campaign_id,
         campaign_name: c.campaign_name,
         customer_id:   c.customer_id,
+        mcc_id:        c.mcc_id ?? null,
+        mcc_name:      c.mcc_name ?? null,
         last_seen:     new Date().toISOString(),
       }))
       const { error } = await supabaseAdmin
@@ -62,6 +66,8 @@ export async function POST(req: NextRequest) {
     campaign_id:   r.campaign_id,
     campaign_name: r.campaign_name,
     customer_id:   r.customer_id,
+    mcc_id:        r.mcc_id ?? null,
+    mcc_name:      r.mcc_name ?? null,
     last_seen:     new Date().toISOString(),
   }))
   await supabaseAdmin

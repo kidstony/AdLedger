@@ -19,6 +19,8 @@ export interface CampaignDiscovery {
   campaign_name: string
   customer_id: string
   last_seen: string
+  mcc_id?: string | null
+  mcc_name?: string | null
   project_id?: string | null
   project_name?: string | null
 }

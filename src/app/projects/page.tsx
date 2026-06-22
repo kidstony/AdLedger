@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Plus, Pencil, Trash2, Search, UserCheck } from 'lucide-react'
 import { useProjects } from '@/hooks/useProjects'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
-import { Project } from '@/lib/types'
+import { Project, CampaignDiscovery } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
@@ -22,6 +22,29 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const headerCheckboxRef = useRef<HTMLInputElement>(null)
+
+  // campaign info from Google Ads: project_id → {customer_id, campaign_id, mcc_name}
+  const [campaignInfoMap, setCampaignInfoMap] = useState<Map<string, {
+    customer_id: string; campaign_id: string; mcc_name: string | null
+  }>>(new Map())
+
+  useEffect(() => {
+    fetch('/api/integrations/campaigns')
+      .then(r => r.json())
+      .then((list: CampaignDiscovery[]) => {
+        if (!Array.isArray(list)) return
+        const map = new Map<string, { customer_id: string; campaign_id: string; mcc_name: string | null }>()
+        list.forEach(c => {
+          if (c.project_id) map.set(c.project_id, {
+            customer_id: c.customer_id,
+            campaign_id: c.campaign_id,
+            mcc_name: c.mcc_name ?? null,
+          })
+        })
+        setCampaignInfoMap(map)
+      })
+      .catch(() => {})
+  }, [])
 
   const [employees, setEmployees] = useState<UserRow[]>([])
   const [employeesLoaded, setEmployeesLoaded] = useState(false)
@@ -186,7 +209,7 @@ export default function ProjectsPage() {
                   title="Chọn tất cả"
                 />
               </th>
-              {['Project ID', 'Tên dự án', 'CID', 'MCC', 'Tổng Dự Án', ''].map(h => (
+              {['Project ID', 'Tên dự án', 'CID', 'ID Campaign', 'MCC', 'Tổng Dự Án', ''].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -209,8 +232,15 @@ export default function ProjectsPage() {
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-500">{p.project_id}</td>
                   <td className="px-4 py-3 font-medium text-slate-800">{p.name}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-slate-400">{p.cid}</td>
-                  <td className="px-4 py-3 text-xs text-slate-500">{p.mcc_id}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-400">
+                    {campaignInfoMap.get(p.project_id)?.customer_id ?? p.cid}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-400">
+                    {campaignInfoMap.get(p.project_id)?.campaign_id ?? <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-500">
+                    {campaignInfoMap.get(p.project_id)?.mcc_name ?? p.mcc_id}
+                  </td>
                   <td className="px-4 py-3">
                     {p.master_project_id ? (
                       <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">

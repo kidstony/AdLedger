@@ -6,7 +6,7 @@ export async function GET() {
   // campaign_discoveries LEFT JOIN projects ON projects.google_campaign_id = campaign_discoveries.campaign_id
   const { data: campaigns, error } = await supabaseAdmin
     .from('campaign_discoveries')
-    .select('campaign_id, campaign_name, customer_id, last_seen')
+    .select('campaign_id, campaign_name, customer_id, mcc_id, mcc_name, last_seen')
     .order('campaign_name')
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

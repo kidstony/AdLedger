@@ -35,6 +35,9 @@ function buildDiscoverScript(secret: string, webhookUrl: string) {
   var SECRET  = '${secret}';
   var WEBHOOK = '${webhookUrl}';
 
+  var mccName = AdsApp.currentAccount().getName();
+  var mccId   = AdsApp.currentAccount().getCustomerId().replace(/-/g, '');
+
   var campaigns = [];
   var accountIt = MccApp.accounts().get();
   while (accountIt.hasNext()) {
@@ -47,7 +50,9 @@ function buildDiscoverScript(secret: string, webhookUrl: string) {
       campaigns.push({
         campaign_id:   c.getId().toString(),
         campaign_name: c.getName(),
-        customer_id:   customerId
+        customer_id:   customerId,
+        mcc_id:        mccId,
+        mcc_name:      mccName
       });
     }
   }
@@ -68,6 +73,9 @@ function buildSpendScript(secret: string, webhookUrl: string) {
   yesterday.setDate(yesterday.getDate() - 1);
   var dateStr = Utilities.formatDate(yesterday, 'UTC', 'yyyy-MM-dd');
 
+  var mccName = AdsApp.currentAccount().getName();
+  var mccId   = AdsApp.currentAccount().getCustomerId().replace(/-/g, '');
+
   var records = [];
   var accountIt = MccApp.accounts().get();
   while (accountIt.hasNext()) {
@@ -82,6 +90,8 @@ function buildSpendScript(secret: string, webhookUrl: string) {
         campaign_id:   c.getId().toString(),
         campaign_name: c.getName(),
         customer_id:   customerId,
+        mcc_id:        mccId,
+        mcc_name:      mccName,
         date: dateStr, spend: spend
       });
     }
