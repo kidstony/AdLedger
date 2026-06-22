@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useMemo } from 'react'
-import { Save, X, CheckCircle, ChevronLeft, ChevronRight, CalendarDays, LayoutGrid, Loader2 } from 'lucide-react'
+import { Save, X, CheckCircle, ChevronLeft, ChevronRight, CalendarDays, LayoutGrid, Loader2, Banknote, Monitor } from 'lucide-react'
 import { useRevenueGrid } from '@/hooks/useRevenueGrid'
 import EditableCell from '@/components/revenue/EditableCell'
 import { cn, formatVND } from '@/lib/utils'
@@ -19,6 +19,7 @@ function fmtFull(date: string) {
 export default function RevenuePage() {
   const {
     projects, dates, today, viewMode, anchorDate, selectedDate,
+    activeTab, setActiveTab,
     gridData, dirtyKeys, isDirty, isSaving, isLoading, saved, isAtToday,
     goBack, goForward, goToToday, goToDate, switchMode,
     updateCell, saveAll, discard,
@@ -151,8 +152,26 @@ export default function RevenuePage() {
         )}
       </div>
 
+      {/* Revenue type tab */}
+      <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg w-fit">
+        <button
+          onClick={() => setActiveTab('revenue')}
+          className={cn('flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-md transition-colors',
+            activeTab === 'revenue' ? 'bg-white text-green-700 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
+        >
+          <Banknote size={13} /> Doanh thu thực
+        </button>
+        <button
+          onClick={() => setActiveTab('screen')}
+          className={cn('flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-md transition-colors',
+            activeTab === 'screen' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
+        >
+          <Monitor size={13} /> Tiền màn hình
+        </button>
+      </div>
+
       {/* Table */}
-      <div className="relative border border-slate-200 rounded-lg overflow-auto max-h-[calc(100vh-260px)]">
+      <div className="relative border border-slate-200 rounded-lg overflow-auto max-h-[calc(100vh-300px)]">
         {isLoading && (
           <div className="absolute inset-0 bg-white/70 z-30 flex items-center justify-center">
             <Loader2 size={20} className="animate-spin text-slate-400" />
@@ -161,8 +180,12 @@ export default function RevenuePage() {
         <table ref={tableRef} className="text-sm border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr>
-              <th className="sticky left-0 z-20 bg-slate-50 px-4 py-2.5 text-left text-xs font-medium text-slate-500 uppercase tracking-wide border-b border-r border-slate-200 w-48 min-w-[192px]">
-                Dự án
+              <th className="sticky left-0 z-20 bg-slate-50 px-4 py-2.5 text-left text-xs font-medium border-b border-r border-slate-200 w-48 min-w-[192px]">
+                <span className="text-slate-500 uppercase tracking-wide">Dự án</span>
+                <span className={cn('ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-medium',
+                  activeTab === 'revenue' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700')}>
+                  {activeTab === 'revenue' ? 'Thực' : 'Màn hình'}
+                </span>
               </th>
               {dates.map(d => (
                 <th

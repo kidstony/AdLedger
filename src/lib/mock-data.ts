@@ -68,7 +68,7 @@ MOCK_PROJECTS.forEach((project, pi) => {
         : 1.0 + seededRand(revSeed) * 1.2    // 100–220% → lãi
 
       const revenue = Math.round(spend * revenueMultiplier * 100) / 100
-      MOCK_REVENUE.push({ project_id: project.project_id, date, revenue })
+      MOCK_REVENUE.push({ project_id: project.project_id, date, revenue, screen_revenue: 0 })
     }
   })
 })

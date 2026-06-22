@@ -47,11 +47,13 @@ export default function MasterProjectsPage() {
   const masterRows = useMemo(() =>
     masterProjects.map(mp => {
       const children = summaryByMaster.get(mp.id) ?? []
-      const total_spend = children.reduce((s, c) => s + c.total_spend, 0)
-      const total_revenue = children.reduce((s, c) => s + c.total_revenue, 0)
-      const total_profit = children.reduce((s, c) => s + c.total_profit, 0)
-      const avg_roi = total_spend > 0 ? (total_profit / total_spend) * 100 : 0
-      return { ...mp, children, total_spend, total_revenue, total_profit, avg_roi }
+      const total_spend          = children.reduce((s, c) => s + c.total_spend, 0)
+      const total_revenue        = children.reduce((s, c) => s + c.total_revenue, 0)
+      const total_profit         = children.reduce((s, c) => s + c.total_profit, 0)
+      const total_screen         = children.reduce((s, c) => s + (c.total_screen_revenue ?? 0), 0)
+      const total_pending        = total_screen - total_revenue
+      const avg_roi              = total_spend > 0 ? (total_profit / total_spend) * 100 : 0
+      return { ...mp, children, total_spend, total_revenue, total_profit, avg_roi, total_screen, total_pending }
     })
   , [masterProjects, summaryByMaster])
 
@@ -163,7 +165,7 @@ export default function MasterProjectsPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Thương hiệu', 'Chiến dịch', 'Chi phí', 'Doanh thu', 'Lợi nhuận', 'ROI', ''].map(h => (
+                {['Thương hiệu', 'Chiến dịch', 'Chi phí', 'Doanh thu', 'Màn hình', 'Chờ TT', 'Lợi nhuận', 'ROI', ''].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -171,7 +173,7 @@ export default function MasterProjectsPage() {
             <tbody>
               {masterRows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-10 text-center text-sm text-slate-400">
+                  <td colSpan={9} className="py-10 text-center text-sm text-slate-400">
                     Chưa có Tổng Dự Án nào. Tạo mới và gán chiến dịch vào.
                   </td>
                 </tr>
@@ -196,6 +198,10 @@ export default function MasterProjectsPage() {
                       </td>
                       <td className="px-4 py-3 text-slate-700">{formatVND(row.total_spend)}</td>
                       <td className="px-4 py-3 text-slate-700">{formatVND(row.total_revenue)}</td>
+                      <td className="px-4 py-3 text-blue-600">{row.total_screen > 0 ? formatVND(row.total_screen) : <span className="text-slate-300">—</span>}</td>
+                      <td className={`px-4 py-3 ${row.total_pending > 0 ? 'text-amber-600' : 'text-slate-300'}`}>
+                        {row.total_pending > 0 ? formatVND(row.total_pending) : '—'}
+                      </td>
                       <td className={`px-4 py-3 font-semibold ${isProfit ? 'text-green-600' : 'text-red-600'}`}>
                         {isProfit ? '+' : ''}{formatVND(row.total_profit)}
                       </td>
@@ -219,6 +225,12 @@ export default function MasterProjectsPage() {
                           <td className="px-4 py-2.5 font-mono text-slate-400">{child.cid}</td>
                           <td className="px-4 py-2.5 text-slate-500">{formatVND(child.total_spend)}</td>
                           <td className="px-4 py-2.5 text-slate-500">{formatVND(child.total_revenue)}</td>
+                          <td className="px-4 py-2.5 text-blue-500">
+                            {(child.total_screen_revenue ?? 0) > 0 ? formatVND(child.total_screen_revenue) : <span className="text-slate-300">—</span>}
+                          </td>
+                          <td className={`px-4 py-2.5 ${(child.total_pending ?? 0) > 0 ? 'text-amber-500' : 'text-slate-300'}`}>
+                            {(child.total_pending ?? 0) > 0 ? formatVND(child.total_pending) : '—'}
+                          </td>
                           <td className={`px-4 py-2.5 ${childProfit ? 'text-green-600' : 'text-red-600'}`}>
                             {childProfit ? '+' : ''}{formatVND(child.total_profit)}
                           </td>

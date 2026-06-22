@@ -56,6 +56,8 @@ export function aggregatePnl(daily: PnlDaily[], dateRange: DateRange): PnlSummar
         total_revenue: row.revenue,
         total_profit: row.profit,
         avg_roi: 0,
+        total_screen_revenue: 0,
+        total_pending: 0,
       })
     } else {
       existing.total_spend += row.spend

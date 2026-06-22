@@ -35,6 +35,7 @@ export interface AffiliateRevenue {
   project_id: string
   date: string
   revenue: number
+  screen_revenue: number
 }
 
 export interface PnlDaily {
@@ -57,6 +58,8 @@ export interface PnlSummary {
   total_revenue: number
   total_profit: number
   avg_roi: number
+  total_screen_revenue: number
+  total_pending: number
 }
 
 export interface DateRange {

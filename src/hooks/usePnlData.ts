@@ -17,6 +17,7 @@ interface RevenueRow {
   project_id: string
   date: string
   revenue: number
+  screen_revenue: number
 }
 
 export function usePnlData() {
@@ -63,10 +64,10 @@ export function usePnlData() {
     const to = range.to.toISOString().split('T')[0]
     const { data } = await supabase
       .from('affiliate_revenue')
-      .select('project_id, date, revenue')
+      .select('project_id, date, revenue, screen_revenue')
       .gte('date', from)
       .lte('date', to)
-    setRevenueRows(data ?? [])
+    setRevenueRows((data ?? []).map(r => ({ ...r, screen_revenue: r.screen_revenue ?? 0 })))
   }
 
   async function fetchLastSync() {
@@ -92,8 +93,10 @@ export function usePnlData() {
     if (dataSource === 'real' && adSpendRows && adSpendRows.length > 0) {
       // Aggregate revenue from affiliate_revenue by project_id
       const revenueByProject = new Map<string, number>()
+      const screenByProject = new Map<string, number>()
       revenueRows.forEach(r => {
         revenueByProject.set(r.project_id, (revenueByProject.get(r.project_id) ?? 0) + r.revenue)
+        screenByProject.set(r.project_id, (screenByProject.get(r.project_id) ?? 0) + (r.screen_revenue ?? 0))
       })
 
       const map = new Map<string, PnlSummary>()
@@ -111,17 +114,21 @@ export function usePnlData() {
             total_revenue: 0,
             total_profit: 0,
             avg_roi: 0,
+            total_screen_revenue: 0,
+            total_pending: 0,
           })
         } else {
           existing.total_spend += row.spend
         }
       })
 
-      // Apply revenue and compute profit/ROI
+      // Apply revenue, screen_revenue and compute profit/ROI
       map.forEach(s => {
-        s.total_revenue = revenueByProject.get(s.project_id) ?? 0
-        s.total_profit = s.total_revenue - s.total_spend
-        s.avg_roi = s.total_spend > 0 ? (s.total_profit / s.total_spend) * 100 : 0
+        s.total_revenue        = revenueByProject.get(s.project_id) ?? 0
+        s.total_screen_revenue = screenByProject.get(s.project_id) ?? 0
+        s.total_profit         = s.total_revenue - s.total_spend
+        s.total_pending        = s.total_screen_revenue - s.total_revenue
+        s.avg_roi              = s.total_spend > 0 ? (s.total_profit / s.total_spend) * 100 : 0
       })
 
       return Array.from(map.values())
@@ -133,6 +140,8 @@ export function usePnlData() {
     summaries.forEach(s => {
       const name = projectNameMap.get(s.project_id)
       if (name) s.name = name
+      s.total_screen_revenue = 0
+      s.total_pending = 0
     })
     return summaries
   }, [dataSource, adSpendRows, revenueRows, projectByCampaignId, projectNameMap, activeProjectIds, dateRange])
@@ -148,11 +157,13 @@ export function usePnlData() {
   const totals = useMemo(() => {
     return filtered.reduce(
       (acc, s) => ({
-        spend: acc.spend + s.total_spend,
-        revenue: acc.revenue + s.total_revenue,
-        profit: acc.profit + s.total_profit,
+        spend:          acc.spend   + s.total_spend,
+        revenue:        acc.revenue + s.total_revenue,
+        profit:         acc.profit  + s.total_profit,
+        screen_revenue: acc.screen_revenue + s.total_screen_revenue,
+        pending:        acc.pending + s.total_pending,
       }),
-      { spend: 0, revenue: 0, profit: 0 }
+      { spend: 0, revenue: 0, profit: 0, screen_revenue: 0, pending: 0 }
     )
   }, [filtered])
 

@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from('affiliate_revenue')
-    .select('project_id, date, revenue')
+    .select('project_id, date, revenue, screen_revenue')
     .gte('date', from)
     .lte('date', to)
 

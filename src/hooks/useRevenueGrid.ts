@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useProjectsContext } from '@/context/ProjectsContext'
 
 export type ViewMode = 'week' | 'day'
+export type RevenueTab = 'revenue' | 'screen'
 
 function todayStr(): string {
   return new Date().toISOString().split('T')[0]
@@ -26,20 +27,24 @@ export function useRevenueGrid() {
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [anchorDate, setAnchorDate] = useState(today)
   const [selectedDate, setSelectedDate] = useState(today)
+  const [activeTab, setActiveTab] = useState<RevenueTab>('revenue')
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
-  // gridData: toàn bộ doanh thu đã load — key = "project_id__date"
-  const [gridData, setGridData] = useState<Map<string, number>>(new Map())
-  // Ref lưu trạng thái cuối từ DB để discard
-  const savedDataRef = useRef<Map<string, number>>(new Map())
+  const [revenueGrid, setRevenueGrid] = useState<Map<string, number>>(new Map())
+  const [screenGrid, setScreenGrid] = useState<Map<string, number>>(new Map())
+  const savedRevenueRef = useRef<Map<string, number>>(new Map())
+  const savedScreenRef = useRef<Map<string, number>>(new Map())
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set())
 
   const dates = useMemo(
     () => viewMode === 'week' ? getWeekDates(anchorDate) : [selectedDate],
     [viewMode, anchorDate, selectedDate]
   )
+
+  // gridData = active tab's grid
+  const gridData = activeTab === 'revenue' ? revenueGrid : screenGrid
 
   const fetchRevenue = useCallback(async (dateList: string[]) => {
     if (dateList.length === 0) return
@@ -49,13 +54,21 @@ export function useRevenueGrid() {
     try {
       const res = await fetch(`/api/revenue?from=${from}&to=${to}`)
       if (!res.ok) return
-      const rows: { project_id: string; date: string; revenue: number }[] = await res.json()
-      setGridData(prev => {
+      const rows: { project_id: string; date: string; revenue: number; screen_revenue: number }[] = await res.json()
+      setRevenueGrid(prev => {
         const next = new Map(prev)
         rows.forEach(r => next.set(`${r.project_id}__${r.date}`, r.revenue))
         return next
       })
-      rows.forEach(r => savedDataRef.current.set(`${r.project_id}__${r.date}`, r.revenue))
+      setScreenGrid(prev => {
+        const next = new Map(prev)
+        rows.forEach(r => { if ((r.screen_revenue ?? 0) > 0) next.set(`${r.project_id}__${r.date}`, r.screen_revenue) })
+        return next
+      })
+      rows.forEach(r => {
+        savedRevenueRef.current.set(`${r.project_id}__${r.date}`, r.revenue)
+        savedScreenRef.current.set(`${r.project_id}__${r.date}`, r.screen_revenue ?? 0)
+      })
     } finally {
       setIsLoading(false)
     }
@@ -97,10 +110,14 @@ export function useRevenueGrid() {
 
   const updateCell = useCallback((projectId: string, date: string, value: number) => {
     const key = `${projectId}__${date}`
-    setGridData(prev => { const next = new Map(prev); next.set(key, value); return next })
+    if (activeTab === 'revenue') {
+      setRevenueGrid(prev => { const next = new Map(prev); next.set(key, value); return next })
+    } else {
+      setScreenGrid(prev => { const next = new Map(prev); next.set(key, value); return next })
+    }
     setDirtyKeys(prev => new Set(prev).add(key))
     setSaved(false)
-  }, [])
+  }, [activeTab])
 
   const saveAll = useCallback(async () => {
     if (dirtyKeys.size === 0) return
@@ -109,7 +126,12 @@ export function useRevenueGrid() {
       const sep = key.indexOf('__')
       const project_id = key.slice(0, sep)
       const date = key.slice(sep + 2)
-      return { project_id, date, revenue: gridData.get(key) ?? 0 }
+      return {
+        project_id,
+        date,
+        revenue:        revenueGrid.get(key) ?? savedRevenueRef.current.get(key) ?? 0,
+        screen_revenue: screenGrid.get(key)  ?? savedScreenRef.current.get(key)  ?? 0,
+      }
     })
     try {
       const res = await fetch('/api/revenue', {
@@ -118,7 +140,10 @@ export function useRevenueGrid() {
         body: JSON.stringify({ rows }),
       })
       if (res.ok) {
-        rows.forEach(r => savedDataRef.current.set(`${r.project_id}__${r.date}`, r.revenue))
+        rows.forEach(r => {
+          savedRevenueRef.current.set(`${r.project_id}__${r.date}`, r.revenue)
+          savedScreenRef.current.set(`${r.project_id}__${r.date}`, r.screen_revenue)
+        })
         setDirtyKeys(new Set())
         setSaved(true)
         setTimeout(() => setSaved(false), 2500)
@@ -126,15 +151,22 @@ export function useRevenueGrid() {
     } finally {
       setIsSaving(false)
     }
-  }, [dirtyKeys, gridData])
+  }, [dirtyKeys, revenueGrid, screenGrid])
 
   const discard = useCallback(() => {
-    setGridData(prev => {
+    setRevenueGrid(prev => {
       const next = new Map(prev)
       dirtyKeys.forEach(key => {
-        const orig = savedDataRef.current.get(key)
-        if (orig !== undefined) next.set(key, orig)
-        else next.delete(key)
+        const orig = savedRevenueRef.current.get(key)
+        if (orig !== undefined) next.set(key, orig); else next.delete(key)
+      })
+      return next
+    })
+    setScreenGrid(prev => {
+      const next = new Map(prev)
+      dirtyKeys.forEach(key => {
+        const orig = savedScreenRef.current.get(key)
+        if (orig !== undefined && orig > 0) next.set(key, orig); else next.delete(key)
       })
       return next
     })
@@ -145,26 +177,12 @@ export function useRevenueGrid() {
   const isAtToday = viewMode === 'week' ? anchorDate >= today : selectedDate >= today
 
   return {
-    projects,
-    dates,
-    today,
-    viewMode,
-    anchorDate,
-    selectedDate,
-    gridData,
-    dirtyKeys,
+    projects, dates, today, viewMode, anchorDate, selectedDate,
+    activeTab, setActiveTab,
+    gridData, dirtyKeys,
     isDirty: dirtyKeys.size > 0,
-    isSaving,
-    isLoading,
-    saved,
-    isAtToday,
-    goBack,
-    goForward,
-    goToToday,
-    goToDate,
-    switchMode,
-    updateCell,
-    saveAll,
-    discard,
+    isSaving, isLoading, saved, isAtToday,
+    goBack, goForward, goToToday, goToDate, switchMode,
+    updateCell, saveAll, discard,
   }
 }
