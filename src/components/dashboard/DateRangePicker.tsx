@@ -9,18 +9,25 @@ interface Props {
 }
 
 const presets = [
-  { label: 'Hôm nay', days: 0 },
-  { label: '7 ngày', days: 6 },
-  { label: '30 ngày', days: 29 },
+  { label: 'Hôm nay',        days: 0 },
+  { label: '7 ngày',         days: 6 },
+  { label: '30 ngày',        days: 29 },
+  { label: 'Toàn thời gian', days: -1 },
 ]
 
 function today() {
-  return new Date('2026-06-21')
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d
 }
 
 export default function DateRangePicker({ value, onChange }: Props) {
   function applyPreset(days: number) {
     const to = today()
+    if (days === -1) {
+      onChange({ from: new Date('2020-01-01'), to })
+      return
+    }
     const from = new Date(today())
     from.setDate(from.getDate() - days)
     onChange({ from, to })
