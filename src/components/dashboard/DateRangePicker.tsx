@@ -1,7 +1,7 @@
 'use client'
 
 import { DateRange } from '@/lib/types'
-import { formatDate } from '@/lib/utils'
+import { formatDate, cn } from '@/lib/utils'
 
 interface Props {
   value: DateRange
@@ -22,6 +22,26 @@ function today() {
 }
 
 export default function DateRangePicker({ value, onChange }: Props) {
+  const fromStr = value.from.toISOString().split('T')[0]
+  const toStr = value.to.toISOString().split('T')[0]
+
+  function getActivePreset(): number | null {
+    const todayDate = today()
+    if (toStr !== todayDate.toISOString().split('T')[0]) return null
+    for (const p of presets) {
+      if (p.days === -1) {
+        if (fromStr === '2020-01-01') return p.days
+      } else {
+        const expected = new Date(todayDate)
+        expected.setDate(expected.getDate() - p.days)
+        if (fromStr === expected.toISOString().split('T')[0]) return p.days
+      }
+    }
+    return null
+  }
+
+  const activePreset = getActivePreset()
+
   function applyPreset(days: number) {
     const to = today()
     if (days === -1) {
@@ -47,16 +67,18 @@ export default function DateRangePicker({ value, onChange }: Props) {
     }
   }
 
-  const fromStr = value.from.toISOString().split('T')[0]
-  const toStr = value.to.toISOString().split('T')[0]
-
   return (
     <div className="flex items-center gap-2">
       {presets.map(p => (
         <button
           key={p.label}
           onClick={() => applyPreset(p.days)}
-          className="px-3 py-1.5 text-xs font-medium rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors"
+          className={cn(
+            'px-3 py-1.5 text-xs font-medium rounded-md border transition-colors',
+            activePreset === p.days
+              ? 'bg-slate-800 text-white border-slate-800'
+              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+          )}
         >
           {p.label}
         </button>
