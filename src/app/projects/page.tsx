@@ -246,7 +246,7 @@ export default function ProjectsPage() {
                     {campaignInfoMap.get(p.project_id)?.campaign_id ?? <span className="text-slate-300">—</span>}
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-500">
-                    {campaignInfoMap.get(p.project_id)?.mcc_name ?? p.mcc_id}
+                    {campaignInfoMap.get(p.project_id)?.mcc_name || <span className="text-slate-300">—</span>}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-400">
                     {(() => {
