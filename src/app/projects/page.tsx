@@ -12,6 +12,12 @@ import { useMasterProjectsContext } from '@/context/MasterProjectsContext'
 
 interface UserRow { user_id: string; email: string; full_name: string; role: string }
 
+function fmtCustomerId(id: string | null | undefined): string {
+  if (!id) return '—'
+  const d = id.replace(/-/g, '')
+  return d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : id
+}
+
 export default function ProjectsPage() {
   const { projects, isLoading, addProject, updateProject, deleteProject, deleteProjects } = useProjects()
   const { role } = useAuth()
@@ -234,7 +240,7 @@ export default function ProjectsPage() {
                   <td className="px-4 py-3 font-mono text-xs text-slate-500">{p.project_id}</td>
                   <td className="px-4 py-3 font-medium text-slate-800">{p.name}</td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-400">
-                    {campaignInfoMap.get(p.project_id)?.customer_id ?? p.cid}
+                    {fmtCustomerId(campaignInfoMap.get(p.project_id)?.customer_id ?? p.cid)}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-400">
                     {campaignInfoMap.get(p.project_id)?.campaign_id ?? <span className="text-slate-300">—</span>}
@@ -243,7 +249,7 @@ export default function ProjectsPage() {
                     {campaignInfoMap.get(p.project_id)?.mcc_name ?? p.mcc_id}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-400">
-                    {campaignInfoMap.get(p.project_id)?.mcc_id ?? <span className="text-slate-300">—</span>}
+                    {fmtCustomerId(campaignInfoMap.get(p.project_id)?.mcc_id)}
                   </td>
                   <td className="px-4 py-3">
                     {p.master_project_id ? (
