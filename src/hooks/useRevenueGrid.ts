@@ -1,7 +1,6 @@
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
-import { MOCK_REVENUE } from '@/lib/mock-data'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useProjectsContext } from '@/context/ProjectsContext'
 
 export type ViewMode = 'week' | 'day'
@@ -20,15 +19,6 @@ function getWeekDates(anchor: string): string[] {
   return Array.from({ length: 7 }, (_, i) => addDays(anchor, i - 6))
 }
 
-// Build initial grid from ALL mock revenue (not just recent dates)
-function buildInitialGrid(): Map<string, number> {
-  const map = new Map<string, number>()
-  MOCK_REVENUE.forEach(r => {
-    map.set(`${r.project_id}__${r.date}`, r.revenue)
-  })
-  return map
-}
-
 export function useRevenueGrid() {
   const { projects } = useProjectsContext()
 
@@ -36,36 +26,55 @@ export function useRevenueGrid() {
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [anchorDate, setAnchorDate] = useState(today)
   const [selectedDate, setSelectedDate] = useState(today)
-
-  // gridData holds ALL revenue across ALL dates — navigation never loses data
-  const [gridData, setGridData] = useState<Map<string, number>>(buildInitialGrid)
-  const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set())
+  const [isLoading, setIsLoading] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+
+  // gridData: toàn bộ doanh thu đã load — key = "project_id__date"
+  const [gridData, setGridData] = useState<Map<string, number>>(new Map())
+  // Ref lưu trạng thái cuối từ DB để discard
+  const savedDataRef = useRef<Map<string, number>>(new Map())
+  const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set())
 
   const dates = useMemo(
     () => viewMode === 'week' ? getWeekDates(anchorDate) : [selectedDate],
     [viewMode, anchorDate, selectedDate]
   )
 
-  const goBack = useCallback(() => {
-    if (viewMode === 'week') {
-      setAnchorDate(prev => addDays(prev, -7))
-    } else {
-      setSelectedDate(prev => addDays(prev, -1))
+  const fetchRevenue = useCallback(async (dateList: string[]) => {
+    if (dateList.length === 0) return
+    const from = dateList[0]
+    const to = dateList[dateList.length - 1]
+    setIsLoading(true)
+    try {
+      const res = await fetch(`/api/revenue?from=${from}&to=${to}`)
+      if (!res.ok) return
+      const rows: { project_id: string; date: string; revenue: number }[] = await res.json()
+      setGridData(prev => {
+        const next = new Map(prev)
+        rows.forEach(r => next.set(`${r.project_id}__${r.date}`, r.revenue))
+        return next
+      })
+      rows.forEach(r => savedDataRef.current.set(`${r.project_id}__${r.date}`, r.revenue))
+    } finally {
+      setIsLoading(false)
     }
+  }, [])
+
+  useEffect(() => {
+    fetchRevenue(dates)
+  }, [dates, fetchRevenue])
+
+  const goBack = useCallback(() => {
+    if (viewMode === 'week') setAnchorDate(prev => addDays(prev, -7))
+    else setSelectedDate(prev => addDays(prev, -1))
   }, [viewMode])
 
   const goForward = useCallback(() => {
     if (viewMode === 'week') {
-      setAnchorDate(prev => {
-        const next = addDays(prev, 7)
-        return next > today ? today : next
-      })
+      setAnchorDate(prev => { const next = addDays(prev, 7); return next > today ? today : next })
     } else {
-      setSelectedDate(prev => {
-        const next = addDays(prev, 1)
-        return next > today ? today : next
-      })
+      setSelectedDate(prev => { const next = addDays(prev, 1); return next > today ? today : next })
     }
   }, [viewMode, today])
 
@@ -75,51 +84,55 @@ export function useRevenueGrid() {
   }, [today])
 
   const goToDate = useCallback((date: string) => {
-    if (viewMode === 'week') {
-      // anchor = date so it becomes the last column of the week
-      const capped = date > today ? today : date
-      setAnchorDate(capped)
-    } else {
-      const capped = date > today ? today : date
-      setSelectedDate(capped)
-    }
+    const capped = date > today ? today : date
+    if (viewMode === 'week') setAnchorDate(capped)
+    else setSelectedDate(capped)
   }, [viewMode, today])
 
   const switchMode = useCallback((mode: ViewMode) => {
     setViewMode(mode)
-    if (mode === 'day') {
-      // Jump to the last visible date in week mode
-      setSelectedDate(anchorDate)
-    } else {
-      // Jump to week containing selectedDate
-      setAnchorDate(selectedDate > today ? today : selectedDate)
-    }
+    if (mode === 'day') setSelectedDate(anchorDate)
+    else setAnchorDate(selectedDate > today ? today : selectedDate)
   }, [anchorDate, selectedDate, today])
 
   const updateCell = useCallback((projectId: string, date: string, value: number) => {
     const key = `${projectId}__${date}`
-    setGridData(prev => {
-      const next = new Map(prev)
-      next.set(key, value)
-      return next
-    })
+    setGridData(prev => { const next = new Map(prev); next.set(key, value); return next })
     setDirtyKeys(prev => new Set(prev).add(key))
     setSaved(false)
   }, [])
 
-  const saveAll = useCallback(() => {
-    setDirtyKeys(new Set())
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-  }, [])
+  const saveAll = useCallback(async () => {
+    if (dirtyKeys.size === 0) return
+    setIsSaving(true)
+    const rows = Array.from(dirtyKeys).map(key => {
+      const sep = key.indexOf('__')
+      const project_id = key.slice(0, sep)
+      const date = key.slice(sep + 2)
+      return { project_id, date, revenue: gridData.get(key) ?? 0 }
+    })
+    try {
+      const res = await fetch('/api/revenue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows }),
+      })
+      if (res.ok) {
+        rows.forEach(r => savedDataRef.current.set(`${r.project_id}__${r.date}`, r.revenue))
+        setDirtyKeys(new Set())
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2500)
+      }
+    } finally {
+      setIsSaving(false)
+    }
+  }, [dirtyKeys, gridData])
 
   const discard = useCallback(() => {
-    // Reset only dirty keys to original mock values
     setGridData(prev => {
       const next = new Map(prev)
-      const original = buildInitialGrid()
       dirtyKeys.forEach(key => {
-        const orig = original.get(key)
+        const orig = savedDataRef.current.get(key)
         if (orig !== undefined) next.set(key, orig)
         else next.delete(key)
       })
@@ -141,6 +154,8 @@ export function useRevenueGrid() {
     gridData,
     dirtyKeys,
     isDirty: dirtyKeys.size > 0,
+    isSaving,
+    isLoading,
     saved,
     isAtToday,
     goBack,

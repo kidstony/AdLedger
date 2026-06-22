@@ -1,10 +1,10 @@
 'use client'
 
-import { useRef } from 'react'
-import { Save, X, CheckCircle, ChevronLeft, ChevronRight, CalendarDays, LayoutGrid } from 'lucide-react'
+import { useRef, useMemo } from 'react'
+import { Save, X, CheckCircle, ChevronLeft, ChevronRight, CalendarDays, LayoutGrid, Loader2 } from 'lucide-react'
 import { useRevenueGrid } from '@/hooks/useRevenueGrid'
 import EditableCell from '@/components/revenue/EditableCell'
-import { cn } from '@/lib/utils'
+import { cn, formatVND } from '@/lib/utils'
 
 function fmtShort(date: string) {
   const d = new Date(date + 'T00:00:00')
@@ -19,12 +19,20 @@ function fmtFull(date: string) {
 export default function RevenuePage() {
   const {
     projects, dates, today, viewMode, anchorDate, selectedDate,
-    gridData, dirtyKeys, isDirty, saved, isAtToday,
+    gridData, dirtyKeys, isDirty, isSaving, isLoading, saved, isAtToday,
     goBack, goForward, goToToday, goToDate, switchMode,
     updateCell, saveAll, discard,
   } = useRevenueGrid()
 
   const tableRef = useRef<HTMLTableElement>(null)
+
+  // Tổng doanh thu mỗi ngày (hàng totals)
+  const dateTotals = useMemo(() =>
+    dates.map(date =>
+      projects.reduce((sum, p) => sum + (gridData.get(`${p.project_id}__${date}`) ?? 0), 0)
+    ),
+    [dates, projects, gridData]
+  )
 
   function navigate(projectIdx: number, dateIdx: number, direction: 'right' | 'down') {
     let nextPi = projectIdx
@@ -57,20 +65,21 @@ export default function RevenuePage() {
               <CheckCircle size={13} /> Đã lưu
             </span>
           )}
-          {isDirty && (
+          {isDirty && !isSaving && (
             <button onClick={discard} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">
               <X size={14} /> Hủy bỏ
             </button>
           )}
           <button
             onClick={saveAll}
-            disabled={!isDirty}
+            disabled={!isDirty || isSaving}
             className={cn(
               'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
-              isDirty ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+              isDirty && !isSaving ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
             )}
           >
-            <Save size={14} /> Lưu tất cả {isDirty && `(${dirtyKeys.size})`}
+            {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            {isSaving ? 'Đang lưu...' : `Lưu tất cả${isDirty ? ` (${dirtyKeys.size})` : ''}`}
           </button>
         </div>
       </div>
@@ -143,7 +152,12 @@ export default function RevenuePage() {
       </div>
 
       {/* Table */}
-      <div className="border border-slate-200 rounded-lg overflow-auto max-h-[calc(100vh-260px)]">
+      <div className="relative border border-slate-200 rounded-lg overflow-auto max-h-[calc(100vh-260px)]">
+        {isLoading && (
+          <div className="absolute inset-0 bg-white/70 z-30 flex items-center justify-center">
+            <Loader2 size={20} className="animate-spin text-slate-400" />
+          </div>
+        )}
         <table ref={tableRef} className="text-sm border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr>
@@ -191,6 +205,19 @@ export default function RevenuePage() {
               </tr>
             ))}
           </tbody>
+          {/* Totals row */}
+          <tfoot className="sticky bottom-0 z-10 bg-slate-50 border-t-2 border-slate-200">
+            <tr>
+              <td className="sticky left-0 bg-slate-50 border-r border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                Tổng
+              </td>
+              {dateTotals.map((total, i) => (
+                <td key={dates[i]} className={cn('px-3 py-2 text-center text-xs font-semibold', dates[i] === today && 'bg-blue-50/50')}>
+                  {total > 0 ? <span className="text-green-700">{formatVND(total)}</span> : <span className="text-slate-300">—</span>}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>

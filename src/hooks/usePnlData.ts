@@ -13,12 +13,19 @@ interface AdSpendRow {
   spend: number
 }
 
+interface RevenueRow {
+  project_id: string
+  date: string
+  revenue: number
+}
+
 export function usePnlData() {
   const { projects } = useProjectsContext()
   const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange())
   const [isLoading, setIsLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [adSpendRows, setAdSpendRows] = useState<AdSpendRow[] | null>(null)
+  const [revenueRows, setRevenueRows] = useState<RevenueRow[]>([])
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null)
 
   // Map google_campaign_id → project
@@ -51,6 +58,17 @@ export function usePnlData() {
     setAdSpendRows(data ?? [])
   }
 
+  async function fetchRevenue(range: DateRange) {
+    const from = range.from.toISOString().split('T')[0]
+    const to = range.to.toISOString().split('T')[0]
+    const { data } = await supabase
+      .from('affiliate_revenue')
+      .select('project_id, date, revenue')
+      .gte('date', from)
+      .lte('date', to)
+    setRevenueRows(data ?? [])
+  }
+
   async function fetchLastSync() {
     const { data } = await supabase
       .from('sync_log')
@@ -64,6 +82,7 @@ export function usePnlData() {
 
   useEffect(() => {
     fetchAdSpend(dateRange)
+    fetchRevenue(dateRange)
     fetchLastSync()
   }, [dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -71,10 +90,16 @@ export function usePnlData() {
 
   const allSummaries = useMemo(() => {
     if (dataSource === 'real' && adSpendRows && adSpendRows.length > 0) {
+      // Aggregate revenue from affiliate_revenue by project_id
+      const revenueByProject = new Map<string, number>()
+      revenueRows.forEach(r => {
+        revenueByProject.set(r.project_id, (revenueByProject.get(r.project_id) ?? 0) + r.revenue)
+      })
+
       const map = new Map<string, PnlSummary>()
       adSpendRows.forEach(row => {
         const project = projectByCampaignId.get(row.campaign_id)
-        if (!project) return  // campaign not mapped → skip
+        if (!project) return
         const existing = map.get(project.project_id)
         if (!existing) {
           map.set(project.project_id, {
@@ -84,17 +109,21 @@ export function usePnlData() {
             mcc_id: project.mcc_id,
             total_spend: row.spend,
             total_revenue: 0,
-            total_profit: -row.spend,
+            total_profit: 0,
             avg_roi: 0,
           })
         } else {
           existing.total_spend += row.spend
-          existing.total_profit -= row.spend
         }
       })
+
+      // Apply revenue and compute profit/ROI
       map.forEach(s => {
+        s.total_revenue = revenueByProject.get(s.project_id) ?? 0
+        s.total_profit = s.total_revenue - s.total_spend
         s.avg_roi = s.total_spend > 0 ? (s.total_profit / s.total_spend) * 100 : 0
       })
+
       return Array.from(map.values())
     }
 
@@ -106,7 +135,7 @@ export function usePnlData() {
       if (name) s.name = name
     })
     return summaries
-  }, [dataSource, adSpendRows, projectByCampaignId, projectNameMap, activeProjectIds, dateRange])
+  }, [dataSource, adSpendRows, revenueRows, projectByCampaignId, projectNameMap, activeProjectIds, dateRange])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return allSummaries
@@ -131,7 +160,7 @@ export function usePnlData() {
 
   const refresh = useCallback(async () => {
     setIsLoading(true)
-    await Promise.all([fetchAdSpend(dateRange), fetchLastSync()])
+    await Promise.all([fetchAdSpend(dateRange), fetchRevenue(dateRange), fetchLastSync()])
     setIsLoading(false)
   }, [dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
