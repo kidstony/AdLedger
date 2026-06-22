@@ -1,8 +1,16 @@
+export interface MasterProject {
+  id: string
+  name: string
+  description?: string | null
+  created_at?: string
+}
+
 export interface Project {
   project_id: string
   cid: string
   name: string
   mcc_id: string
+  master_project_id?: string | null
 }
 
 export interface AdSpend {

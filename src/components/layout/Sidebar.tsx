@@ -2,12 +2,13 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { BarChart3, FolderOpen, DollarSign, LogOut, ShieldCheck } from 'lucide-react'
+import { BarChart3, FolderOpen, DollarSign, LogOut, ShieldCheck, Layers } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/context/AuthContext'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard P&L', icon: BarChart3, roles: ['admin', 'manager', 'employee'] },
+  { href: '/master-projects', label: 'Tổng Dự Án', icon: Layers, roles: ['admin', 'manager'] },
   { href: '/projects', label: 'Quản lý dự án', icon: FolderOpen, roles: ['admin', 'manager', 'employee'] },
   { href: '/revenue', label: 'Nhập doanh thu', icon: DollarSign, roles: ['admin', 'manager', 'employee'] },
   { href: '/admin', label: 'Quản trị hệ thống', icon: ShieldCheck, roles: ['admin'] },

@@ -4,21 +4,22 @@ import { useState } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Project } from '@/lib/types'
+import { Project, MasterProject } from '@/lib/types'
 
 interface Props {
   mode: 'add' | 'edit'
   initialData?: Project
   existingIds: string[]
+  masterProjects: MasterProject[]
   onSave: (project: Project) => void
   onClose: () => void
 }
 
 const MCC_OPTIONS = Array.from({ length: 10 }, (_, i) => `mcc${String(i + 1).padStart(3, '0')}`)
 
-export default function ProjectFormDialog({ mode, initialData, existingIds, onSave, onClose }: Props) {
+export default function ProjectFormDialog({ mode, initialData, existingIds, masterProjects, onSave, onClose }: Props) {
   const [form, setForm] = useState<Project>(
-    initialData ?? { project_id: '', cid: '', name: '', mcc_id: 'mcc001' }
+    initialData ?? { project_id: '', cid: '', name: '', mcc_id: 'mcc001', master_project_id: null }
   )
   const [errors, setErrors] = useState<Partial<Record<keyof Project, string>>>({})
 
@@ -39,7 +40,7 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, onSa
     }
   }
 
-  function field(key: keyof Project, label: string, placeholder: string, disabled = false) {
+  function field(key: 'project_id' | 'cid' | 'name', label: string, placeholder: string, disabled = false) {
     return (
       <div className="space-y-1">
         <label className="text-xs font-medium text-slate-600">{label}</label>
@@ -73,6 +74,17 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, onSa
               className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300"
             >
               {MCC_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-slate-600">Tổng Dự Án (tuỳ chọn)</label>
+            <select
+              value={form.master_project_id ?? ''}
+              onChange={e => setForm(f => ({ ...f, master_project_id: e.target.value || null }))}
+              className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300"
+            >
+              <option value="">— Chưa phân nhóm —</option>
+              {masterProjects.map(mp => <option key={mp.id} value={mp.id}>{mp.name}</option>)}
             </select>
           </div>
           <div className="flex justify-end gap-2 pt-2">

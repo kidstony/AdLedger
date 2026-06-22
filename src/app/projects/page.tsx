@@ -8,12 +8,14 @@ import { Project } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
+import { useMasterProjectsContext } from '@/context/MasterProjectsContext'
 
 interface UserRow { user_id: string; email: string; full_name: string; role: string }
 
 export default function ProjectsPage() {
   const { projects, isLoading, addProject, updateProject, deleteProject, deleteProjects } = useProjects()
   const { role } = useAuth()
+  const { masterProjects } = useMasterProjectsContext()
   const [dialog, setDialog] = useState<{ mode: 'add' | 'edit'; data?: Project } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Project | null>(null)
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
@@ -184,7 +186,7 @@ export default function ProjectsPage() {
                   title="Chọn tất cả"
                 />
               </th>
-              {['Project ID', 'Tên dự án', 'CID', 'MCC', ''].map(h => (
+              {['Project ID', 'Tên dự án', 'CID', 'MCC', 'Tổng Dự Án', ''].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -209,6 +211,15 @@ export default function ProjectsPage() {
                   <td className="px-4 py-3 font-medium text-slate-800">{p.name}</td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-400">{p.cid}</td>
                   <td className="px-4 py-3 text-xs text-slate-500">{p.mcc_id}</td>
+                  <td className="px-4 py-3">
+                    {p.master_project_id ? (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">
+                        {masterProjects.find(m => m.id === p.master_project_id)?.name ?? p.master_project_id}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-300">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1 justify-end">
                       {role === 'admin' && projectAssignments[p.project_id] !== undefined && (
@@ -310,6 +321,7 @@ export default function ProjectsPage() {
           mode={dialog.mode}
           initialData={dialog.data}
           existingIds={projects.map(p => p.project_id)}
+          masterProjects={masterProjects}
           onSave={dialog.mode === 'add' ? addProject : updateProject}
           onClose={() => setDialog(null)}
         />

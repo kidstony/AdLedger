@@ -79,7 +79,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     setProjects(prev => prev.map(p => p.project_id === updated.project_id ? updated : p))
     const { error } = await supabase
       .from('projects')
-      .update({ cid: updated.cid, name: updated.name, mcc_id: updated.mcc_id })
+      .update({ cid: updated.cid, name: updated.name, mcc_id: updated.mcc_id, master_project_id: updated.master_project_id ?? null })
       .eq('project_id', updated.project_id)
     if (error) {
       console.error('Lỗi cập nhật dự án:', error)
