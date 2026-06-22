@@ -8,7 +8,7 @@ import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
 
 interface AdSpendRow {
-  cid: string
+  campaign_id: string
   date: string
   spend: number
 }
@@ -21,11 +21,16 @@ export function usePnlData() {
   const [adSpendRows, setAdSpendRows] = useState<AdSpendRow[] | null>(null)
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null)
 
-  // Map project_id → project info
-  const projectByCid = useMemo(
-    () => new Map(projects.map(p => [p.cid, p])),
+  // Map google_campaign_id → project
+  const projectByCampaignId = useMemo(
+    () => new Map(
+      projects
+        .filter(p => p.google_campaign_id)
+        .map(p => [p.google_campaign_id!, p])
+    ),
     [projects]
   )
+
   const projectNameMap = useMemo(
     () => new Map(projects.map(p => [p.project_id, p.name])),
     [projects]
@@ -40,7 +45,7 @@ export function usePnlData() {
     const to = range.to.toISOString().split('T')[0]
     const { data } = await supabase
       .from('ad_spend')
-      .select('cid, date, spend')
+      .select('campaign_id, date, spend')
       .gte('date', from)
       .lte('date', to)
     setAdSpendRows(data ?? [])
@@ -62,21 +67,19 @@ export function usePnlData() {
     fetchLastSync()
   }, [dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Determine data source
   const dataSource: 'real' | 'mock' = (adSpendRows && adSpendRows.length > 0) ? 'real' : 'mock'
 
   const allSummaries = useMemo(() => {
     if (dataSource === 'real' && adSpendRows && adSpendRows.length > 0) {
-      // Build summaries from real ad_spend data
       const map = new Map<string, PnlSummary>()
       adSpendRows.forEach(row => {
-        const project = projectByCid.get(row.cid)
-        if (!project) return
+        const project = projectByCampaignId.get(row.campaign_id)
+        if (!project) return  // campaign not mapped → skip
         const existing = map.get(project.project_id)
         if (!existing) {
           map.set(project.project_id, {
             project_id: project.project_id,
-            cid: row.cid,
+            cid: project.cid,
             name: project.name,
             mcc_id: project.mcc_id,
             total_spend: row.spend,
@@ -103,7 +106,7 @@ export function usePnlData() {
       if (name) s.name = name
     })
     return summaries
-  }, [dataSource, adSpendRows, projectByCid, projectNameMap, activeProjectIds, dateRange])
+  }, [dataSource, adSpendRows, projectByCampaignId, projectNameMap, activeProjectIds, dateRange])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return allSummaries

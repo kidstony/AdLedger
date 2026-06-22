@@ -1,4 +1,6 @@
-import { Project, AdSpend, AffiliateRevenue, PnlDaily } from './types'
+import { Project, AffiliateRevenue, PnlDaily } from './types'
+
+interface MockAdSpend { cid: string; date: string; cost: number }
 
 // Deterministic pseudo-random to keep data stable across reloads
 function seededRand(seed: number): number {
@@ -44,7 +46,7 @@ function getLast30Days(): string[] {
 
 export const DATES = getLast30Days()
 
-export const MOCK_AD_SPEND: AdSpend[] = []
+export const MOCK_AD_SPEND: MockAdSpend[] = []
 export const MOCK_REVENUE: AffiliateRevenue[] = []
 
 MOCK_PROJECTS.forEach((project, pi) => {

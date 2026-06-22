@@ -11,12 +11,22 @@ export interface Project {
   name: string
   mcc_id: string
   master_project_id?: string | null
+  google_campaign_id?: string | null
+}
+
+export interface CampaignDiscovery {
+  campaign_id: string
+  campaign_name: string
+  customer_id: string
+  last_seen: string
+  project_id?: string | null
+  project_name?: string | null
 }
 
 export interface AdSpend {
-  cid: string
+  campaign_id: string
   date: string
-  cost: number
+  spend: number
 }
 
 export interface AffiliateRevenue {
