@@ -143,7 +143,8 @@ function buildSpendScript(secret: string, webhookUrl: string) {
 
   var yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  var dateStr = Utilities.formatDate(yesterday, 'UTC', 'yyyy-MM-dd');
+  var dateForAds = Utilities.formatDate(yesterday, 'UTC', 'yyyyMMdd');  // YYYYMMDD cho getStatsFor
+  var dateStr    = Utilities.formatDate(yesterday, 'UTC', 'yyyy-MM-dd'); // YYYY-MM-DD cho webhook
 
   var mccName = AdsApp.currentAccount().getName();
   var mccId   = AdsApp.currentAccount().getCustomerId().replace(/-/g, '');
@@ -154,7 +155,7 @@ function buildSpendScript(secret: string, webhookUrl: string) {
     var campaignIt = AdsApp.campaigns().get();
     while (campaignIt.hasNext()) {
       var c = campaignIt.next();
-      var spend = c.getStatsFor(dateStr, dateStr).getCost();
+      var spend = c.getStatsFor(dateForAds, dateForAds).getCost();
       if (spend > 0) records.push({
         campaign_id:   c.getId().toString(),
         campaign_name: c.getName(),
