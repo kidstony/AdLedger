@@ -235,27 +235,40 @@ export default function AdminPage() {
         )}
       </div>
 
-      {/* Assignment panel */}
+      {/* Assignment modal */}
       {assigningUser && (
-        <div className="border border-slate-200 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-slate-700">
-              Phân công dự án cho: <strong>{users.find(u => u.user_id === assigningUser)?.full_name}</strong>
-            </h3>
-            <button onClick={() => setAssigningUser(null)} className="text-xs text-slate-400 hover:text-slate-600">Đóng</button>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 max-h-60 overflow-y-auto">
-            {projects.map(p => {
-              const assigned = (assignments[assigningUser] ?? []).includes(p.project_id)
-              return (
-                <label key={p.project_id} className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-xs ${assigned ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
-                  <input type="checkbox" checked={assigned}
-                    onChange={() => toggleAssignment(assigningUser, p.project_id, assigned)}
-                    className="accent-blue-600" />
-                  {p.name}
-                </label>
-              )
-            })}
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-semibold text-slate-800">Phân công dự án</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {users.find(u => u.user_id === assigningUser)?.full_name}
+                </p>
+              </div>
+              <button
+                onClick={() => setAssigningUser(null)}
+                className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto">
+              {projects.map(p => {
+                const assigned = (assignments[assigningUser] ?? []).includes(p.project_id)
+                return (
+                  <label key={p.project_id} className={`flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer text-sm transition-colors ${assigned ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
+                    <input type="checkbox" checked={assigned}
+                      onChange={() => toggleAssignment(assigningUser, p.project_id, assigned)}
+                      className="accent-blue-600" />
+                    {p.name}
+                  </label>
+                )
+              })}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <Button variant="outline" onClick={() => setAssigningUser(null)}>Xong</Button>
+            </div>
           </div>
         </div>
       )}
