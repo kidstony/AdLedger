@@ -7,14 +7,24 @@ import { MOCK_PNL_DAILY } from '@/lib/mock-data'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
 import ProfitChart from '@/components/project-detail/ProfitChart'
-import { formatVNDFull, formatROI, formatVND, getProfitTextClass, getRoiTextClass } from '@/lib/utils'
+import { formatVNDFull, formatROI, formatVND, getProfitTextClass, getRoiTextClass, cn } from '@/lib/utils'
 import { PnlDaily } from '@/lib/types'
+
+type RangeKey = '30d' | '90d' | '180d' | '365d'
+
+const PRESETS: { key: RangeKey; label: string; days: number }[] = [
+  { key: '30d',  label: '30 ngày', days: 30  },
+  { key: '90d',  label: '3 tháng', days: 90  },
+  { key: '180d', label: '6 tháng', days: 180 },
+  { key: '365d', label: '1 năm',   days: 365 },
+]
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const { projects } = useProjectsContext()
   const project = projects.find(p => p.project_id === id)
 
+  const [range, setRange] = useState<RangeKey>('30d')
   const [daily, setDaily] = useState<PnlDaily[]>([])
   const [screenByDate, setScreenByDate] = useState<Map<string, number>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
@@ -22,10 +32,12 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
   useEffect(() => {
     if (projects.length === 0) return
+    setIsLoading(true)
 
+    const days = PRESETS.find(p => p.key === range)!.days
     const to = new Date()
     const from = new Date()
-    from.setDate(from.getDate() - 29)
+    from.setDate(from.getDate() - (days - 1))
     const toStr = to.toISOString().split('T')[0]
     const fromStr = from.toISOString().split('T')[0]
 
@@ -45,7 +57,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       const revRows   = (revRes.data   ?? []) as { date: string; revenue: number; screen_revenue: number }[]
 
       if (spendRows.length === 0 && revRows.length === 0) {
-        setDaily(MOCK_PNL_DAILY.filter(d => d.project_id === id).slice(-30))
+        const mockDays = MOCK_PNL_DAILY.filter(d => d.project_id === id).slice(-days)
+        setDaily(mockDays)
         setScreenByDate(new Map())
         setDataSource('mock')
       } else {
@@ -73,7 +86,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       }
       setIsLoading(false)
     })
-  }, [projects, project, id])
+  }, [projects, project, id, range])
 
   const totalSpend   = daily.reduce((s, d) => s + d.spend,   0)
   const totalRevenue = daily.reduce((s, d) => s + d.revenue, 0)
@@ -86,6 +99,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     { label: 'Lợi nhuận',      value: formatVNDFull(totalProfit),  cls: getProfitTextClass(totalProfit) },
     { label: 'ROI',             value: formatROI(roi),              cls: getRoiTextClass(roi) },
   ]
+
+  const rangeLabel = PRESETS.find(p => p.key === range)!.label
 
   if (!project && !isLoading && projects.length > 0) {
     return (
@@ -151,11 +166,32 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
       {/* Chart */}
       <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-        <h3 className="text-sm font-medium text-slate-700 mb-4">Biểu đồ P&L theo ngày (30 ngày gần nhất)</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-medium text-slate-700">
+            Biểu đồ P&L ({rangeLabel} gần nhất)
+          </h3>
+          <div className="flex items-center gap-1">
+            {PRESETS.map(p => (
+              <button
+                key={p.key}
+                onClick={() => setRange(p.key)}
+                className={cn(
+                  'px-3 py-1 text-xs rounded-md font-medium transition-colors',
+                  range === p.key
+                    ? 'bg-slate-800 text-white'
+                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {isLoading ? (
           <div className="h-80 bg-slate-50 rounded animate-pulse" />
         ) : daily.length === 0 ? (
-          <p className="text-slate-400 text-sm text-center py-16">Chưa có dữ liệu trong 30 ngày qua.</p>
+          <p className="text-slate-400 text-sm text-center py-16">Chưa có dữ liệu trong {rangeLabel} qua.</p>
         ) : (
           <ProfitChart data={daily} />
         )}
