@@ -26,6 +26,7 @@ export default function RevenuePage() {
   } = useRevenueGrid()
 
   const tableRef = useRef<HTMLTableElement>(null)
+  const focusedCellRef = useRef<{ pi: number; di: number } | null>(null)
 
   // Tổng doanh thu mỗi ngày (hàng totals)
   const dateTotals = useMemo(() =>
@@ -35,17 +36,40 @@ export default function RevenuePage() {
     [dates, projects, gridData]
   )
 
-  function navigate(projectIdx: number, dateIdx: number, direction: 'right' | 'down') {
-    let nextPi = projectIdx
-    let nextDi = dateIdx
-    if (direction === 'right' && viewMode === 'week') {
-      nextDi = dateIdx + 1
-      if (nextDi >= dates.length) { nextDi = 0; nextPi = (projectIdx + 1) % projects.length }
-    } else {
-      nextPi = (projectIdx + 1) % projects.length
+  function navigate(pi: number, di: number, direction: 'right' | 'left' | 'down' | 'up') {
+    let nextPi = pi
+    let nextDi = di
+    if (direction === 'right') {
+      nextDi++
+      if (nextDi >= dates.length) { nextDi = 0; nextPi = (pi + 1) % projects.length }
+    } else if (direction === 'left') {
+      nextDi--
+      if (nextDi < 0) { nextDi = dates.length - 1; nextPi = (pi - 1 + projects.length) % projects.length }
+    } else if (direction === 'down') {
+      nextPi = (pi + 1) % projects.length
+    } else if (direction === 'up') {
+      nextPi = (pi - 1 + projects.length) % projects.length
     }
-    const key = `${projects[nextPi].project_id}__${dates[Math.min(nextDi, dates.length - 1)]}`
+    nextDi = Math.max(0, Math.min(nextDi, dates.length - 1))
+    focusedCellRef.current = { pi: nextPi, di: nextDi }
+    const key = `${projects[nextPi].project_id}__${dates[nextDi]}`
     tableRef.current?.querySelector<HTMLDivElement>(`[data-cell="${key}"]`)?.click()
+  }
+
+  function handlePaste(text: string) {
+    const fc = focusedCellRef.current
+    if (!fc) return
+    const lines = text.split('\n').filter(l => l.trim())
+    lines.forEach((line, rowOffset) => {
+      const targetPi = fc.pi + rowOffset
+      if (targetPi >= projects.length) return
+      line.split('\t').forEach((val, colOffset) => {
+        const targetDi = fc.di + colOffset
+        if (targetDi >= dates.length) return
+        const num = parseFloat(val.trim().replace(/[^0-9.]/g, ''))
+        if (!isNaN(num)) updateCell(projects[targetPi].project_id, dates[targetDi], num)
+      })
+    })
   }
 
   const weekLabel = viewMode === 'week'
@@ -58,7 +82,7 @@ export default function RevenuePage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-slate-800">Nhập doanh thu</h2>
-          <p className="text-sm text-slate-500 mt-0.5">Click vào ô để nhập · Tab = ô tiếp theo · Enter = xuống dưới</p>
+          <p className="text-sm text-slate-500 mt-0.5">Tab/Shift+Tab = trái/phải · ↑↓←→ = di chuyển · Ctrl+V = dán hàng loạt</p>
         </div>
         <div className="flex items-center gap-2">
           {saved && (
@@ -220,6 +244,8 @@ export default function RevenuePage() {
                           isDirty={dirtyKeys.has(key)}
                           onCommit={v => updateCell(project.project_id, date, v)}
                           onNavigate={dir => navigate(pi, di, dir)}
+                          onFocus={() => { focusedCellRef.current = { pi, di } }}
+                          onPaste={handlePaste}
                         />
                       </div>
                     </td>

@@ -1,21 +1,24 @@
 'use client'
 
-import { useState, useRef, KeyboardEvent } from 'react'
+import { useState, useRef, KeyboardEvent, ClipboardEvent } from 'react'
 import { cn } from '@/lib/utils'
 
 interface Props {
   value: number | undefined
   isDirty: boolean
   onCommit: (value: number) => void
-  onNavigate?: (direction: 'right' | 'down') => void
+  onNavigate?: (direction: 'right' | 'left' | 'down' | 'up') => void
+  onFocus?: () => void
+  onPaste?: (text: string) => void
 }
 
-export default function EditableCell({ value, isDirty, onCommit, onNavigate }: Props) {
+export default function EditableCell({ value, isDirty, onCommit, onNavigate, onFocus, onPaste }: Props) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
   function startEdit() {
+    onFocus?.()
     setDraft(value !== undefined ? String(value) : '')
     setEditing(true)
     setTimeout(() => inputRef.current?.select(), 0)
@@ -28,9 +31,41 @@ export default function EditableCell({ value, isDirty, onCommit, onNavigate }: P
   }
 
   function handleKey(e: KeyboardEvent) {
-    if (e.key === 'Tab') { e.preventDefault(); commit(); onNavigate?.('right') }
-    if (e.key === 'Enter') { commit(); onNavigate?.('down') }
-    if (e.key === 'Escape') setEditing(false)
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      commit()
+      e.shiftKey ? onNavigate?.('left') : onNavigate?.('right')
+    } else if (e.key === 'Enter') {
+      commit()
+      onNavigate?.('down')
+    } else if (e.key === 'Escape') {
+      setEditing(false)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      commit()
+      onNavigate?.('up')
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      commit()
+      onNavigate?.('down')
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault()
+      commit()
+      onNavigate?.('left')
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      commit()
+      onNavigate?.('right')
+    }
+  }
+
+  function handlePaste(e: ClipboardEvent) {
+    const text = e.clipboardData.getData('text')
+    const isMulti = text.includes('\t') || text.split('\n').filter(l => l.trim()).length > 1
+    if (isMulti) {
+      e.preventDefault()
+      onPaste?.(text)
+    }
   }
 
   if (editing) {
@@ -41,6 +76,7 @@ export default function EditableCell({ value, isDirty, onCommit, onNavigate }: P
         onChange={e => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={handleKey}
+        onPaste={handlePaste}
         className="w-full h-full px-2 py-1.5 text-right font-mono text-xs outline-none border-2 border-blue-400 rounded bg-white"
       />
     )
