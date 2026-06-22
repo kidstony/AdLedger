@@ -77,14 +77,13 @@ function buildBackfillScript(secret: string, webhookUrl: string) {
   return `function main() {
   var SECRET     = '${secret}';
   var WEBHOOK    = '${webhookUrl}';
-  var START_DATE = '2026-06-01';   // ← Đổi ngày bắt đầu trước khi chạy
-
   var mccName = AdsApp.currentAccount().getName();
   var mccId   = AdsApp.currentAccount().getCustomerId().replace(/-/g, '');
 
-  var start = new Date(START_DATE + 'T00:00:00Z');
   var end   = new Date();
-  end.setDate(end.getDate() - 1);
+  end.setDate(end.getDate() - 1);          // hôm qua
+  var start = new Date(end);
+  start.setFullYear(start.getFullYear() - 1); // 1 năm trước
 
   var startStr = Utilities.formatDate(start, 'UTC', 'yyyyMMdd');
   var endStr   = Utilities.formatDate(end,   'UTC', 'yyyyMMdd');
