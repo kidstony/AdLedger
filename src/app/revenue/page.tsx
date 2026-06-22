@@ -1,8 +1,9 @@
 'use client'
 
-import { useRef, useMemo } from 'react'
+import { useRef, useMemo, useState } from 'react'
 import { Save, X, CheckCircle, ChevronLeft, ChevronRight, CalendarDays, LayoutGrid, Loader2, Banknote, Monitor } from 'lucide-react'
 import { useRevenueGrid } from '@/hooks/useRevenueGrid'
+import { useProjectsContext } from '@/context/ProjectsContext'
 import EditableCell from '@/components/revenue/EditableCell'
 import { cn, formatVND } from '@/lib/utils'
 
@@ -16,24 +17,52 @@ function fmtFull(date: string) {
   return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+function addDays(date: string, n: number): string {
+  const d = new Date(date + 'T00:00:00')
+  d.setDate(d.getDate() + n)
+  return d.toISOString().split('T')[0]
+}
+
+type NoteModal = { projectId: string; date: string; current: string }
+type PayoutModal = { projectId: string; date: string; start: string; end: string }
+
 export default function RevenuePage() {
   const {
     projects, dates, today, viewMode, anchorDate, selectedDate,
     activeTab, setActiveTab,
-    gridData, dirtyKeys, isDirty, isSaving, isLoading, saved, isAtToday,
+    gridData, screenGrid, prevScreenMap,
+    noteMap, payoutMap,
+    dirtyKeys, isDirty, isSaving, isLoading, saved, isAtToday,
     goBack, goForward, goToToday, goToDate, switchMode,
-    updateCell, saveAll, discard,
+    updateCell, saveAll, discard, saveNote, savePayout,
   } = useRevenueGrid()
+
+  const { updateProject } = useProjectsContext()
 
   const tableRef = useRef<HTMLTableElement>(null)
   const focusedCellRef = useRef<{ pi: number; di: number } | null>(null)
 
+  const [noteModal, setNoteModal] = useState<NoteModal | null>(null)
+  const [payoutModal, setPayoutModal] = useState<PayoutModal | null>(null)
+
   // Tổng doanh thu mỗi ngày (hàng totals)
   const dateTotals = useMemo(() =>
-    dates.map(date =>
-      projects.reduce((sum, p) => sum + (gridData.get(`${p.project_id}__${date}`) ?? 0), 0)
+    dates.map((date, di) =>
+      projects.reduce((sum, p) => {
+        const key = `${p.project_id}__${date}`
+        if (activeTab === 'screen' && p.screen_revenue_type === 'cumulative') {
+          const curr = screenGrid.get(key) ?? 0
+          const prevDate = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
+          const prevKey = `${p.project_id}__${prevDate}`
+          const prev = di === 0
+            ? (prevScreenMap.get(prevKey) ?? 0)
+            : (screenGrid.get(prevKey) ?? 0)
+          return sum + Math.max(0, curr - prev)
+        }
+        return sum + (gridData.get(key) ?? 0)
+      }, 0)
     ),
-    [dates, projects, gridData]
+    [dates, projects, gridData, screenGrid, prevScreenMap, activeTab]
   )
 
   function navigate(pi: number, di: number, direction: 'right' | 'left' | 'down' | 'up') {
@@ -70,6 +99,18 @@ export default function RevenuePage() {
         if (!isNaN(num)) updateCell(projects[targetPi].project_id, dates[targetDi], num)
       })
     })
+  }
+
+  // For a cumulative screen cell, compute { delta, cumulative }
+  function getCumulativeDelta(projectId: string, date: string, di: number) {
+    const key = `${projectId}__${date}`
+    const cumulative = screenGrid.get(key) ?? 0
+    const prevDate = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
+    const prevKey = `${projectId}__${prevDate}`
+    const prevCumulative = di === 0
+      ? (prevScreenMap.get(prevKey) ?? 0)
+      : (screenGrid.get(prevKey) ?? 0)
+    return { delta: cumulative - prevCumulative, cumulative }
   }
 
   const weekLabel = viewMode === 'week'
@@ -111,7 +152,6 @@ export default function RevenuePage() {
 
       {/* Navigation bar */}
       <div className="flex items-center gap-2 flex-wrap">
-        {/* Mode toggle */}
         <div className="flex rounded-md border border-slate-200 overflow-hidden text-xs font-medium">
           <button
             onClick={() => switchMode('week')}
@@ -131,7 +171,6 @@ export default function RevenuePage() {
 
         <div className="w-px h-5 bg-slate-200" />
 
-        {/* Prev / Next */}
         <button
           onClick={goBack}
           className="flex items-center gap-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-white text-slate-600 hover:bg-slate-50"
@@ -139,7 +178,6 @@ export default function RevenuePage() {
           <ChevronLeft size={14} /> {viewMode === 'week' ? 'Tuần trước' : 'Ngày trước'}
         </button>
 
-        {/* Date label / jump input */}
         <div className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 rounded-md bg-white text-xs text-slate-700 font-medium min-w-[180px] justify-center">
           {weekLabel}
         </div>
@@ -155,7 +193,6 @@ export default function RevenuePage() {
           {viewMode === 'week' ? 'Tuần sau' : 'Ngày sau'} <ChevronRight size={14} />
         </button>
 
-        {/* Jump to date */}
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-slate-500">Nhảy đến:</span>
           <input
@@ -204,7 +241,7 @@ export default function RevenuePage() {
         <table ref={tableRef} className="text-sm border-collapse">
           <thead className="sticky top-0 z-10 bg-slate-50">
             <tr>
-              <th className="sticky left-0 z-20 bg-slate-50 px-4 py-2.5 text-left text-xs font-medium border-b border-r border-slate-200 w-48 min-w-[192px]">
+              <th className="sticky left-0 z-20 bg-slate-50 px-4 py-2.5 text-left text-xs font-medium border-b border-r border-slate-200 w-52 min-w-[208px]">
                 <span className="text-slate-500 uppercase tracking-wide">Dự án</span>
                 <span className={cn('ml-2 text-[10px] px-1.5 py-0.5 rounded-full font-medium',
                   activeTab === 'revenue' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700')}>
@@ -226,33 +263,92 @@ export default function RevenuePage() {
             </tr>
           </thead>
           <tbody>
-            {projects.map((project, pi) => (
-              <tr key={project.project_id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                <td className="sticky left-0 bg-white border-r border-slate-200 px-4 py-0 font-medium text-slate-700 text-xs truncate max-w-[192px]">
-                  <span className="block truncate py-2">{project.name}</span>
-                </td>
-                {dates.map((date, di) => {
-                  const key = `${project.project_id}__${date}`
-                  return (
-                    <td
-                      key={date}
-                      className={cn('p-0 border-r border-slate-100', date === today && 'bg-blue-50/30')}
-                    >
-                      <div data-cell={key} className="h-9">
-                        <EditableCell
-                          value={gridData.get(key)}
-                          isDirty={dirtyKeys.has(key)}
-                          onCommit={v => updateCell(project.project_id, date, v)}
-                          onNavigate={dir => navigate(pi, di, dir)}
-                          onFocus={() => { focusedCellRef.current = { pi, di } }}
-                          onPaste={handlePaste}
-                        />
-                      </div>
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
+            {projects.map((project, pi) => {
+              const isCumulative = activeTab === 'screen' && project.screen_revenue_type === 'cumulative'
+              return (
+                <tr key={project.project_id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                  <td className="sticky left-0 bg-white border-r border-slate-200 px-3 py-0">
+                    <div className="flex items-center justify-between gap-1.5 py-2">
+                      <span className="font-medium text-slate-700 text-xs truncate">{project.name}</span>
+                      {activeTab === 'screen' && (
+                        <button
+                          onClick={() => updateProject({ ...project, screen_revenue_type: isCumulative ? 'daily' : 'cumulative' })}
+                          className={cn(
+                            'shrink-0 text-[10px] px-1.5 py-0.5 rounded border font-medium transition-colors',
+                            isCumulative
+                              ? 'bg-purple-100 text-purple-700 border-purple-200 hover:bg-purple-200'
+                              : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200'
+                          )}
+                          title={isCumulative ? 'Đang: Cộng dồn — click để đổi' : 'Đang: Hàng ngày — click để đổi'}
+                        >
+                          {isCumulative ? 'Cộng dồn' : 'Hàng ngày'}
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                  {dates.map((date, di) => {
+                    const key = `${project.project_id}__${date}`
+                    const hasPayout = activeTab === 'revenue' && payoutMap.has(key)
+                    const hasNote = noteMap.has(key)
+
+                    if (isCumulative) {
+                      const { delta, cumulative } = getCumulativeDelta(project.project_id, date, di)
+                      const rawValue = screenGrid.get(key)
+                      return (
+                        <td
+                          key={date}
+                          className={cn('p-0 border-r border-slate-100', date === today && 'bg-blue-50/30')}
+                        >
+                          <div data-cell={key} className="h-11">
+                            <EditableCell
+                              value={rawValue}
+                              isDirty={dirtyKeys.has(key)}
+                              onCommit={v => updateCell(project.project_id, date, v)}
+                              onNavigate={dir => navigate(pi, di, dir)}
+                              onFocus={() => { focusedCellRef.current = { pi, di } }}
+                              onPaste={handlePaste}
+                              displayValue={rawValue !== undefined ? delta : undefined}
+                              valueSubtitle={rawValue !== undefined ? `Tổng: ${formatVND(cumulative)}` : undefined}
+                              valueColorClass={delta < 0 ? 'text-red-600' : 'text-slate-700'}
+                              hasNote={hasNote}
+                              onNoteClick={() => setNoteModal({ projectId: project.project_id, date, current: noteMap.get(key) ?? '' })}
+                            />
+                          </div>
+                        </td>
+                      )
+                    }
+
+                    return (
+                      <td
+                        key={date}
+                        className={cn('p-0 border-r border-slate-100', date === today && 'bg-blue-50/30')}
+                      >
+                        <div data-cell={key} className="h-9">
+                          <EditableCell
+                            value={gridData.get(key)}
+                            isDirty={dirtyKeys.has(key)}
+                            onCommit={v => updateCell(project.project_id, date, v)}
+                            onNavigate={dir => navigate(pi, di, dir)}
+                            onFocus={() => { focusedCellRef.current = { pi, di } }}
+                            onPaste={handlePaste}
+                            hasPayout={hasPayout}
+                            onDoubleClick={activeTab === 'revenue' ? () => {
+                              const existing = payoutMap.get(key)
+                              setPayoutModal({
+                                projectId: project.project_id,
+                                date,
+                                start: existing?.start ?? '',
+                                end: existing?.end ?? date,
+                              })
+                            } : undefined}
+                          />
+                        </div>
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })}
           </tbody>
           {/* Totals row */}
           <tfoot className="sticky bottom-0 z-10 bg-slate-50 border-t-2 border-slate-200">
@@ -269,6 +365,92 @@ export default function RevenuePage() {
           </tfoot>
         </table>
       </div>
+
+      {/* Note modal */}
+      {noteModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-5 w-80">
+            <h3 className="font-semibold text-slate-800 text-sm mb-1">Ghi chú chargeback</h3>
+            <p className="text-xs text-slate-500 mb-3">{noteModal.projectId} · {noteModal.date}</p>
+            <textarea
+              autoFocus
+              rows={3}
+              defaultValue={noteModal.current}
+              id="note-input"
+              className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 outline-none focus:ring-2 focus:ring-slate-300 resize-none"
+              placeholder="Ví dụ: Khách refund gói Pro..."
+            />
+            <div className="flex justify-end gap-2 mt-3">
+              <button onClick={() => setNoteModal(null)} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">
+                Hủy
+              </button>
+              <button
+                onClick={() => {
+                  const val = (document.getElementById('note-input') as HTMLTextAreaElement).value
+                  saveNote(noteModal.projectId, noteModal.date, val)
+                  setNoteModal(null)
+                }}
+                className="px-3 py-1.5 text-xs bg-slate-800 text-white rounded-md hover:bg-slate-700"
+              >
+                Lưu ghi chú
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payout modal */}
+      {payoutModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-5 w-80">
+            <h3 className="font-semibold text-slate-800 text-sm mb-1">Kỳ đối soát</h3>
+            <p className="text-xs text-slate-500 mb-3">{payoutModal.projectId} · Nhận tiền ngày {payoutModal.date}</p>
+            <div className="space-y-2">
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Từ ngày</label>
+                <input
+                  type="date"
+                  defaultValue={payoutModal.start}
+                  id="payout-start"
+                  className="w-full text-sm border border-slate-200 rounded-md px-3 py-1.5 outline-none focus:ring-2 focus:ring-slate-300"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Đến ngày</label>
+                <input
+                  type="date"
+                  defaultValue={payoutModal.end}
+                  id="payout-end"
+                  className="w-full text-sm border border-slate-200 rounded-md px-3 py-1.5 outline-none focus:ring-2 focus:ring-slate-300"
+                />
+              </div>
+            </div>
+            <div className="flex justify-between mt-4">
+              <button
+                onClick={() => { savePayout(payoutModal.projectId, payoutModal.date, null, null); setPayoutModal(null) }}
+                className="text-xs text-red-500 hover:text-red-600"
+              >
+                Xóa kỳ đối soát
+              </button>
+              <div className="flex gap-2">
+                <button onClick={() => setPayoutModal(null)} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">
+                  Hủy
+                </button>
+                <button
+                  onClick={() => {
+                    const start = (document.getElementById('payout-start') as HTMLInputElement).value
+                    const end = (document.getElementById('payout-end') as HTMLInputElement).value
+                    if (start && end) { savePayout(payoutModal.projectId, payoutModal.date, start, end); setPayoutModal(null) }
+                  }}
+                  className="px-3 py-1.5 text-xs bg-slate-800 text-white rounded-md hover:bg-slate-700"
+                >
+                  Lưu
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

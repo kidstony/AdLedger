@@ -12,6 +12,7 @@ export interface Project {
   mcc_id: string
   master_project_id?: string | null
   google_campaign_id?: string | null
+  screen_revenue_type?: 'daily' | 'cumulative'
 }
 
 export interface CampaignDiscovery {
@@ -36,6 +37,9 @@ export interface AffiliateRevenue {
   date: string
   revenue: number
   screen_revenue: number
+  note?: string | null
+  payout_start_date?: string | null
+  payout_end_date?: string | null
 }
 
 export interface PnlDaily {

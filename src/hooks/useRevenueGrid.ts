@@ -20,6 +20,16 @@ function getWeekDates(anchor: string): string[] {
   return Array.from({ length: 7 }, (_, i) => addDays(anchor, i - 6))
 }
 
+type RevenueRow = {
+  project_id: string
+  date: string
+  revenue: number
+  screen_revenue: number
+  note?: string | null
+  payout_start_date?: string | null
+  payout_end_date?: string | null
+}
+
 export function useRevenueGrid() {
   const { projects } = useProjectsContext()
 
@@ -38,12 +48,18 @@ export function useRevenueGrid() {
   const savedScreenRef = useRef<Map<string, number>>(new Map())
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set())
 
+  // For cumulative mode: previous day's screen values (one day before the visible window)
+  const [prevScreenMap, setPrevScreenMap] = useState<Map<string, number>>(new Map())
+
+  // Note and payout (billing period) per cell
+  const [noteMap, setNoteMap] = useState<Map<string, string>>(new Map())
+  const [payoutMap, setPayoutMap] = useState<Map<string, { start: string; end: string }>>(new Map())
+
   const dates = useMemo(
     () => viewMode === 'week' ? getWeekDates(anchorDate) : [selectedDate],
     [viewMode, anchorDate, selectedDate]
   )
 
-  // gridData = active tab's grid
   const gridData = activeTab === 'revenue' ? revenueGrid : screenGrid
 
   const fetchRevenue = useCallback(async (dateList: string[]) => {
@@ -52,9 +68,11 @@ export function useRevenueGrid() {
     const to = dateList[dateList.length - 1]
     setIsLoading(true)
     try {
+      // Main fetch
       const res = await fetch(`/api/revenue?from=${from}&to=${to}`)
       if (!res.ok) return
-      const rows: { project_id: string; date: string; revenue: number; screen_revenue: number }[] = await res.json()
+      const rows: RevenueRow[] = await res.json()
+
       setRevenueGrid(prev => {
         const next = new Map(prev)
         rows.forEach(r => next.set(`${r.project_id}__${r.date}`, r.revenue))
@@ -69,6 +87,28 @@ export function useRevenueGrid() {
         savedRevenueRef.current.set(`${r.project_id}__${r.date}`, r.revenue)
         savedScreenRef.current.set(`${r.project_id}__${r.date}`, r.screen_revenue ?? 0)
       })
+
+      // Populate noteMap and payoutMap
+      const nextNotes = new Map<string, string>()
+      const nextPayouts = new Map<string, { start: string; end: string }>()
+      rows.forEach(r => {
+        if (r.note) nextNotes.set(`${r.project_id}__${r.date}`, r.note)
+        if (r.payout_start_date && r.payout_end_date) {
+          nextPayouts.set(`${r.project_id}__${r.date}`, { start: r.payout_start_date, end: r.payout_end_date })
+        }
+      })
+      setNoteMap(nextNotes)
+      setPayoutMap(nextPayouts)
+
+      // Fetch previous day for cumulative delta calculation
+      const prevDate = addDays(from, -1)
+      const prevRes = await fetch(`/api/revenue?from=${prevDate}&to=${prevDate}`)
+      if (prevRes.ok) {
+        const prevRows: RevenueRow[] = await prevRes.json()
+        const nextPrev = new Map<string, number>()
+        prevRows.forEach(r => nextPrev.set(`${r.project_id}__${r.date}`, r.screen_revenue ?? 0))
+        setPrevScreenMap(nextPrev)
+      }
     } finally {
       setIsLoading(false)
     }
@@ -174,15 +214,43 @@ export function useRevenueGrid() {
     setSaved(false)
   }, [dirtyKeys])
 
+  // Immediately save a note for a specific cell
+  const saveNote = useCallback(async (projectId: string, date: string, note: string) => {
+    const key = `${projectId}__${date}`
+    setNoteMap(prev => { const next = new Map(prev); if (note) next.set(key, note); else next.delete(key); return next })
+    await fetch('/api/revenue', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId, date, note: note || null }),
+    })
+  }, [])
+
+  // Immediately save billing period for a specific cell
+  const savePayout = useCallback(async (projectId: string, date: string, start: string | null, end: string | null) => {
+    const key = `${projectId}__${date}`
+    setPayoutMap(prev => {
+      const next = new Map(prev)
+      if (start && end) next.set(key, { start, end }); else next.delete(key)
+      return next
+    })
+    await fetch('/api/revenue', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId, date, payout_start_date: start, payout_end_date: end }),
+    })
+  }, [])
+
   const isAtToday = viewMode === 'week' ? anchorDate >= today : selectedDate >= today
 
   return {
     projects, dates, today, viewMode, anchorDate, selectedDate,
     activeTab, setActiveTab,
-    gridData, dirtyKeys,
+    gridData, screenGrid, prevScreenMap,
+    noteMap, payoutMap,
+    dirtyKeys,
     isDirty: dirtyKeys.size > 0,
     isSaving, isLoading, saved, isAtToday,
     goBack, goForward, goToToday, goToDate, switchMode,
-    updateCell, saveAll, discard,
+    updateCell, saveAll, discard, saveNote, savePayout,
   }
 }

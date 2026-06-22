@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, KeyboardEvent, ClipboardEvent } from 'react'
+import { Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -10,9 +11,24 @@ interface Props {
   onNavigate?: (direction: 'right' | 'left' | 'down' | 'up') => void
   onFocus?: () => void
   onPaste?: (text: string) => void
+  // Cumulative mode: override the displayed number and show a subtitle
+  displayValue?: number
+  valueSubtitle?: string
+  valueColorClass?: string
+  // Note indicator (chargeback)
+  hasNote?: boolean
+  onNoteClick?: (e: React.MouseEvent) => void
+  // Billing period indicator (double-click to tag)
+  hasPayout?: boolean
+  onDoubleClick?: () => void
 }
 
-export default function EditableCell({ value, isDirty, onCommit, onNavigate, onFocus, onPaste }: Props) {
+export default function EditableCell({
+  value, isDirty, onCommit, onNavigate, onFocus, onPaste,
+  displayValue, valueSubtitle, valueColorClass,
+  hasNote, onNoteClick,
+  hasPayout, onDoubleClick,
+}: Props) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -41,31 +57,20 @@ export default function EditableCell({ value, isDirty, onCommit, onNavigate, onF
     } else if (e.key === 'Escape') {
       setEditing(false)
     } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      commit()
-      onNavigate?.('up')
+      e.preventDefault(); commit(); onNavigate?.('up')
     } else if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      commit()
-      onNavigate?.('down')
+      e.preventDefault(); commit(); onNavigate?.('down')
     } else if (e.key === 'ArrowLeft') {
-      e.preventDefault()
-      commit()
-      onNavigate?.('left')
+      e.preventDefault(); commit(); onNavigate?.('left')
     } else if (e.key === 'ArrowRight') {
-      e.preventDefault()
-      commit()
-      onNavigate?.('right')
+      e.preventDefault(); commit(); onNavigate?.('right')
     }
   }
 
   function handlePaste(e: ClipboardEvent) {
     const text = e.clipboardData.getData('text')
     const isMulti = text.includes('\t') || text.split('\n').filter(l => l.trim()).length > 1
-    if (isMulti) {
-      e.preventDefault()
-      onPaste?.(text)
-    }
+    if (isMulti) { e.preventDefault(); onPaste?.(text) }
   }
 
   if (editing) {
@@ -82,16 +87,58 @@ export default function EditableCell({ value, isDirty, onCommit, onNavigate, onF
     )
   }
 
+  const isCumulative = displayValue !== undefined
+  const mainValue = isCumulative ? displayValue : value
+  const mainColorClass = isCumulative
+    ? (valueColorClass ?? (displayValue! >= 0 ? 'text-slate-700' : 'text-red-600'))
+    : (value === undefined ? 'text-slate-300' : 'text-slate-700')
+
+  function fmt(n: number) {
+    return '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+
   return (
     <div
       onClick={startEdit}
+      onDoubleClick={onDoubleClick}
       className={cn(
-        'w-full h-full px-2 py-1.5 text-right font-mono text-xs cursor-text select-none',
+        'relative w-full h-full px-2 cursor-text select-none',
+        isCumulative ? 'py-1' : 'py-1.5',
         isDirty ? 'bg-amber-50' : '',
-        value === undefined ? 'text-slate-300' : 'text-slate-700'
       )}
     >
-      {value !== undefined ? '$' + value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}
+      {/* Blue dot: has billing period */}
+      {hasPayout && (
+        <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-blue-500" />
+      )}
+
+      {/* Main value */}
+      <div className={cn('text-right font-mono text-xs font-medium', mainColorClass)}>
+        {mainValue === undefined
+          ? '—'
+          : (isCumulative && displayValue! < 0 ? '-' : '') + fmt(mainValue)}
+      </div>
+
+      {/* Subtitle (cumulative total) */}
+      {valueSubtitle && (
+        <div className="text-right font-mono text-[10px] text-slate-400 leading-none">
+          {valueSubtitle}
+        </div>
+      )}
+
+      {/* Note icon (chargeback) */}
+      {isCumulative && displayValue !== undefined && displayValue < 0 && (
+        <button
+          onClick={e => { e.stopPropagation(); onNoteClick?.(e) }}
+          className={cn(
+            'absolute bottom-0.5 left-1 p-0.5 rounded transition-colors',
+            hasNote ? 'text-amber-500 hover:text-amber-600' : 'text-slate-300 hover:text-slate-500'
+          )}
+          title={hasNote ? 'Xem/sửa ghi chú' : 'Thêm ghi chú'}
+        >
+          <Pencil size={9} />
+        </button>
+      )}
     </div>
   )
 }
