@@ -12,7 +12,7 @@ interface Props {
 }
 
 export default function SummaryCards({ totalSpend, totalRevenue, totalProfit, avgRoi, totalScreen, totalPending, estimatedRoi }: Props) {
-  const estimatedProfit = totalScreen - totalSpend
+  const estimatedProfit = totalRevenue + totalScreen - totalSpend
   const pending = Math.max(totalPending, 0)
   const hasScreen = totalScreen > 0
 
@@ -84,6 +84,7 @@ export default function SummaryCards({ totalSpend, totalRevenue, totalProfit, av
             </span>
           </div>
         )}
+        {hasScreen && <p className="text-[10px] text-slate-300 mt-0.5">(thực + màn hình) − chi phí</p>}
       </div>
 
       {/* ROI */}

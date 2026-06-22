@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
+import { ArrowUp, ArrowDown, ArrowUpDown, Monitor } from 'lucide-react'
 import { PnlSummary, SortColumn, SortDirection } from '@/lib/types'
 import { formatVND, formatROI, getProfitRowClass, getProfitTextClass, getRoiTextClass, cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -12,13 +12,15 @@ interface Props {
   isLoading: boolean
 }
 
-const columns: { key: SortColumn | 'cid'; label: string; sortable: boolean; align: string }[] = [
-  { key: 'name', label: 'Tên dự án', sortable: true, align: 'text-left' },
-  { key: 'cid', label: 'CID', sortable: false, align: 'text-left' },
-  { key: 'total_spend', label: 'Chi phí', sortable: true, align: 'text-right' },
-  { key: 'total_revenue', label: 'Doanh thu', sortable: true, align: 'text-right' },
-  { key: 'total_profit', label: 'Lợi nhuận', sortable: true, align: 'text-right' },
-  { key: 'avg_roi', label: 'ROI%', sortable: true, align: 'text-right' },
+const columns: { key: string; label: string; sortable: boolean; align: string; icon?: boolean }[] = [
+  { key: 'name',                 label: 'Tên dự án',      sortable: true,  align: 'text-left' },
+  { key: 'cid',                  label: 'CID',             sortable: false, align: 'text-left' },
+  { key: 'total_spend',          label: 'Chi phí',         sortable: true,  align: 'text-right' },
+  { key: 'total_revenue',        label: 'Doanh thu',       sortable: true,  align: 'text-right' },
+  { key: 'total_screen_revenue', label: 'DT Màn hình',     sortable: false, align: 'text-right', icon: true },
+  { key: 'total_profit',         label: 'Lợi nhuận',       sortable: true,  align: 'text-right' },
+  { key: 'est_profit',           label: 'LN ước tính',     sortable: false, align: 'text-right', icon: true },
+  { key: 'avg_roi',              label: 'ROI%',            sortable: true,  align: 'text-right' },
 ]
 
 function SortIcon({ col, sortCol, sortDir }: { col: string; sortCol: string; sortDir: SortDirection }) {
@@ -33,8 +35,10 @@ export default function PnlTable({ data, isLoading }: Props) {
   const [sortCol, setSortCol] = useState<SortColumn>('total_profit')
   const [sortDir, setSortDir] = useState<SortDirection>('asc')
 
+  const nonSortable = new Set(['cid', 'total_screen_revenue', 'est_profit'])
+
   function handleSort(col: string) {
-    if (col === 'cid') return
+    if (nonSortable.has(col)) return
     const c = col as SortColumn
     if (c === sortCol) {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -61,7 +65,7 @@ export default function PnlTable({ data, isLoading }: Props) {
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide w-10">#</th>
               {columns.map(c => (
-                <th key={c.key} className={cn('px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide', c.align)}>
+                <th key={c.key} className={cn('px-4 py-3 text-xs font-medium uppercase tracking-wide', c.align, c.icon ? 'text-blue-400' : 'text-slate-500')}>
                   {c.label}
                 </th>
               ))}
@@ -104,12 +108,14 @@ export default function PnlTable({ data, isLoading }: Props) {
                   key={c.key}
                   onClick={() => handleSort(c.key)}
                   className={cn(
-                    'px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wide',
+                    'px-4 py-3 text-xs font-medium uppercase tracking-wide',
                     c.align,
+                    c.icon ? 'text-blue-400' : 'text-slate-500',
                     c.sortable && 'cursor-pointer select-none hover:text-slate-700'
                   )}
                 >
                   <span className="inline-flex items-center gap-1">
+                    {c.icon && <Monitor size={11} />}
                     {c.label}
                     {c.sortable && <SortIcon col={c.key} sortCol={sortCol} sortDir={sortDir} />}
                   </span>
@@ -134,9 +140,20 @@ export default function PnlTable({ data, isLoading }: Props) {
                 <td className="px-4 py-3 font-mono text-xs text-slate-400">{row.cid}</td>
                 <td className="px-4 py-3 text-right font-mono text-slate-700">{formatVND(row.total_spend)}</td>
                 <td className="px-4 py-3 text-right font-mono text-slate-700">{formatVND(row.total_revenue)}</td>
+                <td className="px-4 py-3 text-right font-mono text-blue-500">
+                  {row.total_screen_revenue > 0 ? formatVND(row.total_screen_revenue) : <span className="text-slate-300">—</span>}
+                </td>
                 <td className={cn('px-4 py-3 text-right font-mono font-medium', getProfitTextClass(row.total_profit))}>
                   {row.total_profit >= 0 ? '+' : ''}{formatVND(row.total_profit)}
                 </td>
+                {(() => {
+                  const est = row.total_revenue + row.total_screen_revenue - row.total_spend
+                  return (
+                    <td className={cn('px-4 py-3 text-right font-mono font-medium', row.total_screen_revenue > 0 ? getProfitTextClass(est) : 'text-slate-300')}>
+                      {row.total_screen_revenue > 0 ? (est >= 0 ? '+' : '') + formatVND(est) : '—'}
+                    </td>
+                  )
+                })()}
                 <td className={cn('px-4 py-3 text-right font-mono text-xs', getRoiTextClass(row.avg_roi))}>
                   {formatROI(row.avg_roi)}
                 </td>
