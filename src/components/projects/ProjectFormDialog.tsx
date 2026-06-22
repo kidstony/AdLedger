@@ -15,11 +15,9 @@ interface Props {
   onClose: () => void
 }
 
-const MCC_OPTIONS = Array.from({ length: 10 }, (_, i) => `mcc${String(i + 1).padStart(3, '0')}`)
-
 export default function ProjectFormDialog({ mode, initialData, existingIds, masterProjects, onSave, onClose }: Props) {
   const [form, setForm] = useState<Project>(
-    initialData ?? { project_id: '', cid: '', name: '', mcc_id: 'mcc001', master_project_id: null }
+    initialData ?? { project_id: '', cid: '0000000000', name: '', mcc_id: 'uncategorized', master_project_id: null }
   )
   const [errors, setErrors] = useState<Partial<Record<keyof Project, string>>>({})
 
@@ -27,7 +25,6 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
     const errs: Partial<Record<keyof Project, string>> = {}
     if (!form.project_id.match(/^proj\d{3}$/)) errs.project_id = 'Định dạng: proj001'
     if (mode === 'add' && existingIds.includes(form.project_id)) errs.project_id = 'ID đã tồn tại'
-    if (!form.cid.match(/^\d{10}$/)) errs.cid = 'CID phải là 10 chữ số'
     if (!form.name.trim()) errs.name = 'Bắt buộc nhập tên'
     setErrors(errs)
     return Object.keys(errs).length === 0
@@ -40,7 +37,7 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
     }
   }
 
-  function field(key: 'project_id' | 'cid' | 'name', label: string, placeholder: string, disabled = false) {
+  function field(key: 'project_id' | 'name', label: string, placeholder: string, disabled = false) {
     return (
       <div className="space-y-1">
         <label className="text-xs font-medium text-slate-600">{label}</label>
@@ -64,18 +61,7 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
         </DialogHeader>
         <div className="space-y-4 pt-2">
           {field('project_id', 'Project ID', 'proj001', mode === 'edit')}
-          {field('cid', 'CID (10 chữ số)', '1234567890')}
           {field('name', 'Tên dự án', 'Thời trang nữ 001')}
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-slate-600">MCC</label>
-            <select
-              value={form.mcc_id}
-              onChange={e => setForm(f => ({ ...f, mcc_id: e.target.value }))}
-              className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300"
-            >
-              {MCC_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
           <div className="space-y-1">
             <label className="text-xs font-medium text-slate-600">Tổng Dự Án (tuỳ chọn)</label>
             <select
