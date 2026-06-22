@@ -62,6 +62,8 @@ function buildDiscoverScript(secret: string, webhookUrl: string) {
       scanAccount(account.getCustomerId().replace(/-/g, ''));
     }
   } else {
+    mccId = null;
+    mccName = null;
     scanAccount(AdsApp.currentAccount().getCustomerId().replace(/-/g, ''));
   }
 
@@ -120,6 +122,8 @@ function buildBackfillScript(secret: string, webhookUrl: string) {
       scanAccount(account.getCustomerId().replace(/-/g, ''));
     }
   } else {
+    mccId = null;
+    mccName = null;
     scanAccount(AdsApp.currentAccount().getCustomerId().replace(/-/g, ''));
   }
 
@@ -174,6 +178,8 @@ function buildSpendScript(secret: string, webhookUrl: string) {
       scanAccount(account.getCustomerId().replace(/-/g, ''));
     }
   } else {
+    mccId = null;
+    mccName = null;
     scanAccount(AdsApp.currentAccount().getCustomerId().replace(/-/g, ''));
   }
 

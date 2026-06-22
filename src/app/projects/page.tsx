@@ -249,7 +249,14 @@ export default function ProjectsPage() {
                     {campaignInfoMap.get(p.project_id)?.mcc_name ?? p.mcc_id}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-400">
-                    {fmtCustomerId(campaignInfoMap.get(p.project_id)?.mcc_id)}
+                    {(() => {
+                      const info = campaignInfoMap.get(p.project_id)
+                      if (!info?.mcc_id) return <span className="text-slate-300">—</span>
+                      const mccClean = info.mcc_id.replace(/-/g, '')
+                      const cidClean = (info.customer_id ?? '').replace(/-/g, '')
+                      if (mccClean === cidClean) return <span className="text-slate-300">—</span>
+                      return fmtCustomerId(info.mcc_id)
+                    })()}
                   </td>
                   <td className="px-4 py-3">
                     {p.master_project_id ? (
