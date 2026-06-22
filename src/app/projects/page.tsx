@@ -23,9 +23,9 @@ export default function ProjectsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const headerCheckboxRef = useRef<HTMLInputElement>(null)
 
-  // campaign info from Google Ads: project_id → {customer_id, campaign_id, mcc_name}
+  // campaign info from Google Ads: project_id → {customer_id, campaign_id, mcc_name, mcc_id}
   const [campaignInfoMap, setCampaignInfoMap] = useState<Map<string, {
-    customer_id: string; campaign_id: string; mcc_name: string | null
+    customer_id: string; campaign_id: string; mcc_name: string | null; mcc_id: string | null
   }>>(new Map())
 
   useEffect(() => {
@@ -33,12 +33,13 @@ export default function ProjectsPage() {
       .then(r => r.json())
       .then((list: CampaignDiscovery[]) => {
         if (!Array.isArray(list)) return
-        const map = new Map<string, { customer_id: string; campaign_id: string; mcc_name: string | null }>()
+        const map = new Map<string, { customer_id: string; campaign_id: string; mcc_name: string | null; mcc_id: string | null }>()
         list.forEach(c => {
           if (c.project_id) map.set(c.project_id, {
             customer_id: c.customer_id,
             campaign_id: c.campaign_id,
             mcc_name: c.mcc_name ?? null,
+            mcc_id: c.mcc_id ?? null,
           })
         })
         setCampaignInfoMap(map)
@@ -209,7 +210,7 @@ export default function ProjectsPage() {
                   title="Chọn tất cả"
                 />
               </th>
-              {['Project ID', 'Tên dự án', 'CID', 'ID Campaign', 'MCC', 'Tổng Dự Án', ''].map(h => (
+              {['Project ID', 'Tên dự án', 'CID', 'ID Campaign', 'MCC', 'ID MCC', 'Tổng Dự Án', ''].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -240,6 +241,9 @@ export default function ProjectsPage() {
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-500">
                     {campaignInfoMap.get(p.project_id)?.mcc_name ?? p.mcc_id}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-400">
+                    {campaignInfoMap.get(p.project_id)?.mcc_id ?? <span className="text-slate-300">—</span>}
                   </td>
                   <td className="px-4 py-3">
                     {p.master_project_id ? (
