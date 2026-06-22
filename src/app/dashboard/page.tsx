@@ -1,6 +1,6 @@
 'use client'
 
-import { RefreshCw, Search } from 'lucide-react'
+import { RefreshCw, Search, Zap, Database } from 'lucide-react'
 import { usePnlData } from '@/hooks/usePnlData'
 import SummaryCards from '@/components/dashboard/SummaryCards'
 import DateRangePicker from '@/components/dashboard/DateRangePicker'
@@ -8,14 +8,39 @@ import PnlTable from '@/components/dashboard/PnlTable'
 import { cn } from '@/lib/utils'
 
 export default function DashboardPage() {
-  const { data, totals, isLoading, dateRange, setDateRange, search, setSearch, refresh } = usePnlData()
+  const { data, totals, isLoading, dateRange, setDateRange, search, setSearch, refresh, dataSource, lastSyncedAt } = usePnlData()
+
+  function formatSyncTime(iso: string) {
+    const d = new Date(iso)
+    const now = new Date()
+    const isToday = d.toDateString() === now.toDateString()
+    return isToday
+      ? 'hôm nay ' + d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })
+  }
 
   return (
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-slate-800">Dashboard P&L</h2>
-          <p className="text-sm text-slate-500 mt-0.5">Tổng quan lãi/lỗ theo dự án</p>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-semibold text-slate-800">Dashboard P&L</h2>
+            {dataSource === 'real' ? (
+              <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 font-medium border border-green-200">
+                <Zap size={10} /> Chi phí thật
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-medium border border-amber-200">
+                <Database size={10} /> Demo data
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-slate-500 mt-0.5">
+            Tổng quan lãi/lỗ theo dự án
+            {lastSyncedAt && dataSource === 'real' && (
+              <span className="ml-2 text-slate-400">· Đồng bộ cuối: {formatSyncTime(lastSyncedAt)}</span>
+            )}
+          </p>
         </div>
       </div>
 

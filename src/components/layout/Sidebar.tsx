@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { BarChart3, FolderOpen, DollarSign, LogOut, ShieldCheck, Layers } from 'lucide-react'
+import { BarChart3, FolderOpen, DollarSign, LogOut, ShieldCheck, Layers, Plug } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/context/AuthContext'
 
@@ -12,6 +12,7 @@ const navItems = [
   { href: '/projects', label: 'Quản lý dự án', icon: FolderOpen, roles: ['admin', 'manager', 'employee'] },
   { href: '/revenue', label: 'Nhập doanh thu', icon: DollarSign, roles: ['admin', 'manager', 'employee'] },
   { href: '/admin', label: 'Quản trị hệ thống', icon: ShieldCheck, roles: ['admin'] },
+  { href: '/admin/integrations', label: 'Tích hợp', icon: Plug, roles: ['admin'] },
 ]
 
 const roleBadge: Record<string, { label: string; className: string }> = {
