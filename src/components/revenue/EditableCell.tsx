@@ -11,6 +11,7 @@ interface Props {
   onNavigate?: (direction: 'right' | 'left' | 'down' | 'up') => void
   onFocus?: () => void
   onPaste?: (text: string) => void
+  onClear?: () => void
   // Cumulative mode: override the displayed number and show a subtitle
   displayValue?: number
   valueSubtitle?: string
@@ -24,7 +25,7 @@ interface Props {
 }
 
 export default function EditableCell({
-  value, isDirty, onCommit, onNavigate, onFocus, onPaste,
+  value, isDirty, onCommit, onNavigate, onFocus, onPaste, onClear,
   displayValue, valueSubtitle, valueColorClass,
   hasNote, onNoteClick,
   hasPayout, onDoubleClick,
@@ -41,6 +42,11 @@ export default function EditableCell({
   }
 
   function commit() {
+    if (draft.trim() === '') {
+      onClear?.()
+      setEditing(false)
+      return
+    }
     const num = parseFloat(draft.replace(/[^0-9.]/g, ''))
     if (!isNaN(num)) onCommit(Math.round(num * 100) / 100)
     setEditing(false)

@@ -34,7 +34,7 @@ export default function RevenuePage() {
     noteMap, payoutMap,
     dirtyKeys, isDirty, isSaving, isLoading, saved, isAtToday,
     goBack, goForward, goToToday, goToDate, switchMode,
-    updateCell, saveAll, discard, saveNote, savePayout,
+    updateCell, clearCell, saveAll, discard, saveNote, savePayout,
   } = useRevenueGrid()
 
   const { updateProject } = useProjectsContext()
@@ -304,6 +304,7 @@ export default function RevenuePage() {
                               value={rawValue}
                               isDirty={dirtyKeys.has(key)}
                               onCommit={v => updateCell(project.project_id, date, v)}
+                              onClear={() => clearCell(project.project_id, date)}
                               onNavigate={dir => navigate(pi, di, dir)}
                               onFocus={() => { focusedCellRef.current = { pi, di } }}
                               onPaste={handlePaste}
@@ -328,6 +329,7 @@ export default function RevenuePage() {
                             value={gridData.get(key)}
                             isDirty={dirtyKeys.has(key)}
                             onCommit={v => updateCell(project.project_id, date, v)}
+                            onClear={() => clearCell(project.project_id, date)}
                             onNavigate={dir => navigate(pi, di, dir)}
                             onFocus={() => { focusedCellRef.current = { pi, di } }}
                             onPaste={handlePaste}

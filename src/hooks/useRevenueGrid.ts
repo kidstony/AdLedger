@@ -46,6 +46,7 @@ export function useRevenueGrid() {
   const [screenGrid, setScreenGrid] = useState<Map<string, number>>(new Map())
   const savedRevenueRef = useRef<Map<string, number>>(new Map())
   const savedScreenRef = useRef<Map<string, number>>(new Map())
+  const clearedRef = useRef<Set<string>>(new Set())
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set())
 
   // For cumulative mode: previous day's screen values (one day before the visible window)
@@ -75,7 +76,7 @@ export function useRevenueGrid() {
 
       setRevenueGrid(prev => {
         const next = new Map(prev)
-        rows.forEach(r => next.set(`${r.project_id}__${r.date}`, r.revenue))
+        rows.forEach(r => { if ((r.revenue ?? 0) > 0) next.set(`${r.project_id}__${r.date}`, r.revenue) })
         return next
       })
       setScreenGrid(prev => {
@@ -150,10 +151,23 @@ export function useRevenueGrid() {
 
   const updateCell = useCallback((projectId: string, date: string, value: number) => {
     const key = `${projectId}__${date}`
+    clearedRef.current.delete(key)
     if (activeTab === 'revenue') {
       setRevenueGrid(prev => { const next = new Map(prev); next.set(key, value); return next })
     } else {
       setScreenGrid(prev => { const next = new Map(prev); next.set(key, value); return next })
+    }
+    setDirtyKeys(prev => new Set(prev).add(key))
+    setSaved(false)
+  }, [activeTab])
+
+  const clearCell = useCallback((projectId: string, date: string) => {
+    const key = `${projectId}__${date}`
+    clearedRef.current.add(key)
+    if (activeTab === 'revenue') {
+      setRevenueGrid(prev => { const next = new Map(prev); next.delete(key); return next })
+    } else {
+      setScreenGrid(prev => { const next = new Map(prev); next.delete(key); return next })
     }
     setDirtyKeys(prev => new Set(prev).add(key))
     setSaved(false)
@@ -166,11 +180,12 @@ export function useRevenueGrid() {
       const sep = key.indexOf('__')
       const project_id = key.slice(0, sep)
       const date = key.slice(sep + 2)
+      const wasCleared = clearedRef.current.has(key)
       return {
         project_id,
         date,
-        revenue:        revenueGrid.get(key) ?? savedRevenueRef.current.get(key) ?? 0,
-        screen_revenue: screenGrid.get(key)  ?? savedScreenRef.current.get(key)  ?? 0,
+        revenue:        wasCleared ? 0 : (revenueGrid.get(key) ?? savedRevenueRef.current.get(key) ?? 0),
+        screen_revenue: wasCleared ? 0 : (screenGrid.get(key)  ?? savedScreenRef.current.get(key)  ?? 0),
       }
     })
     try {
@@ -181,9 +196,11 @@ export function useRevenueGrid() {
       })
       if (res.ok) {
         rows.forEach(r => {
-          savedRevenueRef.current.set(`${r.project_id}__${r.date}`, r.revenue)
-          savedScreenRef.current.set(`${r.project_id}__${r.date}`, r.screen_revenue)
+          const k = `${r.project_id}__${r.date}`
+          savedRevenueRef.current.set(k, r.revenue)
+          savedScreenRef.current.set(k, r.screen_revenue)
         })
+        clearedRef.current.clear()
         setDirtyKeys(new Set())
         setSaved(true)
         setTimeout(() => setSaved(false), 2500)
@@ -198,7 +215,7 @@ export function useRevenueGrid() {
       const next = new Map(prev)
       dirtyKeys.forEach(key => {
         const orig = savedRevenueRef.current.get(key)
-        if (orig !== undefined) next.set(key, orig); else next.delete(key)
+        if (orig !== undefined && orig > 0) next.set(key, orig); else next.delete(key)
       })
       return next
     })
@@ -210,6 +227,7 @@ export function useRevenueGrid() {
       })
       return next
     })
+    clearedRef.current.clear()
     setDirtyKeys(new Set())
     setSaved(false)
   }, [dirtyKeys])
@@ -251,6 +269,6 @@ export function useRevenueGrid() {
     isDirty: dirtyKeys.size > 0,
     isSaving, isLoading, saved, isAtToday,
     goBack, goForward, goToToday, goToDate, switchMode,
-    updateCell, saveAll, discard, saveNote, savePayout,
+    updateCell, clearCell, saveAll, discard, saveNote, savePayout,
   }
 }
