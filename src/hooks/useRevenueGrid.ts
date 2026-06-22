@@ -3,12 +3,13 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useProjectsContext } from '@/context/ProjectsContext'
 
-export type ViewMode = 'week' | 'day'
+export type ViewMode = 'day' | 'week' | 'month' | 'all'
 export type RevenueTab = 'revenue' | 'screen'
 
-function todayStr(): string {
-  return new Date().toISOString().split('T')[0]
-}
+type HistoryChange = { key: string; tab: RevenueTab; old: number | undefined; val: number | undefined }
+type HistoryEntry  = { changes: HistoryChange[] }
+
+function todayStr(): string { return new Date().toISOString().split('T')[0] }
 
 function addDays(date: string, n: number): string {
   const d = new Date(date + 'T00:00:00')
@@ -16,8 +17,20 @@ function addDays(date: string, n: number): string {
   return d.toISOString().split('T')[0]
 }
 
+function addMonths(date: string, n: number): string {
+  const d = new Date(date.slice(0, 7) + '-01T00:00:00')
+  d.setMonth(d.getMonth() + n)
+  return d.toISOString().split('T')[0].slice(0, 7) + '-01'
+}
+
 function getWeekDates(anchor: string): string[] {
   return Array.from({ length: 7 }, (_, i) => addDays(anchor, i - 6))
+}
+
+function getMonthDates(firstDay: string): string[] {
+  const [y, m] = firstDay.slice(0, 7).split('-').map(Number)
+  const days = new Date(y, m, 0).getDate()
+  return Array.from({ length: days }, (_, i) => `${y}-${String(m).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`)
 }
 
 type RevenueRow = {
@@ -32,44 +45,160 @@ type RevenueRow = {
 
 export function useRevenueGrid() {
   const { projects } = useProjectsContext()
-
   const today = todayStr()
+
   const [viewMode, setViewMode] = useState<ViewMode>('week')
-  const [anchorDate, setAnchorDate] = useState(today)
-  const [selectedDate, setSelectedDate] = useState(today)
+  const [anchorDate, setAnchorDate] = useState(today)     // week end / month first-day
+  const [selectedDate, setSelectedDate] = useState(today) // day mode
   const [activeTab, setActiveTab] = useState<RevenueTab>('revenue')
   const [isLoading, setIsLoading] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
 
   const [revenueGrid, setRevenueGrid] = useState<Map<string, number>>(new Map())
-  const [screenGrid, setScreenGrid] = useState<Map<string, number>>(new Map())
+  const [screenGrid,  setScreenGrid]  = useState<Map<string, number>>(new Map())
   const savedRevenueRef = useRef<Map<string, number>>(new Map())
-  const savedScreenRef = useRef<Map<string, number>>(new Map())
-  const clearedRef = useRef<Set<string>>(new Set())
-  const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set())
+  const savedScreenRef  = useRef<Map<string, number>>(new Map())
+  const clearedRef      = useRef<Set<string>>(new Set())
 
-  // For cumulative mode: previous day's screen values (one day before the visible window)
+  // Refs always holding current grid values (needed inside callbacks without stale deps)
+  const revenueGridRef = useRef<Map<string, number>>(new Map())
+  const screenGridRef  = useRef<Map<string, number>>(new Map())
+  useEffect(() => { revenueGridRef.current = revenueGrid }, [revenueGrid])
+  useEffect(() => { screenGridRef.current  = screenGrid  }, [screenGrid])
+
   const [prevScreenMap, setPrevScreenMap] = useState<Map<string, number>>(new Map())
-
-  // Note and payout (billing period) per cell
-  const [noteMap, setNoteMap] = useState<Map<string, string>>(new Map())
+  const [noteMap,   setNoteMap]   = useState<Map<string, string>>(new Map())
   const [payoutMap, setPayoutMap] = useState<Map<string, { start: string; end: string }>>(new Map())
 
-  const dates = useMemo(
-    () => viewMode === 'week' ? getWeekDates(anchorDate) : [selectedDate],
-    [viewMode, anchorDate, selectedDate]
-  )
+  // Undo / Redo
+  const historyRef  = useRef<HistoryEntry[]>([])
+  const futureRef   = useRef<HistoryEntry[]>([])
+  const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
 
-  const gridData = activeTab === 'revenue' ? revenueGrid : screenGrid
+  function showToast(msg: string) {
+    setToast(msg)
+    setTimeout(() => setToast(null), 2000)
+  }
 
+  function syncUndoRedoState() {
+    setCanUndo(historyRef.current.length > 0)
+    setCanRedo(futureRef.current.length > 0)
+  }
+
+  // Auto-save (debounced 600ms)
+  const pendingKeysRef = useRef<Set<string>>(new Set())
+  const saveTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const executeSave = useCallback(async () => {
+    if (pendingKeysRef.current.size === 0) return
+    setSaveStatus('saving')
+    const keys = Array.from(pendingKeysRef.current)
+    pendingKeysRef.current.clear()
+
+    const rows = keys.map(key => {
+      const sep = key.indexOf('__')
+      const project_id = key.slice(0, sep)
+      const date = key.slice(sep + 2)
+      const cleared = clearedRef.current.has(key)
+      return {
+        project_id,
+        date,
+        revenue:        cleared ? 0 : (revenueGridRef.current.get(key) ?? savedRevenueRef.current.get(key) ?? 0),
+        screen_revenue: cleared ? 0 : (screenGridRef.current.get(key)  ?? savedScreenRef.current.get(key)  ?? 0),
+      }
+    })
+
+    try {
+      const res = await fetch('/api/revenue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows }),
+      })
+      if (res.ok) {
+        rows.forEach(r => {
+          const k = `${r.project_id}__${r.date}`
+          savedRevenueRef.current.set(k, r.revenue)
+          savedScreenRef.current.set(k, r.screen_revenue)
+        })
+        clearedRef.current.clear()
+        setSaveStatus('saved')
+        setTimeout(() => setSaveStatus('idle'), 3000)
+      } else {
+        setSaveStatus('idle')
+      }
+    } catch {
+      setSaveStatus('idle')
+    }
+  }, [])
+
+  const scheduleAutoSave = useCallback((key: string) => {
+    pendingKeysRef.current.add(key)
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(executeSave, 600)
+  }, [executeSave])
+
+  // Dates computed from view mode
+  const dates = useMemo(() => {
+    if (viewMode === 'day')   return [selectedDate]
+    if (viewMode === 'week')  return getWeekDates(anchorDate)
+    if (viewMode === 'month') return getMonthDates(anchorDate.slice(0, 7) + '-01')
+    // 'all' — derived from loaded data below
+    return []
+  }, [viewMode, anchorDate, selectedDate])
+
+  // For "all-time": aggregate grids by month, compute unique months
+  const monthlyRevenueGrid = useMemo(() => {
+    if (viewMode !== 'all') return new Map<string, number>()
+    const r = new Map<string, number>()
+    revenueGrid.forEach((v, k) => {
+      const sep = k.indexOf('__')
+      const pid  = k.slice(0, sep)
+      const mkey = `${pid}__${k.slice(sep + 2, sep + 9)}-01`
+      r.set(mkey, (r.get(mkey) ?? 0) + v)
+    })
+    return r
+  }, [viewMode, revenueGrid])
+
+  const monthlyScreenGrid = useMemo(() => {
+    if (viewMode !== 'all') return new Map<string, number>()
+    const r = new Map<string, number>()
+    screenGrid.forEach((v, k) => {
+      const sep = k.indexOf('__')
+      const pid  = k.slice(0, sep)
+      const mkey = `${pid}__${k.slice(sep + 2, sep + 9)}-01`
+      r.set(mkey, (r.get(mkey) ?? 0) + v)
+    })
+    return r
+  }, [viewMode, screenGrid])
+
+  const allTimeDates = useMemo(() => {
+    if (viewMode !== 'all') return []
+    const months = new Set<string>()
+    const add = (g: Map<string, number>) => g.forEach((_, k) => {
+      const date = k.slice(k.indexOf('__') + 2)
+      months.add(date.slice(0, 7) + '-01')
+    })
+    add(revenueGrid); add(screenGrid)
+    if (months.size === 0) months.add(today.slice(0, 7) + '-01')
+    return Array.from(months).sort()
+  }, [viewMode, revenueGrid, screenGrid, today])
+
+  const effectiveDates = viewMode === 'all' ? allTimeDates : dates
+
+  const gridData = useMemo(() => {
+    if (viewMode === 'all') return activeTab === 'revenue' ? monthlyRevenueGrid : monthlyScreenGrid
+    return activeTab === 'revenue' ? revenueGrid : screenGrid
+  }, [viewMode, activeTab, revenueGrid, screenGrid, monthlyRevenueGrid, monthlyScreenGrid])
+
+  // Fetch revenue whenever visible dates change
   const fetchRevenue = useCallback(async (dateList: string[]) => {
     if (dateList.length === 0) return
-    const from = dateList[0]
-    const to = dateList[dateList.length - 1]
+    const from = viewMode === 'all' ? '2020-01-01' : dateList[0]
+    const to   = today
     setIsLoading(true)
     try {
-      // Main fetch
       const res = await fetch(`/api/revenue?from=${from}&to=${to}`)
       if (!res.ok) return
       const rows: RevenueRow[] = await res.json()
@@ -89,8 +218,7 @@ export function useRevenueGrid() {
         savedScreenRef.current.set(`${r.project_id}__${r.date}`, r.screen_revenue ?? 0)
       })
 
-      // Populate noteMap and payoutMap
-      const nextNotes = new Map<string, string>()
+      const nextNotes   = new Map<string, string>()
       const nextPayouts = new Map<string, { start: string; end: string }>()
       rows.forEach(r => {
         if (r.note) nextNotes.set(`${r.project_id}__${r.date}`, r.note)
@@ -101,34 +229,46 @@ export function useRevenueGrid() {
       setNoteMap(nextNotes)
       setPayoutMap(nextPayouts)
 
-      // Fetch previous day for cumulative delta calculation
-      const prevDate = addDays(from, -1)
-      const prevRes = await fetch(`/api/revenue?from=${prevDate}&to=${prevDate}`)
-      if (prevRes.ok) {
-        const prevRows: RevenueRow[] = await prevRes.json()
-        const nextPrev = new Map<string, number>()
-        prevRows.forEach(r => nextPrev.set(`${r.project_id}__${r.date}`, r.screen_revenue ?? 0))
-        setPrevScreenMap(nextPrev)
+      if (viewMode !== 'all') {
+        const prevDate = addDays(dateList[0], -1)
+        const prevRes  = await fetch(`/api/revenue?from=${prevDate}&to=${prevDate}`)
+        if (prevRes.ok) {
+          const prevRows: RevenueRow[] = await prevRes.json()
+          const nextPrev = new Map<string, number>()
+          prevRows.forEach(r => nextPrev.set(`${r.project_id}__${r.date}`, r.screen_revenue ?? 0))
+          setPrevScreenMap(nextPrev)
+        }
       }
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [viewMode, today])
 
   useEffect(() => {
-    fetchRevenue(dates)
-  }, [dates, fetchRevenue])
+    if (viewMode === 'all') {
+      fetchRevenue([])
+    } else {
+      fetchRevenue(dates)
+    }
+  }, [dates, viewMode, fetchRevenue])
 
+  // Navigation
   const goBack = useCallback(() => {
-    if (viewMode === 'week') setAnchorDate(prev => addDays(prev, -7))
-    else setSelectedDate(prev => addDays(prev, -1))
+    if (viewMode === 'week')  setAnchorDate(prev => addDays(prev, -7))
+    else if (viewMode === 'day')   setSelectedDate(prev => addDays(prev, -1))
+    else if (viewMode === 'month') setAnchorDate(prev => addMonths(prev, -1))
   }, [viewMode])
 
   const goForward = useCallback(() => {
     if (viewMode === 'week') {
-      setAnchorDate(prev => { const next = addDays(prev, 7); return next > today ? today : next })
-    } else {
-      setSelectedDate(prev => { const next = addDays(prev, 1); return next > today ? today : next })
+      setAnchorDate(prev => { const n = addDays(prev, 7); return n > today ? today : n })
+    } else if (viewMode === 'day') {
+      setSelectedDate(prev => { const n = addDays(prev, 1); return n > today ? today : n })
+    } else if (viewMode === 'month') {
+      setAnchorDate(prev => {
+        const n = addMonths(prev, 1)
+        return n > today.slice(0, 7) + '-01' ? today.slice(0, 7) + '-01' : n
+      })
     }
   }, [viewMode, today])
 
@@ -137,105 +277,126 @@ export function useRevenueGrid() {
     setSelectedDate(today)
   }, [today])
 
-  const goToDate = useCallback((date: string) => {
-    const capped = date > today ? today : date
-    if (viewMode === 'week') setAnchorDate(capped)
-    else setSelectedDate(capped)
-  }, [viewMode, today])
-
   const switchMode = useCallback((mode: ViewMode) => {
     setViewMode(mode)
-    if (mode === 'day') setSelectedDate(anchorDate)
-    else setAnchorDate(selectedDate > today ? today : selectedDate)
-  }, [anchorDate, selectedDate, today])
+    if (mode === 'day')   setSelectedDate(prev => prev > today ? today : prev)
+    if (mode === 'week')  setAnchorDate(prev => prev > today ? today : prev)
+    if (mode === 'month') setAnchorDate(today.slice(0, 7) + '-01')
+  }, [today])
 
-  const updateCell = useCallback((projectId: string, date: string, value: number) => {
+  // Determine if at "today" boundary (forward button disabled)
+  const isAtToday = useMemo(() => {
+    if (viewMode === 'day')   return selectedDate >= today
+    if (viewMode === 'week')  return anchorDate >= today
+    if (viewMode === 'month') return anchorDate.slice(0, 7) >= today.slice(0, 7)
+    return true // all-time nav disabled
+  }, [viewMode, anchorDate, selectedDate, today])
+
+  // Update cell (with undo history)
+  const updateCell = useCallback((projectId: string, date: string, value: number, historyBatch?: HistoryChange[]) => {
     const key = `${projectId}__${date}`
+    const tab = activeTab
+    const oldValue = tab === 'revenue' ? revenueGridRef.current.get(key) : screenGridRef.current.get(key)
     clearedRef.current.delete(key)
-    if (activeTab === 'revenue') {
-      setRevenueGrid(prev => { const next = new Map(prev); next.set(key, value); return next })
-    } else {
-      setScreenGrid(prev => { const next = new Map(prev); next.set(key, value); return next })
-    }
-    setDirtyKeys(prev => new Set(prev).add(key))
-    setSaved(false)
-  }, [activeTab])
 
-  const clearCell = useCallback((projectId: string, date: string) => {
+    if (tab === 'revenue') {
+      setRevenueGrid(prev => { const n = new Map(prev); n.set(key, value); return n })
+    } else {
+      setScreenGrid(prev => { const n = new Map(prev); n.set(key, value); return n })
+    }
+
+    // Add to history (historyBatch is used for bulk paste - caller aggregates externally)
+    if (!historyBatch) {
+      historyRef.current = [...historyRef.current.slice(-24), { changes: [{ key, tab, old: oldValue, val: value }] }]
+      futureRef.current  = []
+      syncUndoRedoState()
+    }
+
+    scheduleAutoSave(key)
+  }, [activeTab, scheduleAutoSave])
+
+  const clearCell = useCallback((projectId: string, date: string, historyBatch?: HistoryChange[]) => {
     const key = `${projectId}__${date}`
+    const tab = activeTab
+    const oldValue = tab === 'revenue' ? revenueGridRef.current.get(key) : screenGridRef.current.get(key)
+    if (oldValue === undefined) return // nothing to clear
+
     clearedRef.current.add(key)
-    if (activeTab === 'revenue') {
-      setRevenueGrid(prev => { const next = new Map(prev); next.delete(key); return next })
+    if (tab === 'revenue') {
+      setRevenueGrid(prev => { const n = new Map(prev); n.delete(key); return n })
     } else {
-      setScreenGrid(prev => { const next = new Map(prev); next.delete(key); return next })
+      setScreenGrid(prev => { const n = new Map(prev); n.delete(key); return n })
     }
-    setDirtyKeys(prev => new Set(prev).add(key))
-    setSaved(false)
-  }, [activeTab])
 
-  const saveAll = useCallback(async () => {
-    if (dirtyKeys.size === 0) return
-    setIsSaving(true)
-    const rows = Array.from(dirtyKeys).map(key => {
-      const sep = key.indexOf('__')
-      const project_id = key.slice(0, sep)
-      const date = key.slice(sep + 2)
-      const wasCleared = clearedRef.current.has(key)
-      return {
-        project_id,
-        date,
-        revenue:        wasCleared ? 0 : (revenueGrid.get(key) ?? savedRevenueRef.current.get(key) ?? 0),
-        screen_revenue: wasCleared ? 0 : (screenGrid.get(key)  ?? savedScreenRef.current.get(key)  ?? 0),
-      }
-    })
-    try {
-      const res = await fetch('/api/revenue', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows }),
-      })
-      if (res.ok) {
-        rows.forEach(r => {
-          const k = `${r.project_id}__${r.date}`
-          savedRevenueRef.current.set(k, r.revenue)
-          savedScreenRef.current.set(k, r.screen_revenue)
-        })
-        clearedRef.current.clear()
-        setDirtyKeys(new Set())
-        setSaved(true)
-        setTimeout(() => setSaved(false), 2500)
-      }
-    } finally {
-      setIsSaving(false)
+    if (!historyBatch) {
+      historyRef.current = [...historyRef.current.slice(-24), { changes: [{ key, tab, old: oldValue, val: undefined }] }]
+      futureRef.current  = []
+      syncUndoRedoState()
     }
-  }, [dirtyKeys, revenueGrid, screenGrid])
 
-  const discard = useCallback(() => {
-    setRevenueGrid(prev => {
-      const next = new Map(prev)
-      dirtyKeys.forEach(key => {
-        const orig = savedRevenueRef.current.get(key)
-        if (orig !== undefined && orig > 0) next.set(key, orig); else next.delete(key)
-      })
-      return next
-    })
-    setScreenGrid(prev => {
-      const next = new Map(prev)
-      dirtyKeys.forEach(key => {
-        const orig = savedScreenRef.current.get(key)
-        if (orig !== undefined && orig > 0) next.set(key, orig); else next.delete(key)
-      })
-      return next
-    })
-    clearedRef.current.clear()
-    setDirtyKeys(new Set())
-    setSaved(false)
-  }, [dirtyKeys])
+    scheduleAutoSave(key)
+  }, [activeTab, scheduleAutoSave])
 
-  // Immediately save a note for a specific cell
+  // Apply a set of changes (used by undo/redo)
+  const applyChanges = useCallback((changes: HistoryChange[], direction: 'undo' | 'redo') => {
+    changes.forEach(({ key, tab, old, val }) => {
+      const restore = direction === 'undo' ? old : val
+      if (restore === undefined) {
+        clearedRef.current.add(key)
+        if (tab === 'revenue') setRevenueGrid(prev => { const n = new Map(prev); n.delete(key); return n })
+        else setScreenGrid(prev => { const n = new Map(prev); n.delete(key); return n })
+      } else {
+        clearedRef.current.delete(key)
+        if (tab === 'revenue') setRevenueGrid(prev => { const n = new Map(prev); n.set(key, restore); return n })
+        else setScreenGrid(prev => { const n = new Map(prev); n.set(key, restore); return n })
+      }
+      scheduleAutoSave(key)
+    })
+  }, [scheduleAutoSave])
+
+  const undo = useCallback(() => {
+    const entry = historyRef.current.pop()
+    if (!entry) return
+    futureRef.current.push(entry)
+    syncUndoRedoState()
+    applyChanges(entry.changes, 'undo')
+    showToast(`✓ Đã khôi phục ${entry.changes.length > 1 ? `${entry.changes.length} ô` : '1 ô'}`)
+  }, [applyChanges])
+
+  const redo = useCallback(() => {
+    const entry = futureRef.current.pop()
+    if (!entry) return
+    historyRef.current.push(entry)
+    syncUndoRedoState()
+    applyChanges(entry.changes, 'redo')
+    showToast(`✓ Đã làm lại ${entry.changes.length > 1 ? `${entry.changes.length} ô` : '1 ô'}`)
+  }, [applyChanges])
+
+  // Bulk-paste: record all changes as single history entry
+  const bulkUpdateCells = useCallback((cells: { projectId: string; date: string; value: number }[]) => {
+    const changes: HistoryChange[] = []
+    cells.forEach(({ projectId, date, value }) => {
+      const key = `${projectId}__${date}`
+      const tab = activeTab
+      const old = tab === 'revenue' ? revenueGridRef.current.get(key) : screenGridRef.current.get(key)
+      changes.push({ key, tab, old, val: value })
+      clearedRef.current.delete(key)
+      if (tab === 'revenue') setRevenueGrid(prev => { const n = new Map(prev); n.set(key, value); return n })
+      else setScreenGrid(prev => { const n = new Map(prev); n.set(key, value); return n })
+      pendingKeysRef.current.add(key)
+    })
+    if (changes.length > 0) {
+      historyRef.current = [...historyRef.current.slice(-24), { changes }]
+      futureRef.current  = []
+      syncUndoRedoState()
+    }
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(executeSave, 600)
+  }, [activeTab, executeSave])
+
   const saveNote = useCallback(async (projectId: string, date: string, note: string) => {
     const key = `${projectId}__${date}`
-    setNoteMap(prev => { const next = new Map(prev); if (note) next.set(key, note); else next.delete(key); return next })
+    setNoteMap(prev => { const n = new Map(prev); if (note) n.set(key, note); else n.delete(key); return n })
     await fetch('/api/revenue', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -243,13 +404,12 @@ export function useRevenueGrid() {
     })
   }, [])
 
-  // Immediately save billing period for a specific cell
   const savePayout = useCallback(async (projectId: string, date: string, start: string | null, end: string | null) => {
     const key = `${projectId}__${date}`
     setPayoutMap(prev => {
-      const next = new Map(prev)
-      if (start && end) next.set(key, { start, end }); else next.delete(key)
-      return next
+      const n = new Map(prev)
+      if (start && end) n.set(key, { start, end }); else n.delete(key)
+      return n
     })
     await fetch('/api/revenue', {
       method: 'PATCH',
@@ -258,17 +418,17 @@ export function useRevenueGrid() {
     })
   }, [])
 
-  const isAtToday = viewMode === 'week' ? anchorDate >= today : selectedDate >= today
-
   return {
-    projects, dates, today, viewMode, anchorDate, selectedDate,
+    projects, today, viewMode, anchorDate, selectedDate,
     activeTab, setActiveTab,
+    dates: effectiveDates,
     gridData, screenGrid, prevScreenMap,
     noteMap, payoutMap,
-    dirtyKeys,
-    isDirty: dirtyKeys.size > 0,
-    isSaving, isLoading, saved, isAtToday,
-    goBack, goForward, goToToday, goToDate, switchMode,
-    updateCell, clearCell, saveAll, discard, saveNote, savePayout,
+    isLoading, saveStatus, isAtToday,
+    canUndo, canRedo, toast, setToast,
+    undo, redo,
+    goBack, goForward, goToToday, switchMode,
+    updateCell, clearCell, bulkUpdateCells,
+    saveNote, savePayout,
   }
 }

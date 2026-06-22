@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 
 interface Props {
   value: number | undefined
-  isDirty: boolean
+  isDirty?: boolean
   onCommit: (value: number) => void
   onNavigate?: (direction: 'right' | 'left' | 'down' | 'up') => void
   onFocus?: () => void
@@ -36,7 +36,7 @@ export default function EditableCell({
 
   function startEdit() {
     onFocus?.()
-    setDraft(value !== undefined ? String(value) : '')
+    setDraft(value !== undefined && value !== 0 ? String(value) : '')
     setEditing(true)
     setTimeout(() => inputRef.current?.select(), 0)
   }
@@ -80,10 +80,11 @@ export default function EditableCell({
   }
 
   const isCumulative = displayValue !== undefined
-  const mainValue = isCumulative ? displayValue : value
+  const mainValue    = isCumulative ? displayValue : value
+  const isEmpty      = mainValue === undefined || mainValue === 0
   const mainColorClass = isCumulative
     ? (valueColorClass ?? (displayValue! >= 0 ? 'text-slate-700' : 'text-red-600'))
-    : (value === undefined ? 'text-slate-300' : 'text-slate-700')
+    : 'text-slate-700'
 
   function fmt(n: number) {
     return '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -108,7 +109,6 @@ export default function EditableCell({
       className={cn(
         'relative w-full h-full px-2 cursor-text select-none',
         isCumulative ? 'py-1' : 'py-1.5',
-        isDirty ? 'bg-amber-50' : '',
       )}
     >
       {/* Blue dot: has billing period */}
@@ -117,10 +117,10 @@ export default function EditableCell({
       )}
 
       {/* Main value */}
-      <div className={cn('text-right font-mono text-xs font-medium', mainColorClass)}>
-        {mainValue === undefined
-          ? '—'
-          : (isCumulative && displayValue! < 0 ? '-' : '') + fmt(mainValue)}
+      <div className={cn('text-right font-mono text-xs font-medium', isEmpty ? 'opacity-25 text-slate-500' : mainColorClass)}>
+        {isEmpty
+          ? '$0.00'
+          : (isCumulative && displayValue! < 0 ? '-' : '') + fmt(mainValue!)}
       </div>
 
       {/* Subtitle (cumulative total) */}
