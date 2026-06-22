@@ -15,16 +15,22 @@ interface Props {
   onClose: () => void
 }
 
+function nextProjectId(existingIds: string[]): string {
+  const nums = existingIds
+    .map(id => parseInt(id.replace('proj', ''), 10))
+    .filter(n => !isNaN(n))
+  const max = nums.length > 0 ? Math.max(...nums) : 0
+  return `proj${String(max + 1).padStart(3, '0')}`
+}
+
 export default function ProjectFormDialog({ mode, initialData, existingIds, masterProjects, onSave, onClose }: Props) {
   const [form, setForm] = useState<Project>(
-    initialData ?? { project_id: '', cid: '0000000000', name: '', mcc_id: 'uncategorized', master_project_id: null }
+    initialData ?? { project_id: nextProjectId(existingIds), cid: '0000000000', name: '', mcc_id: 'uncategorized', master_project_id: null }
   )
   const [errors, setErrors] = useState<Partial<Record<keyof Project, string>>>({})
 
   function validate(): boolean {
     const errs: Partial<Record<keyof Project, string>> = {}
-    if (!form.project_id.match(/^proj\d{3}$/)) errs.project_id = 'Định dạng: proj001'
-    if (mode === 'add' && existingIds.includes(form.project_id)) errs.project_id = 'ID đã tồn tại'
     if (!form.name.trim()) errs.name = 'Bắt buộc nhập tên'
     setErrors(errs)
     return Object.keys(errs).length === 0
@@ -37,22 +43,6 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
     }
   }
 
-  function field(key: 'project_id' | 'name', label: string, placeholder: string, disabled = false) {
-    return (
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-slate-600">{label}</label>
-        <Input
-          value={form[key]}
-          disabled={disabled}
-          placeholder={placeholder}
-          onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-          className={errors[key] ? 'border-red-400' : ''}
-        />
-        {errors[key] && <p className="text-xs text-red-500">{errors[key]}</p>}
-      </div>
-    )
-  }
-
   return (
     <Dialog open onOpenChange={open => !open && onClose()}>
       <DialogContent className="max-w-md">
@@ -60,8 +50,23 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
           <DialogTitle>{mode === 'add' ? 'Thêm dự án mới' : 'Chỉnh sửa dự án'}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 pt-2">
-          {field('project_id', 'Project ID', 'proj001', mode === 'edit')}
-          {field('name', 'Tên dự án', 'Thời trang nữ 001')}
+          {mode === 'edit' && (
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-slate-600">Project ID</label>
+              <Input value={form.project_id} disabled className="text-slate-400" />
+            </div>
+          )}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-slate-600">Tên dự án</label>
+            <Input
+              value={form.name}
+              placeholder="Thời trang nữ 001"
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              className={errors.name ? 'border-red-400' : ''}
+              autoFocus
+            />
+            {errors.name && <p className="text-xs text-red-500">{errors.name}</p>}
+          </div>
           <div className="space-y-1">
             <label className="text-xs font-medium text-slate-600">Tổng Dự Án (tuỳ chọn)</label>
             <select
