@@ -204,7 +204,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
                 <tr>
-                  {['Ngày', 'Chi phí', 'Doanh thu', 'DT Màn hình', 'Lợi nhuận', 'ROI%'].map(h => (
+                  {['Ngày', 'Chi phí', 'Doanh thu', 'DT Màn hình', 'Lợi nhuận', 'LN ước tính', 'ROI%'].map(h => (
                     <th key={h} className="px-4 py-2.5 text-right first:text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -223,6 +223,17 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                     <td className={`px-4 py-2.5 text-right font-mono text-xs font-medium ${getProfitTextClass(row.profit)}`}>
                       {row.profit >= 0 ? '+' : ''}{formatVND(row.profit)}
                     </td>
+                    {(() => {
+                      const screen = screenByDate.get(row.date) ?? 0
+                      const est = row.revenue + screen - row.spend
+                      return screen > 0 ? (
+                        <td className={`px-4 py-2.5 text-right font-mono text-xs font-medium ${getProfitTextClass(est)}`}>
+                          {est >= 0 ? '+' : ''}{formatVND(est)}
+                        </td>
+                      ) : (
+                        <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-300">—</td>
+                      )
+                    })()}
                     <td className={`px-4 py-2.5 text-right font-mono text-xs ${getRoiTextClass(row.roi)}`}>
                       {formatROI(row.roi)}
                     </td>
