@@ -31,7 +31,7 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
 }
 
 function buildDiscoverScript(secret: string, webhookUrl: string) {
-  return `function discover() {
+  return `function main() {
   var SECRET  = '${secret}';
   var WEBHOOK = '${webhookUrl}';
 
