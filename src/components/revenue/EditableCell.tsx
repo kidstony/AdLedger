@@ -79,20 +79,6 @@ export default function EditableCell({
     if (isMulti) { e.preventDefault(); onPaste?.(text) }
   }
 
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={handleKey}
-        onPaste={handlePaste}
-        className="w-full h-full px-2 py-1.5 text-right font-mono text-xs outline-none border-2 border-blue-400 rounded bg-white"
-      />
-    )
-  }
-
   const isCumulative = displayValue !== undefined
   const mainValue = isCumulative ? displayValue : value
   const mainColorClass = isCumulative
@@ -104,6 +90,18 @@ export default function EditableCell({
   }
 
   return (
+    <div className="relative w-full h-full">
+      {editing && (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={handleKey}
+          onPaste={handlePaste}
+          className="absolute inset-0 w-full h-full px-2 text-right font-mono text-xs outline-none border-2 border-blue-400 rounded bg-white z-10"
+        />
+      )}
     <div
       onClick={startEdit}
       onDoubleClick={onDoubleClick}
@@ -145,6 +143,7 @@ export default function EditableCell({
           <Pencil size={9} />
         </button>
       )}
+    </div>
     </div>
   )
 }
