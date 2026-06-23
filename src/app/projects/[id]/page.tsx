@@ -45,9 +45,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       ? supabase.from('ad_spend').select('date, spend').eq('campaign_id', project.google_campaign_id).gte('date', fromStr).lte('date', toStr)
       : Promise.resolve({ data: [] as { date: string; spend: number }[] })
 
+    // affiliate_revenue table columns: project_id, date, type ('confirmed'|'pending'), amount
     const revPromise = supabase
       .from('affiliate_revenue')
-      .select('date, revenue, screen_revenue')
+      .select('date, type, amount')
       .eq('project_id', id)
       .gte('date', fromStr)
       .lte('date', toStr)
@@ -57,11 +58,22 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
     Promise.all([spendPromise, revPromise, rgPromise, ocPromise]).then(([spendRes, revRes, rgRaw, ocRaw]) => {
       const spendRows = (spendRes.data ?? []) as { date: string; spend: number }[]
-      const revRows   = (revRes.data   ?? []) as { date: string; revenue: number; screen_revenue: number }[]
+      const revRows   = (revRes.data   ?? []) as { date: string; type: 'confirmed' | 'pending'; amount: number }[]
       const rentalGroups: RentalGroup[] = Array.isArray(rgRaw) ? rgRaw : []
       const otherCosts: OtherCost[]     = Array.isArray(ocRaw) ? ocRaw : []
 
-      // ─── Ad spend ────────────────────────────────────────────────────────
+      // Aggregate confirmed → revenue, pending → screen_revenue per date
+      const revMap    = new Map<string, number>()
+      const screenMap = new Map<string, number>()
+      revRows.forEach(r => {
+        if (r.type === 'confirmed') {
+          revMap.set(r.date, (revMap.get(r.date) ?? 0) + r.amount)
+        } else {
+          screenMap.set(r.date, (screenMap.get(r.date) ?? 0) + r.amount)
+        }
+      })
+
+      // ─── Build daily rows ─────────────────────────────────────────────────
       if (spendRows.length === 0 && revRows.length === 0) {
         const mockDays = MOCK_PNL_DAILY.filter(d => d.project_id === id && d.date >= fromStr && d.date <= toStr)
         setDaily(mockDays)
@@ -69,9 +81,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         setQcSpend(mockDays.reduce((s, d) => s + d.spend, 0))
         setDataSource('mock')
       } else {
-        const spendMap  = new Map(spendRows.map(r => [r.date, r.spend]))
-        const revMap    = new Map(revRows.map(r => [r.date, r.revenue]))
-        const screenMap = new Map(revRows.map(r => [r.date, r.screen_revenue ?? 0]))
+        const spendMap = new Map(spendRows.map(r => [r.date, r.spend]))
         const dates = [...new Set([...spendMap.keys(), ...revMap.keys()])].sort()
 
         const rows = dates.map(date => {
