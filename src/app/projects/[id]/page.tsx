@@ -9,7 +9,8 @@ import { supabase } from '@/lib/supabase'
 import ProfitChart from '@/components/project-detail/ProfitChart'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import { formatVNDFull, formatROI, formatVND, getProfitTextClass, getRoiTextClass, formatCid } from '@/lib/utils'
-import { PnlDaily } from '@/lib/types'
+import { PnlDaily, RentalGroup, OtherCost } from '@/lib/types'
+import { computeCidCost } from '@/lib/costs'
 
 function localStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -30,7 +31,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const [toStr, setToStr]     = useState(() => localStr(new Date()))
   const [daily, setDaily]     = useState<PnlDaily[]>([])
   const [screenByDate, setScreenByDate] = useState<Map<string, number>>(new Map())
-  const [isLoading, setIsLoading] = useState(true)
+  const [rentalCost, setRentalCost] = useState(0)
+  const [otherCost, setOtherCost]   = useState(0)
+  const [qcSpend, setQcSpend]       = useState(0)
+  const [isLoading, setIsLoading]   = useState(true)
   const [dataSource, setDataSource] = useState<'real' | 'mock'>('mock')
 
   useEffect(() => {
@@ -48,15 +52,21 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       .gte('date', fromStr)
       .lte('date', toStr)
 
-    Promise.all([spendPromise, revPromise]).then(([spendRes, revRes]) => {
+    const rgPromise  = fetch('/api/expenses/rental-groups').then(r => r.json()).catch(() => [])
+    const ocPromise  = fetch(`/api/expenses/other?from=${fromStr}&to=${toStr}`).then(r => r.json()).catch(() => [])
+
+    Promise.all([spendPromise, revPromise, rgPromise, ocPromise]).then(([spendRes, revRes, rgRaw, ocRaw]) => {
       const spendRows = (spendRes.data ?? []) as { date: string; spend: number }[]
       const revRows   = (revRes.data   ?? []) as { date: string; revenue: number; screen_revenue: number }[]
+      const rentalGroups: RentalGroup[] = Array.isArray(rgRaw) ? rgRaw : []
+      const otherCosts: OtherCost[]     = Array.isArray(ocRaw) ? ocRaw : []
 
+      // ─── Ad spend ────────────────────────────────────────────────────────
       if (spendRows.length === 0 && revRows.length === 0) {
-        const mockDays = MOCK_PNL_DAILY
-          .filter(d => d.project_id === id && d.date >= fromStr && d.date <= toStr)
+        const mockDays = MOCK_PNL_DAILY.filter(d => d.project_id === id && d.date >= fromStr && d.date <= toStr)
         setDaily(mockDays)
         setScreenByDate(new Map())
+        setQcSpend(mockDays.reduce((s, d) => s + d.spend, 0))
         setDataSource('mock')
       } else {
         const spendMap  = new Map(spendRows.map(r => [r.date, r.spend]))
@@ -64,7 +74,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         const screenMap = new Map(revRows.map(r => [r.date, r.screen_revenue ?? 0]))
         const dates = [...new Set([...spendMap.keys(), ...revMap.keys()])].sort()
 
-        setDaily(dates.map(date => {
+        const rows = dates.map(date => {
           const spend   = spendMap.get(date) ?? 0
           const revenue = revMap.get(date)   ?? 0
           return {
@@ -77,25 +87,42 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             profit: revenue - spend,
             roi: spend > 0 ? ((revenue - spend) / spend) * 100 : 0,
           }
-        }))
+        })
+        setDaily(rows)
         setScreenByDate(screenMap)
+        setQcSpend(rows.reduce((s, r) => s + r.spend, 0))
         setDataSource('real')
       }
+
+      // ─── Rental cost for this project ────────────────────────────────────
+      const adSpendByCid = new Map<string, number>()
+      if (project?.cid) {
+        adSpendByCid.set(project.cid, spendRows.reduce((s, r) => s + r.spend, 0))
+      }
+      let rental = 0
+      rentalGroups.forEach(rg => {
+        rg.rental_group_cids?.forEach(cidEntry => {
+          if (cidEntry.project_id === id || (!cidEntry.project_id && cidEntry.cid === project?.cid)) {
+            rental += computeCidCost(cidEntry.cid, rg, fromStr, toStr, adSpendByCid)
+          }
+        })
+      })
+      setRentalCost(rental)
+
+      // ─── Other costs for this project ─────────────────────────────────────
+      const other = otherCosts
+        .filter(c => c.project_id === id)
+        .reduce((s, c) => s + c.amount, 0)
+      setOtherCost(other)
+
       setIsLoading(false)
     })
   }, [projects, project, id, fromStr, toStr])
 
-  const totalSpend   = daily.reduce((s, d) => s + d.spend,   0)
+  const totalSpend   = qcSpend + rentalCost + otherCost
   const totalRevenue = daily.reduce((s, d) => s + d.revenue, 0)
   const totalProfit  = totalRevenue - totalSpend
   const roi          = totalSpend > 0 ? (totalProfit / totalSpend) * 100 : 0
-
-  const stats = [
-    { label: 'Tổng Chi phí',   value: formatVNDFull(totalSpend),   cls: 'text-slate-700' },
-    { label: 'Tổng Doanh thu', value: formatVNDFull(totalRevenue), cls: 'text-blue-600' },
-    { label: 'Lợi nhuận',      value: formatVNDFull(totalProfit),  cls: getProfitTextClass(totalProfit) },
-    { label: 'ROI',             value: formatROI(roi),              cls: getRoiTextClass(roi) },
-  ]
 
   if (!project && !isLoading && projects.length > 0) {
     return (
@@ -157,12 +184,43 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         </div>
       ) : (
         <div className="grid grid-cols-4 gap-4">
-          {stats.map(s => (
-            <div key={s.label} className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">{s.label}</p>
-              <p className={`text-lg font-semibold ${s.cls}`}>{s.value}</p>
-            </div>
-          ))}
+          {/* Tổng Chi phí — with breakdown if rental or other > 0 */}
+          <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Tổng Chi phí</p>
+            <p className="text-lg font-semibold text-slate-700">{formatVNDFull(totalSpend)}</p>
+            {(rentalCost > 0 || otherCost > 0) && (
+              <div className="mt-2.5 space-y-1 border-t border-slate-100 pt-2">
+                <div className="flex justify-between text-[11px] text-slate-400">
+                  <span>Chi phí QC</span><span className="font-mono">{formatVND(qcSpend)}</span>
+                </div>
+                {rentalCost > 0 && (
+                  <div className="flex justify-between text-[11px] text-slate-400">
+                    <span>Thuê TK</span><span className="font-mono">{formatVND(rentalCost)}</span>
+                  </div>
+                )}
+                {otherCost > 0 && (
+                  <div className="flex justify-between text-[11px] text-slate-400">
+                    <span>CP Khác</span><span className="font-mono">{formatVND(otherCost)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Tổng Doanh thu</p>
+            <p className="text-lg font-semibold text-blue-600">{formatVNDFull(totalRevenue)}</p>
+          </div>
+
+          <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Lợi nhuận</p>
+            <p className={`text-lg font-semibold ${getProfitTextClass(totalProfit)}`}>{formatVNDFull(totalProfit)}</p>
+          </div>
+
+          <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">ROI</p>
+            <p className={`text-lg font-semibold ${getRoiTextClass(roi)}`}>{formatROI(roi)}</p>
+          </div>
         </div>
       )}
 
@@ -185,7 +243,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
                 <tr>
-                  {['Ngày', 'Chi phí', 'Doanh thu', 'DT Màn hình', 'Lợi nhuận', 'LN ước tính', 'ROI%'].map(h => (
+                  {['Ngày', 'Chi phí QC', 'Doanh thu', 'DT Màn hình', 'Lợi nhuận', 'LN ước tính', 'ROI%'].map(h => (
                     <th key={h} className="px-4 py-2.5 text-right first:text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
