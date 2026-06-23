@@ -1091,6 +1091,60 @@ function OtherModal({ form, editing, categories, projects, saving, onChange, onS
   )
 }
 
+// ─── Summary Tab helpers ──────────────────────────────────────────────────────
+
+type DrillMode = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly'
+
+const DRILL_MODE_LABELS: Record<DrillMode, string> = {
+  daily: 'Ngày', weekly: 'Tuần', monthly: 'Tháng', quarterly: 'Quý', yearly: 'Năm',
+}
+
+const DRILL_HEADER_LABELS: Record<DrillMode, string> = {
+  daily: 'Ngày', weekly: 'Tuần', monthly: 'Tháng', quarterly: 'Quý', yearly: 'Năm',
+}
+
+function autoMode(fromStr: string, toStr: string): DrillMode {
+  const days = Math.round((new Date(toStr + 'T00:00:00').getTime() - new Date(fromStr + 'T00:00:00').getTime()) / MS_PER_DAY) + 1
+  if (days <= 31)   return 'daily'
+  if (days <= 90)   return 'weekly'
+  if (days <= 365)  return 'monthly'
+  if (days <= 1460) return 'quarterly'
+  return 'yearly'
+}
+
+function buildDrillKey(date: string, mode: DrillMode): string {
+  if (mode === 'daily')   return date
+  if (mode === 'monthly') return date.slice(0, 7)
+  if (mode === 'yearly')  return date.slice(0, 4)
+  if (mode === 'quarterly') {
+    const m = parseInt(date.slice(5, 7))
+    return `${date.slice(0, 4)}-Q${Math.ceil(m / 3)}`
+  }
+  // weekly: ISO week number (Mon-based)
+  const d = new Date(date + 'T00:00:00')
+  const jan4 = new Date(d.getFullYear(), 0, 4)
+  const dow = (jan4.getDay() + 6) % 7
+  const week1Mon = new Date(jan4.getTime() - dow * MS_PER_DAY)
+  const weekNum = Math.floor((d.getTime() - week1Mon.getTime()) / (7 * MS_PER_DAY)) + 1
+  return `${d.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
+}
+
+function formatDrillLabel(key: string, mode: DrillMode): string {
+  if (mode === 'daily')   return key
+  if (mode === 'yearly')  return key
+  if (mode === 'monthly') {
+    const [y, m] = key.split('-')
+    return `Tháng ${parseInt(m)}/${y}`
+  }
+  if (mode === 'quarterly') {
+    const [y, q] = key.split('-')
+    return `${q}/${y}`
+  }
+  // weekly: "2026-W25" → "Tuần 25/2026"
+  const [y, w] = key.split('-W')
+  return `Tuần ${parseInt(w)}/${y}`
+}
+
 // ─── Summary Tab ──────────────────────────────────────────────────────────────
 
 interface SummaryRowData {
@@ -1138,12 +1192,8 @@ function SummaryTab({
   const [sortCol, setSortCol] = useState<SummarySortCol>('total')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(0)
-  const [drillMode, setDrillMode] = useState<'daily' | 'monthly'>(() => {
-    const from = new Date(fromStr + 'T00:00:00')
-    const to = new Date(toStr + 'T00:00:00')
-    const days = Math.round((to.getTime() - from.getTime()) / MS_PER_DAY) + 1
-    return days > 31 ? 'monthly' : 'daily'
-  })
+  const [drillMode, setDrillMode] = useState<DrillMode>(() => autoMode(fromStr, toStr))
+  const [drillPage, setDrillPage] = useState(0)
 
   // Reset page when search/groupBy changes
   const handleSearch = (v: string) => { onSearchChange(v); setPage(0) }
@@ -1225,26 +1275,22 @@ function SummaryTab({
       adSpendRows.forEach(row => {
         const p = projectByCampaignId.get(row.campaign_id)
         if ((p?.cid ?? '') !== key) return
-        const k = drillMode === 'monthly' ? row.date.slice(0, 7) : row.date
-        ensure(k).qc += row.spend
+        ensure(buildDrillKey(row.date, drillMode)).qc += row.spend
       })
       otherCosts.forEach(c => {
         const proj = c.project_id ? projectById.get(c.project_id) : null
         if ((proj?.cid ?? '') !== key) return
-        const k = drillMode === 'monthly' ? c.date.slice(0, 7) : c.date
-        ensure(k).other += c.amount
+        ensure(buildDrillKey(c.date, drillMode)).other += c.amount
       })
     } else {
       adSpendRows.forEach(row => {
         const p = projectByCampaignId.get(row.campaign_id)
         if ((p?.project_id ?? '') !== key) return
-        const k = drillMode === 'monthly' ? row.date.slice(0, 7) : row.date
-        ensure(k).qc += row.spend
+        ensure(buildDrillKey(row.date, drillMode)).qc += row.spend
       })
       otherCosts.forEach(c => {
         if ((c.project_id ?? '') !== key) return
-        const k = drillMode === 'monthly' ? c.date.slice(0, 7) : c.date
-        ensure(k).other += c.amount
+        ensure(buildDrillKey(c.date, drillMode)).other += c.amount
       })
     }
 
@@ -1321,7 +1367,7 @@ function SummaryTab({
               const detailRows = isExpanded ? buildDetailRows(row.key) : []
               return (
                 <>
-                  <tr key={row.key} onClick={() => onExpandKey(isExpanded ? null : row.key)}
+                  <tr key={row.key} onClick={() => { onExpandKey(isExpanded ? null : row.key); setDrillPage(0) }}
                     className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -1343,43 +1389,68 @@ function SummaryTab({
                         <div className="bg-slate-50/80 border-b border-slate-200">
                           {/* Drilldown header with mode toggle */}
                           <div className="flex items-center justify-between px-10 py-2 border-b border-slate-200">
-                            <span className="text-[11px] text-slate-400 font-medium uppercase tracking-wide">Chi tiết</span>
+                            <span className="text-[11px] text-slate-400 font-medium uppercase tracking-wide">
+                              Chi tiết · {detailRows.length} {DRILL_HEADER_LABELS[drillMode].toLowerCase()}
+                            </span>
                             <div className="flex items-center rounded border border-slate-200 overflow-hidden text-[11px] font-medium">
-                              {(['daily', 'monthly'] as const).map((m, i) => (
-                                <button key={m} onClick={e => { e.stopPropagation(); setDrillMode(m) }}
+                              {(['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as DrillMode[]).map((m, i) => (
+                                <button key={m} onClick={e => { e.stopPropagation(); setDrillMode(m); setDrillPage(0) }}
                                   className={cn('px-2.5 py-1 transition-colors', i > 0 && 'border-l border-slate-200',
                                     drillMode === m ? 'bg-slate-700 text-white' : 'text-slate-500 hover:bg-slate-100')}>
-                                  {m === 'daily' ? 'Theo ngày' : 'Theo tháng'}
+                                  {DRILL_MODE_LABELS[m]}
                                 </button>
                               ))}
                             </div>
                           </div>
                           {detailRows.length === 0 ? (
                             <p className="px-10 py-3 text-xs text-slate-400">Không có dữ liệu</p>
-                          ) : (
-                            <table className="w-full text-xs">
-                              <thead>
-                                <tr className="border-b border-slate-200 bg-slate-100/60">
-                                  <th className="px-10 py-2 text-left font-medium text-slate-400 uppercase tracking-wide">
-                                    {drillMode === 'monthly' ? 'Tháng' : 'Ngày'}
-                                  </th>
-                                  <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Chi phí QC</th>
-                                  <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Chi phí khác</th>
-                                  <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Tổng</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {detailRows.map(d => (
-                                  <tr key={d.label} className="border-b border-slate-100 last:border-0 hover:bg-white/60">
-                                    <td className="px-10 py-1.5 font-mono text-slate-600">{d.label}</td>
-                                    <td className="px-4 py-1.5 text-right font-mono text-slate-500">{d.qc > 0 ? formatVND(d.qc) : <span className="text-slate-300">—</span>}</td>
-                                    <td className="px-4 py-1.5 text-right font-mono text-slate-500">{d.other > 0 ? formatVND(d.other) : <span className="text-slate-300">—</span>}</td>
-                                    <td className="px-4 py-1.5 text-right font-mono font-semibold text-slate-700">{formatVND(d.qc + d.other)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
+                          ) : (() => {
+                            const DRILL_PS = 30
+                            const drillTotalPages = Math.ceil(detailRows.length / DRILL_PS)
+                            const pageItems = detailRows.slice(drillPage * DRILL_PS, (drillPage + 1) * DRILL_PS)
+                            return (
+                              <>
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-slate-200 bg-slate-100/60">
+                                      <th className="px-10 py-2 text-left font-medium text-slate-400 uppercase tracking-wide">
+                                        {DRILL_HEADER_LABELS[drillMode]}
+                                      </th>
+                                      <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Chi phí QC</th>
+                                      <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Chi phí khác</th>
+                                      <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Tổng</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {pageItems.map(d => (
+                                      <tr key={d.label} className="border-b border-slate-100 last:border-0 hover:bg-white/60">
+                                        <td className="px-10 py-1.5 font-mono text-slate-600">{formatDrillLabel(d.label, drillMode)}</td>
+                                        <td className="px-4 py-1.5 text-right font-mono text-slate-500">{d.qc > 0 ? formatVND(d.qc) : <span className="text-slate-300">—</span>}</td>
+                                        <td className="px-4 py-1.5 text-right font-mono text-slate-500">{d.other > 0 ? formatVND(d.other) : <span className="text-slate-300">—</span>}</td>
+                                        <td className="px-4 py-1.5 text-right font-mono font-semibold text-slate-700">{formatVND(d.qc + d.other)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                                {drillTotalPages > 1 && (
+                                  <div className="flex items-center justify-between px-10 py-2 border-t border-slate-200 bg-white/50">
+                                    <span className="text-[11px] text-slate-400">
+                                      {drillPage * DRILL_PS + 1}–{Math.min((drillPage + 1) * DRILL_PS, detailRows.length)} / {detailRows.length}
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                      <button onClick={e => { e.stopPropagation(); setDrillPage(p => Math.max(0, p - 1)) }}
+                                        disabled={drillPage === 0}
+                                        className="px-2 py-0.5 text-[11px] border border-slate-200 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-40">←</button>
+                                      <span className="text-[11px] text-slate-400 px-1">{drillPage + 1}/{drillTotalPages}</span>
+                                      <button onClick={e => { e.stopPropagation(); setDrillPage(p => Math.min(drillTotalPages - 1, p + 1)) }}
+                                        disabled={drillPage === drillTotalPages - 1}
+                                        className="px-2 py-0.5 text-[11px] border border-slate-200 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-40">→</button>
+                                    </div>
+                                  </div>
+                                )}
+                              </>
+                            )
+                          })()}
                         </div>
                       </td>
                     </tr>
