@@ -29,6 +29,7 @@ export default function ProjectsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const headerCheckboxRef = useRef<HTMLInputElement>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  const [copiedWallet, setCopiedWallet] = useState<string | null>(null)
 
   // campaign info from Google Ads: project_id → {customer_id, campaign_id, mcc_name, mcc_id}
   const [campaignInfoMap, setCampaignInfoMap] = useState<Map<string, {
@@ -130,6 +131,27 @@ export default function ProjectsPage() {
     navigator.clipboard.writeText(url)
     setCopied(id)
     setTimeout(() => setCopied(null), 1500)
+  }
+
+  function copyWallet(addr: string, key: string) {
+    navigator.clipboard.writeText(addr)
+    setCopiedWallet(key)
+    setTimeout(() => setCopiedWallet(null), 1500)
+  }
+
+  function networkBadge(n: string | null | undefined) {
+    const styles: Record<string, string> = {
+      TRC20: 'bg-green-100 text-green-700', ERC20: 'bg-blue-100 text-blue-700',
+      BEP20: 'bg-yellow-100 text-yellow-700', SOL: 'bg-purple-100 text-purple-700',
+      ARB: 'bg-sky-100 text-sky-700', OP: 'bg-red-100 text-red-700',
+      BASE: 'bg-indigo-100 text-indigo-700', POL: 'bg-violet-100 text-violet-700',
+      AVAX: 'bg-rose-100 text-rose-700',
+    }
+    return styles[n ?? ''] ?? 'bg-slate-100 text-slate-600'
+  }
+
+  function shortenAddr(addr: string) {
+    return addr.length <= 12 ? addr : `${addr.slice(0, 6)}...${addr.slice(-4)}`
   }
 
   return (
@@ -258,11 +280,49 @@ export default function ProjectsPage() {
                             ) : <span className="text-slate-300 text-xs">—</span>}
                           </td>
                           {/* Bank Nhận */}
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3 min-w-[180px]">
                             {p.bank_accounts ? (
-                              <span className="text-xs text-slate-700 whitespace-nowrap">
-                                💳 {p.bank_accounts.banks?.name} · {p.bank_accounts.owner_name}
-                              </span>
+                              p.bank_accounts.banks?.bank_category === 'crypto' ? (
+                                // Crypto: line1 = bank + coin + network badge, line2 = wallet + copy + owner
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-xs text-slate-400">₿ {p.bank_accounts.banks?.name}</span>
+                                    <span className="text-xs font-semibold text-slate-700">{p.bank_accounts.coin_type}</span>
+                                    {p.bank_accounts.network && (
+                                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${networkBadge(p.bank_accounts.network)}`}>
+                                        {p.bank_accounts.network}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <span className="font-mono text-xs text-slate-600">
+                                      {p.bank_accounts.wallet_address ? shortenAddr(p.bank_accounts.wallet_address) : '—'}
+                                    </span>
+                                    {p.bank_accounts.wallet_address && (
+                                      <button
+                                        onClick={() => copyWallet(p.bank_accounts!.wallet_address!, p.bank_accounts!.id)}
+                                        className="p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors"
+                                        title="Copy địa chỉ ví"
+                                      >
+                                        {copiedWallet === p.bank_accounts.id ? <Check size={10} className="text-green-500" /> : <Copy size={10} />}
+                                      </button>
+                                    )}
+                                    <span className="text-slate-300 text-xs">·</span>
+                                    <span className="text-xs text-slate-500">{p.bank_accounts.owner_name}</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                // Traditional: line1 = bank name, line2 = account + owner
+                                <div className="space-y-0.5">
+                                  <p className="text-xs text-slate-400">🏦 {p.bank_accounts.banks?.name}</p>
+                                  <p className="text-xs text-slate-700">
+                                    {p.bank_accounts.account_identifier && (
+                                      <span className="font-mono">{p.bank_accounts.account_identifier} · </span>
+                                    )}
+                                    {p.bank_accounts.owner_name}
+                                  </p>
+                                </div>
+                              )
                             ) : (
                               <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 font-medium border border-amber-200 whitespace-nowrap">
                                 Chưa cấu hình
