@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { formatVND, cn } from '@/lib/utils'
@@ -51,7 +51,10 @@ export default function PaymentConfirmPage() {
   const [isLoading, setIsLoading]   = useState(false)
   const [isConfirming, setIsConfirming] = useState(false)
   const [showModal, setShowModal]   = useState(false)
-  const [toast, setToast]           = useState<string | null>(null)
+  const [undoItems,  setUndoItems]  = useState<{ project_id: string; date: string; amount: number }[]>([])
+  const [undoMsg,    setUndoMsg]    = useState<string | null>(null)
+  const [undoCountdown, setUndoCountdown] = useState(0)
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const projectMap = useMemo(
     () => new Map(projects.map(p => [p.project_id, p.name])),
@@ -115,11 +118,27 @@ export default function PaymentConfirmPage() {
     })
   }
 
+  // countdown tick
+  useEffect(() => {
+    if (undoCountdown <= 0) return
+    const t = setTimeout(() => setUndoCountdown(c => c - 1), 1000)
+    return () => clearTimeout(t)
+  }, [undoCountdown])
+
+  // when countdown expires, clear undo state
+  useEffect(() => {
+    if (undoCountdown === 0 && undoMsg) {
+      setUndoMsg(null)
+      setUndoItems([])
+    }
+  }, [undoCountdown, undoMsg])
+
   async function handleConfirm() {
     setIsConfirming(true)
     const items = rows
       .filter(r => selected.has(`${r.project_id}__${r.date}`))
       .map(r => ({ project_id: r.project_id, date: r.date, amount: r.amount }))
+    const total = selectedTotal
 
     const res = await fetch('/api/revenue/confirm-batch', {
       method: 'POST',
@@ -131,11 +150,25 @@ export default function PaymentConfirmPage() {
     setShowModal(false)
 
     if (res.ok) {
-      const count = items.length
-      setToast(`Đã xác nhận ${count} khoản (${formatVND(selectedTotal)})`)
-      setTimeout(() => setToast(null), 4000)
+      setUndoItems(items)
+      setUndoMsg(`Đã xác nhận ${items.length} khoản (${formatVND(total)})`)
+      setUndoCountdown(10)
       fetchPending()
     }
+  }
+
+  async function handleUndo() {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current)
+    const items = undoItems.map(({ project_id, date }) => ({ project_id, date }))
+    setUndoMsg(null)
+    setUndoItems([])
+    setUndoCountdown(0)
+    await fetch('/api/revenue/revert-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    })
+    fetchPending()
   }
 
   const fmtDate = (d: string) =>
@@ -311,13 +344,20 @@ export default function PaymentConfirmPage() {
         </div>
       )}
 
-      {/* Toast */}
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-emerald-600 text-white text-sm px-4 py-3 rounded-lg shadow-lg flex items-center gap-2">
+      {/* Toast with undo */}
+      {undoMsg && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-800 text-white text-sm px-4 py-3 rounded-lg shadow-lg flex items-center gap-3">
           <svg width="14" height="14" fill="none" viewBox="0 0 14 14">
             <path d="M2.5 7L5.5 10 11.5 4" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          {toast}
+          <span>{undoMsg}</span>
+          <button
+            onClick={handleUndo}
+            className="flex items-center gap-1.5 ml-2 px-2.5 py-1 text-xs font-semibold bg-white/15 hover:bg-white/25 rounded-md transition-colors"
+          >
+            ↩ Hoàn tác
+          </button>
+          <span className="text-slate-400 text-xs tabular-nums">{undoCountdown}s</span>
         </div>
       )}
     </div>
