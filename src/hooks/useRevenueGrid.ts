@@ -140,6 +140,12 @@ export function useRevenueGrid() {
     }
   }, [])
 
+  // Flush any pending debounced save immediately (call before confirm/revert)
+  const flushSave = useCallback(async () => {
+    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+    await executeSave()
+  }, [executeSave])
+
   const scheduleAutoSave = useCallback((key: string) => {
     pendingKeysRef.current.add(key)
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -546,7 +552,7 @@ export function useRevenueGrid() {
     goBack, goForward, goToToday, switchMode,
     customFrom, customTo, setCustomRange, refreshRevenue,
     updateCell, clearCell, bulkUpdateCells,
-    saveNote, savePayout, confirmCell, revertCells,
+    saveNote, savePayout, confirmCell, revertCells, flushSave,
     statusMap, confirmedAtMap,
   }
 }

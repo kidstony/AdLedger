@@ -152,10 +152,10 @@ export default function EditableCell({
       {onConfirmClick && !editing && (mainValue ?? 0) > 0 && (
         <button
           onClick={e => { e.stopPropagation(); onConfirmClick() }}
-          className="absolute bottom-0.5 right-1 p-0.5 rounded text-emerald-400 hover:text-emerald-600 transition-colors"
+          className="absolute bottom-0.5 right-0.5 p-0.5 rounded text-emerald-400 hover:text-emerald-600 transition-colors"
           title="Xác nhận đã nhận thanh toán"
         >
-          <CheckCircle2 size={9} />
+          <CheckCircle2 size={11} />
         </button>
       )}
 

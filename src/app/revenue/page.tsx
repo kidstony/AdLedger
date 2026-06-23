@@ -67,7 +67,7 @@ export default function RevenuePage() {
     switchMode,
     customFrom, customTo, setCustomRange, refreshRevenue,
     updateCell, clearCell, bulkUpdateCells,
-    saveNote, savePayout, confirmCell, revertCells,
+    saveNote, savePayout, confirmCell, revertCells, flushSave,
     statusMap, confirmedAtMap,
   } = useRevenueGrid()
 
@@ -649,20 +649,26 @@ export default function RevenuePage() {
                       const confirmedAt = confirmedAtMap.get(key)
                       const tdCls       = cn('p-0 border-r border-slate-100', date === today && 'bg-blue-50/30')
 
-                      // ── Screen tab: confirmed cell → static indicator ────────
+                      // ── Screen tab: confirmed cell → editable with "Đã nhận" badge ──
                       if (activeTab === 'screen' && !isReadOnly && isConfirmed) {
-                        const rawForDisplay = isCumulative
-                          ? getCumulativeDelta(project.project_id, date, di).delta
-                          : (screenGrid.get(key) ?? 0)
+                        const confirmedAmount = screenGrid.get(key) ?? 0
                         return (
                           <td key={date} className={tdCls}>
-                            <div data-cell={key} className="h-9 px-2 flex flex-col items-end justify-center">
-                              <div className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600">
-                                <CircleCheck size={9} /> Đã nhận
-                              </div>
-                              {rawForDisplay > 0 && (
-                                <span className="font-mono text-[11px] text-slate-400">{formatVND(Math.abs(rawForDisplay))}</span>
-                              )}
+                            <div data-cell={key} className="h-11">
+                              <EditableCell
+                                value={undefined}
+                                onCommit={v => {
+                                  // Additive: new entry is ADDED to the existing confirmed amount
+                                  const existing = screenGrid.get(key) ?? 0
+                                  updateCell(project.project_id, date, existing + v)
+                                }}
+                                onClear={() => {/* confirmed cells — no clear */}}
+                                onNavigate={dir => navigate(pi, di, dir)}
+                                onFocus={() => { focusedCellRef.current = { pi, di } }}
+                                onPaste={handlePaste}
+                                valueSubtitle={`✓ ${formatVND(confirmedAmount)}`}
+                                valueColorClass="text-emerald-600"
+                              />
                             </div>
                           </td>
                         )
@@ -697,12 +703,10 @@ export default function RevenuePage() {
                         )
                       }
 
-                      // ── Revenue tab + regular screen + read-only ─────────────
+                      // ── Revenue tab + regular screen (daily pending) + read-only ──
                       const isRevTab = activeTab === 'revenue'
-                      // Revenue tab: only show value for confirmed rows; screen tab: show all pending
-                      const cellValue = isRevTab
-                        ? (isConfirmed ? gridData.get(key) : undefined)
-                        : gridData.get(key)
+                      // Revenue tab: show revenue value always (confirmed or direct entry)
+                      const cellValue = gridData.get(key)
 
                       const confirmedSub = isRevTab && isConfirmed && confirmedAt
                         ? `✓ ${new Date(confirmedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}`
@@ -779,6 +783,7 @@ export default function RevenuePage() {
               <button onClick={() => setConfirmModal(null)} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">Hủy</button>
               <button
                 onClick={async () => {
+                  await flushSave()
                   await confirmCell(confirmModal.projectId, confirmModal.date)
                   setConfirmModal(null)
                 }}
