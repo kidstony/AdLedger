@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, KeyboardEvent, ClipboardEvent } from 'react'
-import { Pencil, CheckCircle2 } from 'lucide-react'
+import { Pencil, CheckCircle2, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -22,8 +22,9 @@ interface Props {
   // Billing period indicator (double-click to tag)
   hasPayout?: boolean
   onDoubleClick?: () => void
-  // Payment confirmation
+  // Payment confirmation / revert
   onConfirmClick?: () => void
+  onRevertClick?: () => void
 }
 
 export default function EditableCell({
@@ -31,7 +32,7 @@ export default function EditableCell({
   displayValue, valueSubtitle, valueColorClass,
   hasNote, onNoteClick,
   hasPayout, onDoubleClick,
-  onConfirmClick,
+  onConfirmClick, onRevertClick,
 }: Props) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -155,6 +156,17 @@ export default function EditableCell({
           title="Xác nhận đã nhận thanh toán"
         >
           <CheckCircle2 size={9} />
+        </button>
+      )}
+
+      {/* Revert confirmation button */}
+      {onRevertClick && !editing && (
+        <button
+          onClick={e => { e.stopPropagation(); onRevertClick() }}
+          className="absolute bottom-0.5 right-1 p-0.5 rounded text-slate-300 hover:text-amber-500 transition-colors"
+          title="Hoàn tác xác nhận"
+        >
+          <RotateCcw size={9} />
         </button>
       )}
     </div>

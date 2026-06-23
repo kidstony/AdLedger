@@ -1,10 +1,10 @@
 'use client'
 
 import { useRef, useMemo, useState, useEffect, useCallback } from 'react'
-import Link from 'next/link'
 import {
-  ChevronLeft, ChevronRight, Loader2, Banknote, Monitor,
+  Loader2, Banknote, Monitor,
   Search, Keyboard, CheckCircle2, Cloud, SlidersHorizontal, CircleCheck,
+  RotateCcw, X,
 } from 'lucide-react'
 import { useRevenueGrid } from '@/hooks/useRevenueGrid'
 import { useProjectsContext } from '@/context/ProjectsContext'
@@ -23,6 +23,24 @@ function addDays(date: string, n: number): string {
 type NoteModal    = { projectId: string; date: string; current: string }
 type PayoutModal  = { projectId: string; date: string; start: string; end: string }
 type ConfirmModal = { projectId: string; date: string; screenAmount: number; projectName: string }
+type RevertModal  = { projectId: string; date: string; amount: number; projectName: string }
+type UndoToast    = { items: Array<{ project_id: string; date: string }>; total: number; count: number; secondsLeft: number }
+
+function Checkbox({ checked, indeterminate }: { checked: boolean; indeterminate?: boolean }) {
+  return (
+    <div className={cn(
+      'w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors select-none',
+      checked ? 'bg-emerald-500 border-emerald-500' : indeterminate ? 'bg-white border-blue-400' : 'bg-white border-slate-300'
+    )}>
+      {checked && (
+        <svg width="8" height="6" fill="none" viewBox="0 0 8 6">
+          <path d="M1 3L3 5.5 7 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )}
+      {indeterminate && !checked && <div className="w-2 h-0.5 bg-blue-400 rounded" />}
+    </div>
+  )
+}
 
 // ── keyboard shortcut list ───────────────────────────────────────────────────
 const SHORTCUTS = [
@@ -43,10 +61,11 @@ export default function RevenuePage() {
     activeTab, setActiveTab,
     dates, gridData, screenGrid, prevScreenMap,
     noteMap, payoutMap,
-    isLoading, saveStatus, isAtToday,
+    isLoading, saveStatus,
     canUndo, canRedo, toast, setToast,
     undo, redo,
-    goBack, goForward, goToToday, switchMode,
+    switchMode,
+    customFrom, customTo, setCustomRange, refreshRevenue,
     updateCell, clearCell, bulkUpdateCells,
     saveNote, savePayout, confirmCell,
     statusMap, confirmedAtMap,
@@ -57,12 +76,19 @@ export default function RevenuePage() {
   const focusedCellRef  = useRef<{ pi: number; di: number } | null>(null)
   const searchRef       = useRef<HTMLInputElement>(null)
 
-  const [searchQuery,   setSearchQuery]   = useState('')
-  const [filterIds,     setFilterIds]     = useState<Set<string>>(new Set())
-  const [noteModal,     setNoteModal]     = useState<NoteModal | null>(null)
-  const [payoutModal,   setPayoutModal]   = useState<PayoutModal | null>(null)
-  const [confirmModal,  setConfirmModal]  = useState<ConfirmModal | null>(null)
-  const [showShortcuts, setShowShortcuts] = useState(false)
+  const [searchQuery,       setSearchQuery]       = useState('')
+  const [filterIds,         setFilterIds]         = useState<Set<string>>(new Set())
+  const [noteModal,         setNoteModal]         = useState<NoteModal | null>(null)
+  const [payoutModal,       setPayoutModal]       = useState<PayoutModal | null>(null)
+  const [confirmModal,      setConfirmModal]      = useState<ConfirmModal | null>(null)
+  const [revertModal,       setRevertModal]       = useState<RevertModal | null>(null)
+  const [batchConfirmModal, setBatchConfirmModal] = useState(false)
+  const [batchConfirmLoading, setBatchConfirmLoading] = useState(false)
+  const [isReverting,       setIsReverting]       = useState(false)
+  const [showShortcuts,     setShowShortcuts]     = useState(false)
+  const [checkedProjectIds, setCheckedProjectIds] = useState<Set<string>>(new Set())
+  const [undoToast,         setUndoToast]         = useState<UndoToast | null>(null)
+  const undoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Projects filtered by dropdown selection + inline search
   const filteredProjects = useMemo(() => {
@@ -72,6 +98,124 @@ export default function RevenuePage() {
     if (q) result = result.filter(p => p.name.toLowerCase().includes(q))
     return result
   }, [projects, filterIds, searchQuery])
+
+  // Date range display values (from dates array, works for all modes)
+  const isReadOnlyGlobal = viewMode === 'all'
+  const rangeFrom = isReadOnlyGlobal ? '' : (dates[0] ?? '')
+  const rangeTo   = isReadOnlyGlobal ? '' : (dates[dates.length - 1] ?? '')
+
+  function handleRangeChange(from: string, to: string) {
+    if (from && to && from <= to) setCustomRange(from, to)
+  }
+
+  // Projects with ≥1 pending cell in current range (screen tab, non-all)
+  const pendingProjectIds = useMemo(() => {
+    if (activeTab !== 'screen' || isReadOnlyGlobal) return new Set<string>()
+    return new Set(
+      filteredProjects
+        .filter(p => dates.some(d => {
+          const key = `${p.project_id}__${d}`
+          return (screenGrid.get(key) ?? 0) > 0 && statusMap.get(key) !== 'confirmed'
+        }))
+        .map(p => p.project_id)
+    )
+  }, [activeTab, isReadOnlyGlobal, filteredProjects, dates, screenGrid, statusMap])
+
+  // All pending (project_id, date) pairs from checked projects
+  const selectedPendingItems = useMemo(() => {
+    const items: Array<{ project_id: string; date: string; amount: number }> = []
+    checkedProjectIds.forEach(pid => {
+      dates.forEach(d => {
+        const key = `${pid}__${d}`
+        const sv = screenGrid.get(key) ?? 0
+        if (sv > 0 && statusMap.get(key) !== 'confirmed') {
+          items.push({ project_id: pid, date: d, amount: sv })
+        }
+      })
+    })
+    return items
+  }, [checkedProjectIds, dates, screenGrid, statusMap])
+
+  const selectedPendingTotal = useMemo(
+    () => selectedPendingItems.reduce((s, i) => s + i.amount, 0),
+    [selectedPendingItems]
+  )
+
+  const selectedDateRange = useMemo(() => {
+    if (selectedPendingItems.length === 0) return ''
+    const ds = selectedPendingItems.map(i => i.date).sort()
+    const from = ds[0], to = ds[ds.length - 1]
+    const f = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    if (from === to) return `ngày ${f(from)}`
+    return `từ ${f(from)} đến ${f(to)}`
+  }, [selectedPendingItems])
+
+  // Clear checked when range/tab changes
+  useEffect(() => { setCheckedProjectIds(new Set()) }, [dates, activeTab])
+
+  function toggleProject(pid: string) {
+    setCheckedProjectIds(prev => { const n = new Set(prev); n.has(pid) ? n.delete(pid) : n.add(pid); return n })
+  }
+  function toggleAllProjects() {
+    const allChecked = [...pendingProjectIds].every(pid => checkedProjectIds.has(pid))
+    setCheckedProjectIds(allChecked ? new Set() : new Set(pendingProjectIds))
+  }
+
+  function startUndoCountdown(data: Omit<UndoToast, 'secondsLeft'>) {
+    if (undoIntervalRef.current) clearInterval(undoIntervalRef.current)
+    setUndoToast({ ...data, secondsLeft: 10 })
+    undoIntervalRef.current = setInterval(() => {
+      setUndoToast(prev => {
+        if (!prev || prev.secondsLeft <= 1) { clearInterval(undoIntervalRef.current!); return null }
+        return { ...prev, secondsLeft: prev.secondsLeft - 1 }
+      })
+    }, 1000)
+  }
+
+  async function handleBatchConfirm() {
+    setBatchConfirmLoading(true)
+    const items = selectedPendingItems.map(i => ({ project_id: i.project_id, date: i.date }))
+    const total = selectedPendingTotal
+    const count = items.length
+    const res = await fetch('/api/revenue/confirm-batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    })
+    setBatchConfirmLoading(false)
+    setBatchConfirmModal(false)
+    if (res.ok) {
+      setCheckedProjectIds(new Set())
+      refreshRevenue()
+      startUndoCountdown({ items, total, count })
+    }
+  }
+
+  async function handleUndo() {
+    if (!undoToast) return
+    clearInterval(undoIntervalRef.current!)
+    const items = undoToast.items
+    setUndoToast(null)
+    await fetch('/api/revenue/revert-batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    })
+    refreshRevenue()
+    setToast('Đã hoàn tác xác nhận')
+  }
+
+  async function handleSingleRevert() {
+    if (!revertModal) return
+    setIsReverting(true)
+    const { projectId, date, amount } = revertModal
+    await fetch('/api/revenue/revert-batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [{ project_id: projectId, date }] }),
+    })
+    setIsReverting(false)
+    setRevertModal(null)
+    refreshRevenue()
+    setToast(`Đã hoàn tác khoản ${formatVND(amount)}`)
+  }
 
   // Data for filter dropdown: compute per-project totals in current period
   const filterProjectData = useMemo<FilterProject[]>(() =>
@@ -145,15 +289,6 @@ export default function RevenuePage() {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [undo, redo])
-
-  // ── navigation label ────────────────────────────────────────────────────────
-  const navLabel = useMemo(() => {
-    if (viewMode === 'all')   return 'Toàn thời gian'
-    if (viewMode === 'day')   return new Date(selectedDate + 'T00:00:00').toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })
-    if (viewMode === 'month') return new Date(anchorDate.slice(0, 7) + '-01T00:00:00').toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })
-    const [from, to] = [dates[0], dates[dates.length - 1]]
-    return `${fmtShort(from)} – ${fmtShort(to)}`
-  }, [viewMode, anchorDate, selectedDate, dates])
 
   // ── totals (dynamic: only filtered projects) ─────────────────────────────────
   const dateTotals = useMemo(() =>
@@ -297,45 +432,44 @@ export default function RevenuePage() {
         </div>
       </div>
 
-      {/* ── Navigation bar (3 clusters) ────────────────────────────────────── */}
+      {/* ── Navigation bar ─────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 flex-wrap">
-        {/* Cluster 1: View switcher (segmented control) */}
-        <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium bg-white">
-          {(['day', 'week', 'month', 'all'] as const).map((m, i) => {
-            const labels: Record<string, string> = { day: 'Ngày', week: 'Tuần', month: 'Tháng', all: 'Toàn thời gian' }
-            return (
-              <button
-                key={m}
-                onClick={() => switchMode(m)}
-                className={cn(
-                  'px-3 py-1.5 transition-colors',
-                  i > 0 && 'border-l border-slate-200',
-                  viewMode === m ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'
-                )}
-              >{labels[m]}</button>
-            )
-          })}
+        {/* Date range inputs */}
+        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
+          <span className="text-[11px] text-slate-400 whitespace-nowrap">Từ ngày</span>
+          <input
+            type="date" value={rangeFrom} max={today}
+            disabled={viewMode === 'all'}
+            onChange={e => handleRangeChange(e.target.value, rangeTo)}
+            className="text-xs text-slate-700 outline-none bg-transparent disabled:opacity-40 disabled:cursor-not-allowed w-32"
+          />
+          <span className="text-slate-300 text-sm">—</span>
+          <span className="text-[11px] text-slate-400 whitespace-nowrap">Đến ngày</span>
+          <input
+            type="date" value={rangeTo} max={today}
+            disabled={viewMode === 'all'}
+            onChange={e => handleRangeChange(rangeFrom, e.target.value)}
+            className="text-xs text-slate-700 outline-none bg-transparent disabled:opacity-40 disabled:cursor-not-allowed w-32"
+          />
         </div>
 
-        {/* Cluster 2: Quick nav */}
-        <div className={cn('flex items-center gap-1', viewMode === 'all' && 'opacity-30 pointer-events-none')}>
-          <button onClick={goBack} className="p-1.5 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">
-            <ChevronLeft size={14} />
-          </button>
-          <button
-            onClick={goToToday}
-            className="px-3 py-1.5 text-xs border border-slate-200 rounded-md bg-white text-slate-600 hover:bg-slate-50 min-w-[120px] text-center"
-          >
-            {viewMode === 'month' ? 'Tháng này' : viewMode === 'day' ? 'Hôm nay' : 'Tuần này'}
-          </button>
-          <button onClick={goForward} disabled={isAtToday} className={cn('p-1.5 rounded-md border border-slate-200 bg-white text-slate-600', isAtToday ? 'opacity-30 cursor-not-allowed' : 'hover:bg-slate-50')}>
-            <ChevronRight size={14} />
-          </button>
-        </div>
-
-        {/* Cluster 3: Date label */}
-        <div className="text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-3 py-1.5">
-          {navLabel}
+        {/* Preset buttons */}
+        <div className="flex items-center gap-1 rounded-lg border border-slate-200 overflow-hidden text-xs font-medium bg-white">
+          {([
+            { key: 'week', label: 'Tuần này' },
+            { key: 'month', label: 'Tháng này' },
+            { key: 'all', label: 'Toàn thời gian' },
+          ] as const).map((p, i) => (
+            <button
+              key={p.key}
+              onClick={() => switchMode(p.key)}
+              className={cn(
+                'px-3 py-1.5 transition-colors',
+                i > 0 && 'border-l border-slate-200',
+                viewMode === p.key ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'
+              )}
+            >{p.label}</button>
+          ))}
         </div>
 
         {/* Revenue type tab */}
@@ -375,17 +509,6 @@ export default function RevenuePage() {
             : <span className="text-slate-400">Tất cả {projects.length} dự án</span>
           }
         </span>
-        {activeTab === 'screen' && (
-          <>
-            <div className="flex-1" />
-            <Link
-              href="/revenue/confirm"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors shrink-0"
-            >
-              <CheckCircle2 size={11} /> Xác nhận hàng loạt
-            </Link>
-          </>
-        )}
       </div>
 
       {/* ── Summary cards ──────────────────────────────────────────────────── */}
@@ -401,6 +524,25 @@ export default function RevenuePage() {
 
       {/* ── Search + Table ─────────────────────────────────────────────────── */}
       <div className="relative border border-slate-200 rounded-lg overflow-hidden">
+        {/* Batch confirm banner */}
+        {activeTab === 'screen' && !isReadOnlyGlobal && checkedProjectIds.size > 0 && (
+          <div className="bg-emerald-600 text-white px-4 py-2.5 flex items-center gap-3">
+            <span className="text-sm font-semibold">{selectedPendingItems.length} khoản đã chọn</span>
+            <span className="text-emerald-300 text-sm">·</span>
+            <span className="text-sm font-bold">{formatVND(selectedPendingTotal)}</span>
+            <button
+              onClick={() => setCheckedProjectIds(new Set())}
+              className="text-xs text-emerald-200 hover:text-white ml-1 transition-colors"
+            >Bỏ chọn</button>
+            <div className="flex-1" />
+            <button
+              onClick={() => setBatchConfirmModal(true)}
+              disabled={selectedPendingItems.length === 0}
+              className="px-3 py-1.5 text-xs font-semibold bg-white text-emerald-700 rounded-md hover:bg-emerald-50 transition-colors disabled:opacity-50"
+            >Xác nhận hàng loạt</button>
+          </div>
+        )}
+
         {/* Search bar above table */}
         <div className="sticky top-0 z-20 bg-white border-b border-slate-100 px-3 py-2 flex items-center gap-2">
           <Search size={13} className="text-slate-400 shrink-0" />
@@ -426,7 +568,17 @@ export default function RevenuePage() {
             <thead className="sticky top-0 z-10 bg-slate-50">
               <tr>
                 <th className="sticky left-0 z-20 bg-slate-50 px-4 py-2.5 text-left text-xs font-medium border-b border-r border-slate-200 w-52 min-w-[208px]">
-                  <span className="text-slate-500 uppercase tracking-wide text-[10px]">Dự án</span>
+                  <div className="flex items-center gap-2">
+                    {activeTab === 'screen' && !isReadOnlyGlobal && pendingProjectIds.size > 0 && (
+                      <div onClick={toggleAllProjects} className="cursor-pointer shrink-0">
+                        <Checkbox
+                          checked={[...pendingProjectIds].every(pid => checkedProjectIds.has(pid))}
+                          indeterminate={checkedProjectIds.size > 0 && ![...pendingProjectIds].every(pid => checkedProjectIds.has(pid))}
+                        />
+                      </div>
+                    )}
+                    <span className="text-slate-500 uppercase tracking-wide text-[10px]">Dự án</span>
+                  </div>
                 </th>
                 {dates.map(d => (
                   <th
@@ -453,12 +605,24 @@ export default function RevenuePage() {
               {filteredProjects.map((project, pi) => {
                 const isCumulative = activeTab === 'screen' && project.screen_revenue_type === 'cumulative'
                 const isReadOnly   = viewMode === 'all'
+                const hasPending   = pendingProjectIds.has(project.project_id)
 
                 return (
                   <tr key={project.project_id} className="border-b border-slate-100 hover:bg-slate-50/40">
                     <td className="sticky left-0 bg-white border-r border-slate-200 px-3 py-0 z-10">
-                      <div className="flex items-center justify-between gap-1.5 py-2">
-                        <span className="font-medium text-slate-700 text-xs truncate">{project.name}</span>
+                      <div className="flex items-center gap-1.5 py-2">
+                        {activeTab === 'screen' && !isReadOnly && (
+                          <div
+                            className="shrink-0 cursor-pointer"
+                            onClick={e => { e.stopPropagation(); if (hasPending) toggleProject(project.project_id) }}
+                          >
+                            {hasPending
+                              ? <Checkbox checked={checkedProjectIds.has(project.project_id)} />
+                              : <div className="w-4 h-4" />
+                            }
+                          </div>
+                        )}
+                        <span className="font-medium text-slate-700 text-xs truncate flex-1">{project.name}</span>
                         {activeTab === 'screen' && !isReadOnly && (
                           <button
                             onClick={() => updateProject({ ...project, screen_revenue_type: isCumulative ? 'daily' : 'cumulative' })}
@@ -562,6 +726,9 @@ export default function RevenuePage() {
                                 } : undefined}
                                 onConfirmClick={(!isRevTab && !isConfirmed && (cellValue ?? 0) > 0)
                                   ? () => setConfirmModal({ projectId: project.project_id, date, screenAmount: cellValue ?? 0, projectName: project.name })
+                                  : undefined}
+                                onRevertClick={(isRevTab && isConfirmed && (cellValue ?? 0) > 0)
+                                  ? () => setRevertModal({ projectId: project.project_id, date, amount: cellValue ?? 0, projectName: project.name })
                                   : undefined}
                               />
                             )}
@@ -674,6 +841,95 @@ export default function RevenuePage() {
                 >Lưu</button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Batch confirm modal ────────────────────────────────────────────── */}
+      {batchConfirmModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-5 w-[340px]">
+            <h3 className="font-semibold text-slate-800 mb-2">Xác nhận thanh toán</h3>
+            <p className="text-sm text-slate-600 mb-4">
+              Xác nhận{' '}
+              <span className="font-semibold">{selectedPendingItems.length} khoản</span>, tổng{' '}
+              <span className="font-semibold text-emerald-700">{formatVND(selectedPendingTotal)}</span>{' '}
+              {selectedDateRange} đã được thanh toán?
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setBatchConfirmModal(false)}
+                disabled={batchConfirmLoading}
+                className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50"
+              >Hủy</button>
+              <button
+                onClick={handleBatchConfirm}
+                disabled={batchConfirmLoading}
+                className="flex items-center gap-1.5 px-4 py-1.5 text-xs bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {batchConfirmLoading && <Loader2 size={10} className="animate-spin" />}
+                Đồng ý, xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Revert modal ──────────────────────────────────────────────────── */}
+      {revertModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-5 w-[340px]">
+            <h3 className="font-semibold text-slate-800 mb-2">Hoàn tác xác nhận</h3>
+            <p className="text-sm text-slate-600 mb-1">
+              Hoàn tác xác nhận{' '}
+              <span className="font-semibold text-amber-700">{formatVND(revertModal.amount)}</span>{' '}
+              từ <span className="font-semibold">{revertModal.projectName}</span>{' '}
+              ngày {new Date(revertModal.date + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}?
+            </p>
+            <p className="text-xs text-slate-400 mb-4">Khoản này sẽ quay về trạng thái Chờ xác nhận.</p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setRevertModal(null)}
+                disabled={isReverting}
+                className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50"
+              >Hủy</button>
+              <button
+                onClick={handleSingleRevert}
+                disabled={isReverting}
+                className="flex items-center gap-1.5 px-4 py-1.5 text-xs bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-60"
+              >
+                {isReverting && <Loader2 size={10} className="animate-spin" />}
+                <RotateCcw size={10} /> Hoàn tác
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Undo toast (10s countdown) ────────────────────────────────────── */}
+      {undoToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-800 text-white text-xs rounded-xl shadow-xl overflow-hidden w-72">
+          <div className="px-4 py-3 flex items-center gap-3">
+            <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+            <div className="flex-1">
+              <div className="font-semibold">Đã xác nhận {undoToast.count} khoản</div>
+              <div className="text-slate-300 text-[11px]">{formatVND(undoToast.total)}</div>
+            </div>
+            <button
+              onClick={handleUndo}
+              className="px-2.5 py-1.5 text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-white rounded-md shrink-0 transition-colors"
+            >↩ Hoàn tác ({undoToast.secondsLeft}s)</button>
+            <button
+              onClick={() => { clearInterval(undoIntervalRef.current!); setUndoToast(null) }}
+              className="text-slate-400 hover:text-white transition-colors shrink-0"
+            ><X size={12} /></button>
+          </div>
+          {/* Progress bar */}
+          <div className="h-0.5 bg-slate-700">
+            <div
+              className="h-full bg-amber-500 transition-all"
+              style={{ width: `${(undoToast.secondsLeft / 10) * 100}%` }}
+            />
           </div>
         </div>
       )}

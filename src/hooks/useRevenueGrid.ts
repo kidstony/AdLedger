@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useProjectsContext } from '@/context/ProjectsContext'
 
-export type ViewMode = 'day' | 'week' | 'month' | 'all'
+export type ViewMode = 'day' | 'week' | 'month' | 'all' | 'custom'
 export type RevenueTab = 'revenue' | 'screen'
 
 type HistoryChange = { key: string; tab: RevenueTab; old: number | undefined; val: number | undefined }
@@ -52,6 +52,9 @@ export function useRevenueGrid() {
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [anchorDate, setAnchorDate] = useState(today)     // week end / month first-day
   const [selectedDate, setSelectedDate] = useState(today) // day mode
+  const [customFrom, setCustomFrom] = useState(() => addDays(today, -6))
+  const [customTo,   setCustomTo]   = useState(today)
+  const [refreshKey, setRefreshKey] = useState(0)
   const [activeTab, setActiveTab] = useState<RevenueTab>('revenue')
   const [isLoading, setIsLoading] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
@@ -145,12 +148,22 @@ export function useRevenueGrid() {
 
   // Dates computed from view mode
   const dates = useMemo(() => {
-    if (viewMode === 'day')   return [selectedDate]
-    if (viewMode === 'week')  return getWeekDates(anchorDate)
-    if (viewMode === 'month') return getMonthDates(anchorDate.slice(0, 7) + '-01')
+    if (viewMode === 'day')    return [selectedDate]
+    if (viewMode === 'week')   return getWeekDates(anchorDate)
+    if (viewMode === 'month')  return getMonthDates(anchorDate.slice(0, 7) + '-01')
+    if (viewMode === 'custom') {
+      if (!customFrom || !customTo || customFrom > customTo) return []
+      const result: string[] = []
+      let d = customFrom
+      while (d <= customTo && result.length < 62) {
+        result.push(d)
+        d = addDays(d, 1)
+      }
+      return result
+    }
     // 'all' — derived from loaded data below
     return []
-  }, [viewMode, anchorDate, selectedDate])
+  }, [viewMode, anchorDate, selectedDate, customFrom, customTo])
 
   // For "all-time": aggregate grids by month, compute unique months
   const monthlyRevenueGrid = useMemo(() => {
@@ -232,7 +245,7 @@ export function useRevenueGrid() {
   const fetchRevenue = useCallback(async (dateList: string[]) => {
     if (dateList.length === 0) return
     const from = viewMode === 'all' ? '2020-01-01' : dateList[0]
-    const to   = today
+    const to   = viewMode === 'all' ? today : (dateList[dateList.length - 1] ?? today)
     setIsLoading(true)
     try {
       const res = await fetch(`/api/revenue?from=${from}&to=${to}`)
@@ -293,7 +306,8 @@ export function useRevenueGrid() {
     } else {
       fetchRevenue(dates)
     }
-  }, [dates, viewMode, fetchRevenue])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dates, viewMode, fetchRevenue, refreshKey])
 
   // Navigation
   const goBack = useCallback(() => {
@@ -323,17 +337,26 @@ export function useRevenueGrid() {
   const switchMode = useCallback((mode: ViewMode) => {
     setViewMode(mode)
     if (mode === 'day')   setSelectedDate(prev => prev > today ? today : prev)
-    if (mode === 'week')  setAnchorDate(prev => prev > today ? today : prev)
+    if (mode === 'week')  setAnchorDate(today) // always reset to current week
     if (mode === 'month') setAnchorDate(today.slice(0, 7) + '-01')
   }, [today])
 
+  const setCustomRange = useCallback((from: string, to: string) => {
+    setCustomFrom(from)
+    setCustomTo(to)
+    setViewMode('custom')
+  }, [])
+
   // Determine if at "today" boundary (forward button disabled)
   const isAtToday = useMemo(() => {
-    if (viewMode === 'day')   return selectedDate >= today
-    if (viewMode === 'week')  return anchorDate >= today
-    if (viewMode === 'month') return anchorDate.slice(0, 7) >= today.slice(0, 7)
+    if (viewMode === 'day')    return selectedDate >= today
+    if (viewMode === 'week')   return anchorDate >= today
+    if (viewMode === 'month')  return anchorDate.slice(0, 7) >= today.slice(0, 7)
+    if (viewMode === 'custom') return (customTo || '') >= today
     return true // all-time nav disabled
-  }, [viewMode, anchorDate, selectedDate, today])
+  }, [viewMode, anchorDate, selectedDate, customTo, today])
+
+  const refreshRevenue = useCallback(() => setRefreshKey(k => k + 1), [])
 
   // Update cell (with undo history)
   const updateCell = useCallback((projectId: string, date: string, value: number, historyBatch?: HistoryChange[]) => {
@@ -496,6 +519,7 @@ export function useRevenueGrid() {
     canUndo, canRedo, toast, setToast,
     undo, redo,
     goBack, goForward, goToToday, switchMode,
+    customFrom, customTo, setCustomRange, refreshRevenue,
     updateCell, clearCell, bulkUpdateCells,
     saveNote, savePayout, confirmCell,
     statusMap, confirmedAtMap,
