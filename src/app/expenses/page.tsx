@@ -142,7 +142,7 @@ interface OtherForm {
 }
 interface CategoryForm { name: string; color: ColorKey }
 
-type Tab = 'qc' | 'rental' | 'other'
+type Tab = 'qc' | 'rental' | 'other' | 'summary'
 type Preset = 'week' | 'month' | 'prev_month' | 'custom'
 
 // ─── Main page ────────────────────────────────────────────────────────────────
@@ -192,6 +192,11 @@ export default function ExpensesPage() {
   const [categoryForm, setCategoryForm] = useState<CategoryForm>({ name: '', color: 'blue' })
   const [categorySaving, setCategorySaving] = useState(false)
 
+  // Tab 4 — Summary
+  const [groupBy, setGroupBy] = useState<'cid' | 'project'>('cid')
+  const [summarySearch, setSummarySearch] = useState('')
+  const [expandedSummaryKey, setExpandedSummaryKey] = useState<string | null>(null)
+
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const projectByCampaignId = useMemo(
@@ -237,6 +242,50 @@ export default function ExpensesPage() {
   }, [adSpendRows, projectByCampaignId, spendByProject])
 
   const categoryMap = useMemo(() => new Map(categories.map(c => [c.id, c])), [categories])
+
+  const projectById = useMemo(() => new Map(projects.map(p => [p.project_id, p])), [projects])
+
+  const rentalByCid = useMemo(() => {
+    const map = new Map<string, number>()
+    rentalGroups.forEach(g => {
+      (g.rental_group_cids ?? []).forEach(c => {
+        const cost = computeCidCost(c.cid, g, fromStr, toStr, adSpendByCid)
+        map.set(c.cid, (map.get(c.cid) ?? 0) + cost)
+      })
+    })
+    return map
+  }, [rentalGroups, fromStr, toStr, adSpendByCid])
+
+  const rentalByProject = useMemo(() => {
+    const map = new Map<string, number>()
+    rentalGroups.forEach(g => {
+      (g.rental_group_cids ?? []).forEach(c => {
+        const cost = computeCidCost(c.cid, g, fromStr, toStr, adSpendByCid)
+        const key = c.project_id ?? ''
+        map.set(key, (map.get(key) ?? 0) + cost)
+      })
+    })
+    return map
+  }, [rentalGroups, fromStr, toStr, adSpendByCid])
+
+  const otherByCid = useMemo(() => {
+    const map = new Map<string, number>()
+    otherCosts.forEach(c => {
+      const proj = c.project_id ? projectById.get(c.project_id) : null
+      const cid = proj?.cid ?? ''
+      map.set(cid, (map.get(cid) ?? 0) + c.amount)
+    })
+    return map
+  }, [otherCosts, projectById])
+
+  const otherByProject = useMemo(() => {
+    const map = new Map<string, number>()
+    otherCosts.forEach(c => {
+      const key = c.project_id ?? ''
+      map.set(key, (map.get(key) ?? 0) + c.amount)
+    })
+    return map
+  }, [otherCosts])
 
   // ── Fetchers ──────────────────────────────────────────────────────────────
 
@@ -427,9 +476,10 @@ export default function ExpensesPage() {
         {/* Tab switcher */}
         <div className="ml-auto flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
           {([
-            { key: 'qc',     label: 'Chi phí QC' },
-            { key: 'rental', label: 'Thuê tài khoản' },
-            { key: 'other',  label: 'Chi phí khác' },
+            { key: 'qc',      label: 'Chi phí QC' },
+            { key: 'rental',  label: 'Thuê tài khoản' },
+            { key: 'other',   label: 'Chi phí khác' },
+            { key: 'summary', label: 'Tổng hợp' },
           ] as const).map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={cn('px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
@@ -484,6 +534,18 @@ export default function ExpensesPage() {
             categoryMap={categoryMap} projects={projects}
             onAdd={openAddOther} onEdit={openEditOther} onDelete={deleteOther}
             onManageCategories={() => setShowCategoryPanel(true)} />
+        )}
+        {tab === 'summary' && (
+          <SummaryTab
+            groupBy={groupBy} onGroupByChange={v => { setGroupBy(v); setExpandedSummaryKey(null) }}
+            search={summarySearch} onSearchChange={setSummarySearch}
+            expandedKey={expandedSummaryKey} onExpandKey={setExpandedSummaryKey}
+            adSpendByCid={adSpendByCid} spendByProject={spendByProject}
+            rentalByCid={rentalByCid} rentalByProject={rentalByProject}
+            otherByCid={otherByCid} otherByProject={otherByProject}
+            projects={projects} adSpendRows={adSpendRows} otherCosts={otherCosts}
+            projectByCampaignId={projectByCampaignId} projectById={projectById}
+          />
         )}
       </div>
 
@@ -1049,6 +1111,240 @@ function OtherModal({ form, editing, categories, projects, saving, onChange, onS
         </div>
       </div>
     </div>
+  )
+}
+
+// ─── Summary Tab ──────────────────────────────────────────────────────────────
+
+interface SummaryRowData {
+  key: string
+  label: string
+  subLabel?: string
+  qc: number
+  rental: number
+  other: number
+}
+
+function SummaryTab({
+  groupBy, onGroupByChange, search, onSearchChange,
+  expandedKey, onExpandKey,
+  adSpendByCid, spendByProject,
+  rentalByCid, rentalByProject,
+  otherByCid, otherByProject,
+  projects, adSpendRows, otherCosts, projectByCampaignId, projectById,
+}: {
+  groupBy: 'cid' | 'project'
+  onGroupByChange: (v: 'cid' | 'project') => void
+  search: string
+  onSearchChange: (v: string) => void
+  expandedKey: string | null
+  onExpandKey: (key: string | null) => void
+  adSpendByCid: Map<string, number>
+  spendByProject: Map<string, number>
+  rentalByCid: Map<string, number>
+  rentalByProject: Map<string, number>
+  otherByCid: Map<string, number>
+  otherByProject: Map<string, number>
+  projects: Project[]
+  adSpendRows: { campaign_id: string; date: string; spend: number }[]
+  otherCosts: OtherCost[]
+  projectByCampaignId: Map<string, Project>
+  projectById: Map<string, Project>
+}) {
+  const rows: SummaryRowData[] = useMemo(() => {
+    if (groupBy === 'cid') {
+      const allCids = new Set<string>([...adSpendByCid.keys(), ...rentalByCid.keys(), ...otherByCid.keys()])
+      const firstProjectNameByCid = new Map<string, string>()
+      projects.forEach(p => { if (!firstProjectNameByCid.has(p.cid)) firstProjectNameByCid.set(p.cid, p.name) })
+
+      const normal: SummaryRowData[] = [...allCids]
+        .filter(c => c !== '')
+        .map(cid => ({
+          key: cid, label: formatCid(cid),
+          subLabel: firstProjectNameByCid.get(cid),
+          qc: adSpendByCid.get(cid) ?? 0,
+          rental: rentalByCid.get(cid) ?? 0,
+          other: otherByCid.get(cid) ?? 0,
+        }))
+        .sort((a, b) => (b.qc + b.rental + b.other) - (a.qc + a.rental + a.other))
+
+      const chungOther = otherByCid.get('') ?? 0
+      if (chungOther > 0) normal.push({ key: '', label: 'Chung (không gán dự án)', qc: 0, rental: 0, other: chungOther })
+      return normal
+    } else {
+      const allIds = new Set<string>([...spendByProject.keys(), ...rentalByProject.keys(), ...otherByProject.keys()])
+      const normal: SummaryRowData[] = [...allIds]
+        .filter(id => id !== '')
+        .map(id => {
+          const p = projectById.get(id)
+          return {
+            key: id, label: p?.name ?? id,
+            subLabel: p ? formatCid(p.cid) : undefined,
+            qc: spendByProject.get(id) ?? 0,
+            rental: rentalByProject.get(id) ?? 0,
+            other: otherByProject.get(id) ?? 0,
+          }
+        })
+        .sort((a, b) => (b.qc + b.rental + b.other) - (a.qc + a.rental + a.other))
+
+      const chungRental = rentalByProject.get('') ?? 0
+      const chungOther = otherByProject.get('') ?? 0
+      if (chungRental + chungOther > 0) normal.push({ key: '', label: 'Chung (không gán dự án)', qc: 0, rental: chungRental, other: chungOther })
+      return normal
+    }
+  }, [groupBy, adSpendByCid, spendByProject, rentalByCid, rentalByProject, otherByCid, otherByProject, projects, projectById])
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return rows
+    const q = search.toLowerCase()
+    return rows.filter(r => r.label.toLowerCase().includes(q) || (r.subLabel?.toLowerCase().includes(q) ?? false))
+  }, [rows, search])
+
+  const totals = useMemo(() => {
+    const qc = filtered.reduce((s, r) => s + r.qc, 0)
+    const rental = filtered.reduce((s, r) => s + r.rental, 0)
+    const other = filtered.reduce((s, r) => s + r.other, 0)
+    return { qc, rental, other, total: qc + rental + other }
+  }, [filtered])
+
+  function buildDailyRows(key: string): { date: string; qc: number; other: number }[] {
+    const map = new Map<string, { qc: number; other: number }>()
+    const ensure = (d: string) => { if (!map.has(d)) map.set(d, { qc: 0, other: 0 }); return map.get(d)! }
+
+    if (groupBy === 'cid') {
+      adSpendRows.forEach(row => {
+        const p = projectByCampaignId.get(row.campaign_id)
+        if ((p?.cid ?? '') === key) ensure(row.date).qc += row.spend
+      })
+      otherCosts.forEach(c => {
+        const proj = c.project_id ? projectById.get(c.project_id) : null
+        if ((proj?.cid ?? '') === key) ensure(c.date).other += c.amount
+      })
+    } else {
+      adSpendRows.forEach(row => {
+        const p = projectByCampaignId.get(row.campaign_id)
+        if ((p?.project_id ?? '') === key) ensure(row.date).qc += row.spend
+      })
+      otherCosts.forEach(c => {
+        if ((c.project_id ?? '') === key) ensure(c.date).other += c.amount
+      })
+    }
+
+    return [...map.entries()].map(([date, v]) => ({ date, ...v })).sort((a, b) => b.date.localeCompare(a.date))
+  }
+
+  return (
+    <>
+      <div className="px-4 py-2.5 border-b border-slate-100 flex items-center gap-3 bg-white flex-wrap">
+        <div className="relative">
+          <input value={search} onChange={e => onSearchChange(e.target.value)}
+            placeholder="Tìm CID / dự án..."
+            className="pl-7 pr-3 py-1.5 text-xs border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-slate-200 w-52" />
+          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-[10px]">🔍</span>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-xs text-slate-400">Nhóm theo:</span>
+          <div className="flex items-center rounded-md border border-slate-200 overflow-hidden text-xs font-medium">
+            {(['cid', 'project'] as const).map((v, i) => (
+              <button key={v} onClick={() => onGroupByChange(v)}
+                className={cn('px-3 py-1.5 transition-colors', i > 0 && 'border-l border-slate-200',
+                  groupBy === v ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50')}>
+                {v === 'cid' ? 'Theo CID' : 'Theo Dự án'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
+            <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">
+                {groupBy === 'cid' ? 'CID' : 'Dự án'}
+              </th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Chi phí QC</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Thuê TK</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Chi phí khác</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Tổng</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr><td colSpan={5} className="py-10 text-center text-slate-400 text-sm">Không có dữ liệu</td></tr>
+            )}
+            {filtered.map(row => {
+              const total = row.qc + row.rental + row.other
+              const isExpanded = expandedKey === row.key
+              const dailyRows = isExpanded ? buildDailyRows(row.key) : []
+              return (
+                <>
+                  <tr key={row.key} onClick={() => onExpandKey(isExpanded ? null : row.key)}
+                    className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className={cn('text-slate-300 text-[10px] transition-transform duration-150 shrink-0', isExpanded && 'rotate-90')}>▶</span>
+                        <div>
+                          <p className={cn('font-medium', groupBy === 'cid' ? 'font-mono text-slate-700' : 'text-slate-800')}>{row.label}</p>
+                          {row.subLabel && <p className="text-[11px] text-slate-400">{row.subLabel}</p>}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-xs text-slate-600">{row.qc > 0 ? formatVND(row.qc) : <span className="text-slate-300">—</span>}</td>
+                    <td className="px-4 py-3 text-right font-mono text-xs text-slate-600">{row.rental > 0 ? formatVND(row.rental) : <span className="text-slate-300">—</span>}</td>
+                    <td className="px-4 py-3 text-right font-mono text-xs text-slate-600">{row.other > 0 ? formatVND(row.other) : <span className="text-slate-300">—</span>}</td>
+                    <td className="px-4 py-3 text-right font-mono text-sm font-semibold text-slate-800">{formatVND(total)}</td>
+                  </tr>
+                  {isExpanded && (
+                    <tr key={row.key + '-daily'}>
+                      <td colSpan={5} className="p-0">
+                        <div className="bg-slate-50 border-b border-slate-200">
+                          {dailyRows.length === 0 ? (
+                            <p className="px-10 py-3 text-xs text-slate-400">Không có dữ liệu theo ngày</p>
+                          ) : (
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="border-b border-slate-200">
+                                  <th className="px-10 py-2 text-left font-medium text-slate-400 uppercase tracking-wide">Ngày</th>
+                                  <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Chi phí QC</th>
+                                  <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Chi phí khác</th>
+                                  <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Tổng ngày</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {dailyRows.map(d => (
+                                  <tr key={d.date} className="border-b border-slate-100 last:border-0">
+                                    <td className="px-10 py-2 font-mono text-slate-600">{d.date}</td>
+                                    <td className="px-4 py-2 text-right font-mono text-slate-500">{d.qc > 0 ? formatVND(d.qc) : <span className="text-slate-300">—</span>}</td>
+                                    <td className="px-4 py-2 text-right font-mono text-slate-500">{d.other > 0 ? formatVND(d.other) : <span className="text-slate-300">—</span>}</td>
+                                    <td className="px-4 py-2 text-right font-mono font-semibold text-slate-700">{formatVND(d.qc + d.other)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              )
+            })}
+          </tbody>
+          {filtered.length > 0 && (
+            <tfoot className="bg-slate-50 border-t-2 border-slate-200">
+              <tr>
+                <td className="px-4 py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide">TỔNG</td>
+                <td className="px-4 py-3 text-right font-mono text-sm font-semibold text-slate-700">{formatVND(totals.qc)}</td>
+                <td className="px-4 py-3 text-right font-mono text-sm font-semibold text-slate-700">{formatVND(totals.rental)}</td>
+                <td className="px-4 py-3 text-right font-mono text-sm font-semibold text-slate-700">{formatVND(totals.other)}</td>
+                <td className="px-4 py-3 text-right font-mono text-sm font-bold text-green-700">{formatVND(totals.total)}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </>
   )
 }
 
