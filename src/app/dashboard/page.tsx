@@ -45,13 +45,15 @@ export default function DashboardPage() {
       </div>
 
       <SummaryCards
-        totalSpend={totals.spend}
+        totalSpend={totals.spend + totals.rental + totals.other}
         totalRevenue={totals.revenue}
         totalProfit={totals.profit}
         avgRoi={totals.avgRoi}
         totalScreen={totals.screen_revenue}
         totalPending={totals.pending}
-        estimatedRoi={totals.spend > 0 ? ((totals.revenue + totals.screen_revenue - totals.spend) / totals.spend) * 100 : 0}
+        estimatedRoi={(totals.spend + totals.rental + totals.other) > 0
+          ? ((totals.revenue + totals.screen_revenue - totals.spend - totals.rental - totals.other) / (totals.spend + totals.rental + totals.other)) * 100
+          : 0}
       />
 
       <div className="flex items-center gap-3">

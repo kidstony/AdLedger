@@ -53,6 +53,8 @@ export function aggregatePnl(daily: PnlDaily[], dateRange: DateRange): PnlSummar
         name: row.name,
         mcc_id: '',
         total_spend: row.spend,
+        total_rental: 0,
+        total_other: 0,
         total_revenue: row.revenue,
         total_profit: row.profit,
         avg_roi: 0,

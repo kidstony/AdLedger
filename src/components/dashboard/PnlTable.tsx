@@ -15,7 +15,9 @@ interface Props {
 const columns: { key: string; label: string; sortable: boolean; align: string; icon?: boolean }[] = [
   { key: 'name',                 label: 'Tên dự án',      sortable: true,  align: 'text-left' },
   { key: 'cid',                  label: 'CID',             sortable: false, align: 'text-left' },
-  { key: 'total_spend',          label: 'Chi phí',         sortable: true,  align: 'text-right' },
+  { key: 'total_spend',          label: 'Chi phí QC',      sortable: true,  align: 'text-right' },
+  { key: 'total_rental',         label: 'Thuê TK',         sortable: true,  align: 'text-right' },
+  { key: 'total_other',          label: 'CP Khác',         sortable: true,  align: 'text-right' },
   { key: 'total_revenue',        label: 'Doanh thu',       sortable: true,  align: 'text-right' },
   { key: 'total_screen_revenue', label: 'DT Màn hình',     sortable: false, align: 'text-right', icon: true },
   { key: 'total_profit',         label: 'Lợi nhuận',       sortable: true,  align: 'text-right' },
@@ -139,6 +141,12 @@ export default function PnlTable({ data, isLoading }: Props) {
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-slate-400">{formatCid(row.cid)}</td>
                 <td className="px-4 py-3 text-right font-mono text-slate-700">{formatVND(row.total_spend)}</td>
+                <td className="px-4 py-3 text-right font-mono text-slate-500">
+                  {row.total_rental > 0 ? formatVND(row.total_rental) : <span className="text-slate-300">—</span>}
+                </td>
+                <td className="px-4 py-3 text-right font-mono text-slate-500">
+                  {row.total_other > 0 ? formatVND(row.total_other) : <span className="text-slate-300">—</span>}
+                </td>
                 <td className="px-4 py-3 text-right font-mono text-slate-700">{formatVND(row.total_revenue)}</td>
                 <td className="px-4 py-3 text-right font-mono text-blue-500">
                   {row.total_screen_revenue > 0 ? formatVND(row.total_screen_revenue) : <span className="text-slate-300">—</span>}
@@ -147,7 +155,8 @@ export default function PnlTable({ data, isLoading }: Props) {
                   {row.total_profit >= 0 ? '+' : ''}{formatVND(row.total_profit)}
                 </td>
                 {(() => {
-                  const est = row.total_revenue + row.total_screen_revenue - row.total_spend
+                  const totalCost = row.total_spend + row.total_rental + row.total_other
+                  const est = row.total_revenue + row.total_screen_revenue - totalCost
                   return (
                     <td className={cn('px-4 py-3 text-right font-mono font-medium', row.total_screen_revenue > 0 ? getProfitTextClass(est) : 'text-slate-300')}>
                       {row.total_screen_revenue > 0 ? (est >= 0 ? '+' : '') + formatVND(est) : '—'}

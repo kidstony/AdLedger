@@ -60,10 +60,12 @@ export interface PnlSummary {
   cid: string
   name: string
   mcc_id: string
-  total_spend: number
+  total_spend: number          // QC / ad spend only
+  total_rental: number         // thuê tài khoản
+  total_other: number          // chi phí khác
   total_revenue: number
-  total_profit: number
-  avg_roi: number
+  total_profit: number         // revenue - (spend + rental + other)
+  avg_roi: number              // profit / total_cost * 100
   total_screen_revenue: number
   total_pending: number
 }

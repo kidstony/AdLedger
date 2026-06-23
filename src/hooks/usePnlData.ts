@@ -3,9 +3,10 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { MOCK_PNL_DAILY } from '@/lib/mock-data'
 import { aggregatePnl, getDefaultDateRange } from '@/lib/utils'
-import { DateRange, PnlSummary } from '@/lib/types'
+import { DateRange, PnlSummary, RentalGroup, OtherCost } from '@/lib/types'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
+import { computeCidCost } from '@/lib/costs'
 
 interface AdSpendRow {
   campaign_id: string
@@ -27,6 +28,8 @@ export function usePnlData() {
   const [search, setSearch] = useState('')
   const [adSpendRows, setAdSpendRows] = useState<AdSpendRow[] | null>(null)
   const [revenueRows, setRevenueRows] = useState<RevenueRow[]>([])
+  const [rentalGroups, setRentalGroups] = useState<RentalGroup[]>([])
+  const [otherCosts, setOtherCosts] = useState<OtherCost[]>([])
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null)
 
   // Map google_campaign_id → project
@@ -70,6 +73,17 @@ export function usePnlData() {
     setRevenueRows((data ?? []) as RevenueRow[])
   }
 
+  async function fetchCosts(range: DateRange) {
+    const from = range.from.toISOString().split('T')[0]
+    const to = range.to.toISOString().split('T')[0]
+    const [rgRes, otherRes] = await Promise.all([
+      fetch('/api/expenses/rental-groups').then(r => r.json()),
+      fetch(`/api/expenses/other?from=${from}&to=${to}`).then(r => r.json()),
+    ])
+    setRentalGroups(Array.isArray(rgRes) ? rgRes : [])
+    setOtherCosts(Array.isArray(otherRes) ? otherRes : [])
+  }
+
   async function fetchLastSync() {
     const { data } = await supabase
       .from('sync_log')
@@ -84,12 +98,45 @@ export function usePnlData() {
   useEffect(() => {
     fetchAdSpend(dateRange)
     fetchRevenue(dateRange)
+    fetchCosts(dateRange)
     fetchLastSync()
   }, [dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const dataSource: 'real' | 'mock' = (adSpendRows && adSpendRows.length > 0) ? 'real' : 'mock'
 
+  // Build CID → project_id mapping (for rental groups without explicit project_id)
+  const projectByCid = useMemo(
+    () => new Map(projects.filter(p => p.cid).map(p => [p.cid, p.project_id])),
+    [projects]
+  )
+
   const allSummaries = useMemo(() => {
+    const fromStr = dateRange.from.toISOString().split('T')[0]
+    const toStr   = dateRange.to.toISOString().split('T')[0]
+
+    // adSpendByCid: needed for percentage rental rate calculation
+    const adSpendByCid = new Map<string, number>()
+    adSpendRows?.forEach(row => {
+      const p = projectByCampaignId.get(row.campaign_id)
+      if (p?.cid) adSpendByCid.set(p.cid, (adSpendByCid.get(p.cid) ?? 0) + row.spend)
+    })
+
+    // Rental cost per project
+    const rentalByProject = new Map<string, number>()
+    rentalGroups.forEach(rg => {
+      rg.rental_group_cids?.forEach(cidEntry => {
+        const cost = computeCidCost(cidEntry.cid, rg, fromStr, toStr, adSpendByCid)
+        const pid = cidEntry.project_id ?? projectByCid.get(cidEntry.cid)
+        if (pid) rentalByProject.set(pid, (rentalByProject.get(pid) ?? 0) + cost)
+      })
+    })
+
+    // Other cost per project (only those linked to a project)
+    const otherByProject = new Map<string, number>()
+    otherCosts.forEach(c => {
+      if (c.project_id) otherByProject.set(c.project_id, (otherByProject.get(c.project_id) ?? 0) + c.amount)
+    })
+
     if (dataSource === 'real' && adSpendRows && adSpendRows.length > 0) {
       // Aggregate revenue from affiliate_revenue by project_id
       const revenueByProject = new Map<string, number>()
@@ -114,6 +161,8 @@ export function usePnlData() {
             name: project.name,
             mcc_id: project.mcc_id,
             total_spend: row.spend,
+            total_rental: 0,
+            total_other: 0,
             total_revenue: 0,
             total_profit: 0,
             avg_roi: 0,
@@ -125,19 +174,22 @@ export function usePnlData() {
         }
       })
 
-      // Apply revenue, screen_revenue and compute profit/ROI
+      // Apply revenue, rental, other costs, then compute profit/ROI
       map.forEach(s => {
         s.total_revenue        = revenueByProject.get(s.project_id) ?? 0
         s.total_screen_revenue = screenByProject.get(s.project_id) ?? 0
-        s.total_profit         = s.total_revenue - s.total_spend
+        s.total_rental         = rentalByProject.get(s.project_id) ?? 0
+        s.total_other          = otherByProject.get(s.project_id) ?? 0
+        const totalCost        = s.total_spend + s.total_rental + s.total_other
+        s.total_profit         = s.total_revenue - totalCost
         s.total_pending        = s.total_screen_revenue
-        s.avg_roi              = s.total_spend > 0 ? (s.total_profit / s.total_spend) * 100 : 0
+        s.avg_roi              = totalCost > 0 ? (s.total_profit / totalCost) * 100 : 0
       })
 
       return Array.from(map.values())
     }
 
-    // Fallback: mock data
+    // Fallback: mock data (rental/other = 0)
     const filteredDaily = MOCK_PNL_DAILY.filter(row => activeProjectIds.has(row.project_id))
     const summaries = aggregatePnl(filteredDaily, dateRange)
     summaries.forEach(s => {
@@ -147,7 +199,7 @@ export function usePnlData() {
       s.total_pending = 0
     })
     return summaries
-  }, [dataSource, adSpendRows, revenueRows, projectByCampaignId, projectNameMap, activeProjectIds, dateRange])
+  }, [dataSource, adSpendRows, revenueRows, rentalGroups, otherCosts, projectByCampaignId, projectByCid, projectNameMap, activeProjectIds, dateRange])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return allSummaries
@@ -161,12 +213,14 @@ export function usePnlData() {
     return filtered.reduce(
       (acc, s) => ({
         spend:          acc.spend   + s.total_spend,
+        rental:         acc.rental  + s.total_rental,
+        other:          acc.other   + s.total_other,
         revenue:        acc.revenue + s.total_revenue,
         profit:         acc.profit  + s.total_profit,
         screen_revenue: acc.screen_revenue + s.total_screen_revenue,
         pending:        acc.pending + s.total_pending,
       }),
-      { spend: 0, revenue: 0, profit: 0, screen_revenue: 0, pending: 0 }
+      { spend: 0, rental: 0, other: 0, revenue: 0, profit: 0, screen_revenue: 0, pending: 0 }
     )
   }, [filtered])
 
@@ -174,7 +228,7 @@ export function usePnlData() {
 
   const refresh = useCallback(async () => {
     setIsLoading(true)
-    await Promise.all([fetchAdSpend(dateRange), fetchRevenue(dateRange), fetchLastSync()])
+    await Promise.all([fetchAdSpend(dateRange), fetchRevenue(dateRange), fetchCosts(dateRange), fetchLastSync()])
     setIsLoading(false)
   }, [dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
