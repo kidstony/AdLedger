@@ -203,6 +203,7 @@ export default function IntegrationsPage() {
   const [campaignsLoading, setCampaignsLoading] = useState(true)
   const [mappingInProgress, setMappingInProgress] = useState<Set<string>>(new Set())
   const [activeTab, setActiveTab] = useState<'unmapped' | 'mapped'>('unmapped')
+  const [backfillStatus, setBackfillStatus] = useState<'idle' | 'loading' | 'done'>('idle')
 
   const webhookUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/api/sync/ads-script`
@@ -245,6 +246,13 @@ export default function IntegrationsPage() {
       setPingStatus('error')
     }
     setTimeout(() => setPingStatus('idle'), 3000)
+  }
+
+  async function handleBackfillCid() {
+    setBackfillStatus('loading')
+    await fetch('/api/integrations/campaigns', { method: 'POST' })
+    setBackfillStatus('done')
+    setTimeout(() => setBackfillStatus('idle'), 3000)
   }
 
   async function handleMapping(campaignId: string, projectId: string | null) {
@@ -368,9 +376,22 @@ export default function IntegrationsPage() {
               {campaigns.length} chiến dịch · {unmapped.length} chưa gán
             </p>
           </div>
-          <button onClick={loadCampaigns} className="p-1 rounded hover:bg-slate-200 text-slate-400 transition-colors" title="Làm mới">
-            <RefreshCw size={13} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleBackfillCid}
+              disabled={backfillStatus === 'loading'}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-60"
+              title="Đồng bộ CID từ campaign_discoveries vào projects"
+            >
+              {backfillStatus === 'loading' ? <Loader2 size={11} className="animate-spin" /> :
+               backfillStatus === 'done' ? <CheckCircle size={11} className="text-green-500" /> :
+               <RefreshCw size={11} />}
+              {backfillStatus === 'done' ? 'Đã đồng bộ' : 'Đồng bộ CID'}
+            </button>
+            <button onClick={loadCampaigns} className="p-1 rounded hover:bg-slate-200 text-slate-400 transition-colors" title="Làm mới">
+              <RefreshCw size={13} />
+            </button>
+          </div>
         </div>
 
         <div className="p-4">

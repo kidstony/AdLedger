@@ -53,19 +53,62 @@ export async function PATCH(req: NextRequest) {
   }
 
   if (project_id === null) {
-    // Unassign: find project that has this campaign and clear it
+    // Unassign
     await supabaseAdmin
       .from('projects')
       .update({ google_campaign_id: null })
       .eq('google_campaign_id', campaign_id)
   } else {
-    // Assign
+    // Fetch discovery info to auto-fill cid + mcc_id on the project
+    const { data: discovery } = await supabaseAdmin
+      .from('campaign_discoveries')
+      .select('customer_id, mcc_id, mcc_name')
+      .eq('campaign_id', campaign_id)
+      .single()
+
+    const patch: Record<string, string | null> = { google_campaign_id: campaign_id }
+    if (discovery?.customer_id) patch.cid = discovery.customer_id
+    if (discovery?.mcc_id)      patch.mcc_id = discovery.mcc_id
+
     const { error } = await supabaseAdmin
       .from('projects')
-      .update({ google_campaign_id: campaign_id })
+      .update(patch)
       .eq('project_id', project_id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
   return NextResponse.json({ success: true })
+}
+
+// POST — backfill cid/mcc_id on all already-mapped projects from campaign_discoveries
+export async function POST() {
+  const { data: mappedProjects, error: e1 } = await supabaseAdmin
+    .from('projects')
+    .select('project_id, google_campaign_id')
+    .not('google_campaign_id', 'is', null)
+  if (e1) return NextResponse.json({ error: e1.message }, { status: 500 })
+
+  const campaignIds = (mappedProjects ?? []).map(p => p.google_campaign_id as string)
+  if (!campaignIds.length) return NextResponse.json({ updated: 0 })
+
+  const { data: discoveries } = await supabaseAdmin
+    .from('campaign_discoveries')
+    .select('campaign_id, customer_id, mcc_id')
+    .in('campaign_id', campaignIds)
+
+  const discoveryMap = new Map((discoveries ?? []).map(d => [d.campaign_id, d]))
+
+  let updated = 0
+  for (const p of mappedProjects ?? []) {
+    const d = discoveryMap.get(p.google_campaign_id as string)
+    if (!d) continue
+    const patch: Record<string, string | null> = {}
+    if (d.customer_id) patch.cid = d.customer_id
+    if (d.mcc_id)      patch.mcc_id = d.mcc_id
+    if (!Object.keys(patch).length) continue
+    await supabaseAdmin.from('projects').update(patch).eq('project_id', p.project_id)
+    updated++
+  }
+
+  return NextResponse.json({ updated })
 }
