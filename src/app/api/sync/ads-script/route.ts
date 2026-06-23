@@ -19,6 +19,35 @@ type Body =
   | { secret?: string; type: 'spend'; records?: SpendRecord[] }
   | { secret?: string; records?: []; type?: undefined }
 
+async function backfillProjectCidMcc(campaignIds: string[]) {
+  if (!campaignIds.length) return
+  const { data: mappedProjects } = await supabaseAdmin
+    .from('projects')
+    .select('project_id, google_campaign_id, cid, mcc_id')
+    .in('google_campaign_id', campaignIds)
+  if (!mappedProjects?.length) return
+
+  const { data: discoveries } = await supabaseAdmin
+    .from('campaign_discoveries')
+    .select('campaign_id, customer_id, mcc_id')
+    .in('campaign_id', campaignIds)
+  if (!discoveries?.length) return
+
+  const discoveryMap = new Map(discoveries.map(d => [d.campaign_id, d]))
+  await Promise.all(
+    mappedProjects
+      .map(p => {
+        const d = discoveryMap.get(p.google_campaign_id!)
+        if (!d) return null
+        const newCid = d.customer_id ?? p.cid
+        const newMcc = d.mcc_id ?? p.mcc_id
+        if (newCid === p.cid && newMcc === p.mcc_id) return null
+        return supabaseAdmin.from('projects').update({ cid: newCid, mcc_id: newMcc }).eq('project_id', p.project_id)
+      })
+      .filter(Boolean)
+  )
+}
+
 export async function POST(req: NextRequest) {
   let body: Body
   try {
@@ -48,6 +77,7 @@ export async function POST(req: NextRequest) {
         .from('campaign_discoveries')
         .upsert(rows, { onConflict: 'campaign_id' })
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      await backfillProjectCidMcc(campaigns.map(c => c.campaign_id))
     }
     return NextResponse.json({ success: true, type: 'discover', count: campaigns.length })
   }
@@ -73,6 +103,7 @@ export async function POST(req: NextRequest) {
   await supabaseAdmin
     .from('campaign_discoveries')
     .upsert(discoveryRows, { onConflict: 'campaign_id' })
+  await backfillProjectCidMcc(records.map(r => r.campaign_id))
 
   // Upsert spend
   const spendRows = records.map(r => ({
