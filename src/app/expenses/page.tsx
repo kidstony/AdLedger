@@ -6,6 +6,7 @@ import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
 import { cn, formatVND, formatCid } from '@/lib/utils'
 import type { CostCategory, OtherCost, Project, RentalGroup, RentalRateType } from '@/lib/types'
+import DateRangePicker from '@/components/ui/DateRangePicker'
 
 // ─── Date helpers ────────────────────────────────────────────────────────────
 
@@ -143,7 +144,6 @@ interface OtherForm {
 interface CategoryForm { name: string; color: ColorKey }
 
 type Tab = 'qc' | 'rental' | 'other' | 'summary'
-type Preset = 'week' | 'month' | 'prev_month' | 'custom'
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
@@ -152,14 +152,6 @@ export default function ExpensesPage() {
   const [tab, setTab] = useState<Tab>('qc')
   const [fromStr, setFromStr] = useState(firstOfMonthStr)
   const [toStr, setToStr] = useState(todayStr)
-  const [preset, setPreset] = useState<Preset>('month')
-
-  function applyPreset(p: Preset) {
-    setPreset(p)
-    if (p === 'week')       { setFromStr(mondayOfWeekStr()); setToStr(todayStr()) }
-    if (p === 'month')      { setFromStr(firstOfMonthStr()); setToStr(todayStr()) }
-    if (p === 'prev_month') { setFromStr(firstOfPrevMonthStr()); setToStr(lastOfPrevMonthStr()) }
-  }
 
   // Tab 1
   const [adSpendRows, setAdSpendRows] = useState<{ campaign_id: string; date: string; spend: number }[]>([])
@@ -445,33 +437,12 @@ export default function ExpensesPage() {
 
       {/* ── Navigation bar ─────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 flex-wrap">
-        {/* Date range inputs */}
-        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
-          <span className="text-[11px] text-slate-400 whitespace-nowrap">Từ ngày</span>
-          <input type="date" value={fromStr}
-            onChange={e => { setFromStr(e.target.value); setPreset('custom') }}
-            className="text-xs text-slate-700 outline-none bg-transparent w-32" />
-          <span className="text-slate-300 text-sm">—</span>
-          <span className="text-[11px] text-slate-400 whitespace-nowrap">Đến ngày</span>
-          <input type="date" value={toStr}
-            onChange={e => { setToStr(e.target.value); setPreset('custom') }}
-            className="text-xs text-slate-700 outline-none bg-transparent w-32" />
-        </div>
-
-        {/* Preset buttons */}
-        <div className="flex items-center gap-0 rounded-lg border border-slate-200 overflow-hidden text-xs font-medium bg-white">
-          {([
-            { key: 'week',       label: 'Tuần này' },
-            { key: 'month',      label: 'Tháng này' },
-            { key: 'prev_month', label: 'Tháng trước' },
-          ] as const).map((p, i) => (
-            <button key={p.key} onClick={() => applyPreset(p.key)}
-              className={cn('px-3 py-1.5 transition-colors', i > 0 && 'border-l border-slate-200',
-                preset === p.key ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50')}>
-              {p.label}
-            </button>
-          ))}
-        </div>
+        {/* Google Ads-style date range picker */}
+        <DateRangePicker
+          from={fromStr}
+          to={toStr}
+          onApply={(f, t) => { setFromStr(f); setToStr(t) }}
+        />
 
         {/* Tab switcher */}
         <div className="ml-auto flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
