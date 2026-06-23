@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Copy, Check } from 'lucide-react'
+import { Copy, Check, Plus, X, Loader2 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -65,6 +65,30 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
   const [errors, setErrors] = useState<Partial<Record<keyof Project, string>>>({})
   const [saveError, setSaveError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // Inline master project creation
+  const [showCreateMaster, setShowCreateMaster] = useState(false)
+  const [newMasterName, setNewMasterName] = useState('')
+  const [creatingMaster, setCreatingMaster] = useState(false)
+  const [localMasterProjects, setLocalMasterProjects] = useState<MasterProject[]>([])
+  const allMasterProjects = [...masterProjects, ...localMasterProjects]
+
+  async function handleCreateMaster() {
+    if (!newMasterName.trim()) return
+    setCreatingMaster(true)
+    const res = await fetch('/api/master-projects', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newMasterName.trim() }),
+    }).catch(() => null)
+    if (res?.ok) {
+      const mp: MasterProject = await res.json()
+      setLocalMasterProjects(prev => [...prev, mp])
+      setForm(f => ({ ...f, master_project_id: mp.id }))
+      setShowCreateMaster(false)
+      setNewMasterName('')
+    }
+    setCreatingMaster(false)
+  }
 
   // Bank cascading state
   const [banks, setBanks] = useState<Bank[]>([])
@@ -160,15 +184,53 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
             {errors.name && <p className="text-xs text-red-500">{errors.name}</p>}
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-medium text-slate-600">Tổng Dự Án (tuỳ chọn)</label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-slate-600">Tổng Dự Án (tuỳ chọn)</label>
+              {!showCreateMaster && (
+                <button type="button" onClick={() => setShowCreateMaster(true)}
+                  className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-0.5 transition-colors">
+                  <Plus size={11} /> Tạo mới
+                </button>
+              )}
+            </div>
             <select
               value={form.master_project_id ?? ''}
               onChange={e => setForm(f => ({ ...f, master_project_id: e.target.value || null }))}
               className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300"
             >
               <option value="">— Chưa phân nhóm —</option>
-              {masterProjects.map(mp => <option key={mp.id} value={mp.id}>{mp.name}</option>)}
+              {allMasterProjects.map(mp => <option key={mp.id} value={mp.id}>{mp.name}</option>)}
             </select>
+            {showCreateMaster && (
+              <div className="flex items-center gap-1.5">
+                <input
+                  autoFocus
+                  value={newMasterName}
+                  onChange={e => setNewMasterName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { e.preventDefault(); handleCreateMaster() }
+                    if (e.key === 'Escape') { setShowCreateMaster(false); setNewMasterName('') }
+                  }}
+                  placeholder="Tên nhóm mới..."
+                  className="flex-1 border border-slate-200 rounded-md px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-slate-300"
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateMaster}
+                  disabled={creatingMaster || !newMasterName.trim()}
+                  className="p-1.5 rounded-md bg-slate-800 text-white hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                >
+                  {creatingMaster ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowCreateMaster(false); setNewMasterName('') }}
+                  className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Link Ref */}
