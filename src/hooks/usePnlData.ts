@@ -16,8 +16,8 @@ interface AdSpendRow {
 interface RevenueRow {
   project_id: string
   date: string
-  revenue: number
-  screen_revenue: number
+  type: 'confirmed' | 'pending'
+  amount: number
 }
 
 export function usePnlData() {
@@ -64,10 +64,10 @@ export function usePnlData() {
     const to = range.to.toISOString().split('T')[0]
     const { data } = await supabase
       .from('affiliate_revenue')
-      .select('project_id, date, revenue, screen_revenue')
+      .select('project_id, date, type, amount')
       .gte('date', from)
       .lte('date', to)
-    setRevenueRows((data ?? []).map(r => ({ ...r, screen_revenue: r.screen_revenue ?? 0 })))
+    setRevenueRows((data ?? []) as RevenueRow[])
   }
 
   async function fetchLastSync() {
@@ -95,8 +95,11 @@ export function usePnlData() {
       const revenueByProject = new Map<string, number>()
       const screenByProject = new Map<string, number>()
       revenueRows.forEach(r => {
-        revenueByProject.set(r.project_id, (revenueByProject.get(r.project_id) ?? 0) + r.revenue)
-        screenByProject.set(r.project_id, (screenByProject.get(r.project_id) ?? 0) + (r.screen_revenue ?? 0))
+        if (r.type === 'confirmed') {
+          revenueByProject.set(r.project_id, (revenueByProject.get(r.project_id) ?? 0) + r.amount)
+        } else {
+          screenByProject.set(r.project_id, (screenByProject.get(r.project_id) ?? 0) + r.amount)
+        }
       })
 
       const map = new Map<string, PnlSummary>()
@@ -127,7 +130,7 @@ export function usePnlData() {
         s.total_revenue        = revenueByProject.get(s.project_id) ?? 0
         s.total_screen_revenue = screenByProject.get(s.project_id) ?? 0
         s.total_profit         = s.total_revenue - s.total_spend
-        s.total_pending        = s.total_screen_revenue - s.total_revenue
+        s.total_pending        = s.total_screen_revenue
         s.avg_roi              = s.total_spend > 0 ? (s.total_profit / s.total_spend) * 100 : 0
       })
 
