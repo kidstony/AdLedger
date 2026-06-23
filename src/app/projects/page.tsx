@@ -40,7 +40,10 @@ export default function ProjectsPage() {
     fetch('/api/integrations/campaigns')
       .then(r => r.json())
       .then((list: CampaignDiscovery[]) => {
-        if (!Array.isArray(list)) return
+        if (!Array.isArray(list)) {
+          console.error('[campaigns] API error:', list)
+          return
+        }
         const map = new Map<string, { customer_id: string; campaign_id: string; mcc_name: string | null; mcc_id: string | null }>()
         list.forEach(c => {
           if (c.project_id) map.set(c.project_id, {
@@ -50,9 +53,10 @@ export default function ProjectsPage() {
             mcc_id: c.mcc_id ?? null,
           })
         })
+        console.log(`[campaigns] ${list.length} campaigns, ${map.size} mapped to projects`)
         setCampaignInfoMap(map)
       })
-      .catch(() => {})
+      .catch(e => console.error('[campaigns] fetch failed:', e))
   }, [])
 
   const [employees, setEmployees] = useState<UserRow[]>([])
