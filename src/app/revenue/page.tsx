@@ -396,7 +396,9 @@ export default function RevenuePage() {
     ndi = Math.max(0, Math.min(ndi, dates.length - 1))
     focusedCellRef.current = { pi: npi, di: ndi }
     const key = `${filteredProjects[npi].project_id}__${dates[ndi]}`
-    tableRef.current?.querySelector<HTMLDivElement>(`[data-cell="${key}"]`)?.click()
+    // Click the inner display div (cursor-text), not the wrapper — events don't bubble down
+    const wrapper = tableRef.current?.querySelector<HTMLElement>(`[data-cell="${key}"]`)
+    ;(wrapper?.querySelector<HTMLElement>('.cursor-text') ?? wrapper)?.click()
   }
 
   function handlePaste(text: string) {
