@@ -75,3 +75,37 @@ export interface DateRange {
 
 export type SortColumn = keyof Pick<PnlSummary, 'name' | 'total_spend' | 'total_revenue' | 'total_profit' | 'avg_roi'>
 export type SortDirection = 'asc' | 'desc'
+
+export type RentalRateType = 'percentage' | 'daily' | 'weekly' | 'monthly' | 'one_time'
+
+export interface AccountRentalRate {
+  id: string
+  cid: string | null
+  account_label: string
+  project_id: string | null
+  rate_type: RentalRateType
+  rate_value: number
+  period_from: string | null
+  period_to: string | null
+  payment_date: string | null
+  note: string | null
+  created_at: string
+}
+
+export interface CostCategory {
+  id: string
+  name: string
+  color: string
+  created_at: string
+}
+
+export interface OtherCost {
+  id: string
+  date: string
+  category_id: string | null
+  amount: number
+  description: string | null
+  project_id: string | null
+  created_at: string
+  cost_categories?: CostCategory | null
+}
