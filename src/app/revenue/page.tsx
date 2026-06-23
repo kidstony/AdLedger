@@ -1,7 +1,6 @@
 'use client'
 
 import { useRef, useMemo, useState, useEffect, useCallback } from 'react'
-import Link from 'next/link'
 import {
   Loader2, Banknote, Monitor,
   Search, Keyboard, CheckCircle2, Cloud, SlidersHorizontal, CircleCheck,
@@ -92,6 +91,10 @@ export default function RevenuePage() {
   const [checkedProjectIds, setCheckedProjectIds] = useState<Set<string>>(new Set())
   const [undoToast,         setUndoToast]         = useState<UndoToast | null>(null)
   const undoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const [showBatchAllConfirm, setShowBatchAllConfirm] = useState(false)
+  const [batchAllSelected,    setBatchAllSelected]    = useState<Set<string>>(new Set())
+  const [batchAllLoading,     setBatchAllLoading]     = useState(false)
 
   // Projects filtered by dropdown selection + inline search
   const filteredProjects = useMemo(() => {
@@ -201,6 +204,26 @@ export default function RevenuePage() {
     }
   }
 
+  async function handleBatchAllConfirm() {
+    const toConfirm = batchAllSelected.size > 0
+      ? batchAllItems.filter(i => batchAllSelected.has(i.key))
+      : batchAllItems
+    const total = toConfirm.reduce((s, i) => s + i.confirmAmount, 0)
+    const count = toConfirm.length
+    setBatchAllLoading(true)
+    const res = await fetch('/api/revenue/confirm-batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: toConfirm.map(i => ({ project_id: i.project_id, date: i.date, amount: i.confirmAmount })) }),
+    })
+    setBatchAllLoading(false)
+    if (res.ok) {
+      setShowBatchAllConfirm(false)
+      setBatchAllSelected(new Set())
+      refreshRevenue()
+      startUndoCountdown({ items: toConfirm.map(i => ({ project_id: i.project_id, date: i.date })), total, count })
+    }
+  }
+
   function showPageToast(msg: string) {
     setToast(msg)
     setTimeout(() => setToast(null), 3000)
@@ -286,6 +309,40 @@ export default function RevenuePage() {
     return { pendingTotal: pending, confirmedTotal: confirmed }
   }, [activeTab, filteredProjects, dates, screenGrid, prevScreenMap, statusMap, viewMode])
 
+  // Confirm items for the "Xác nhận hàng loạt" dialog.
+  // Cumulative projects use delta (curr − prev) so the total equals the latest
+  // running total, not a sum of every day's stored cumulative value.
+  type BatchAllItem = {
+    key: string; project_id: string; project_name: string; date: string
+    rawAmount: number; confirmAmount: number; is_cumulative: boolean
+  }
+  const batchAllItems = useMemo((): BatchAllItem[] => {
+    if (!showBatchAllConfirm) return []
+    const prevDate = dates.length > 0 ? addDays(dates[0], -1) : ''
+    return projects.flatMap(project => {
+      const isCumulative = project.screen_revenue_type === 'cumulative'
+      const entries = dates
+        .map(d => ({ date: d, amount: screenGrid.get(`${project.project_id}__${d}`) ?? 0 }))
+        .filter(e => e.amount > 0)
+      if (entries.length === 0) return []
+      const prevAmount = prevDate
+        ? (prevScreenMap.get(`${project.project_id}__${prevDate}`) ?? 0)
+        : 0
+      return entries.map((e, i) => {
+        const prev = isCumulative ? (i === 0 ? prevAmount : entries[i - 1].amount) : 0
+        return {
+          key: `${project.project_id}__${e.date}`,
+          project_id: project.project_id,
+          project_name: project.name,
+          date: e.date,
+          rawAmount: e.amount,
+          confirmAmount: isCumulative ? Math.max(0, e.amount - prev) : e.amount,
+          is_cumulative: isCumulative,
+        }
+      })
+    })
+  }, [showBatchAllConfirm, projects, dates, screenGrid, prevScreenMap])
+
   // ── keyboard shortcuts (global) ─────────────────────────────────────────────
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -296,6 +353,9 @@ export default function RevenuePage() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' &&  e.shiftKey) { e.preventDefault(); redo(); return }
 
+      // Close batch confirm dialog on Escape
+      if (e.key === 'Escape' && showBatchAllConfirm) { setShowBatchAllConfirm(false); return }
+
       // Search shortcut `/`
       if (e.key === '/' && !inInput) { e.preventDefault(); searchRef.current?.focus(); return }
       if (e.key === 'Escape' && document.activeElement === searchRef.current) {
@@ -304,7 +364,7 @@ export default function RevenuePage() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [undo, redo])
+  }, [undo, redo, showBatchAllConfirm])
 
   // ── totals (dynamic: only filtered projects) ─────────────────────────────────
   const dateTotals = useMemo(() =>
@@ -573,12 +633,12 @@ export default function RevenuePage() {
             <span className="text-xs text-slate-400">{filteredProjects.length}/{projects.length} dự án</span>
           )}
           {activeTab === 'screen' && !isReadOnlyGlobal && (
-            <Link
-              href="/revenue/confirm"
+            <button
+              onClick={() => { setShowBatchAllConfirm(true); setBatchAllSelected(new Set()) }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors shrink-0"
             >
               <CircleCheck size={11} /> Xác nhận hàng loạt
-            </Link>
+            </button>
           )}
         </div>
 
@@ -908,6 +968,131 @@ export default function RevenuePage() {
                 {isReverting && <Loader2 size={10} className="animate-spin" />}
                 <RotateCcw size={10} /> Hoàn tác
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Batch all confirm dialog ──────────────────────────────────────── */}
+      {showBatchAllConfirm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-[580px] max-h-[80vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="font-semibold text-slate-800">Xác nhận hàng loạt</h3>
+                {dates.length > 0 && (
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {fmtShort(dates[0])} – {fmtShort(dates[dates.length - 1])}
+                  </p>
+                )}
+              </div>
+              <button onClick={() => setShowBatchAllConfirm(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Select all row */}
+            {batchAllItems.length > 0 && (
+              <div className="px-5 py-2.5 border-b border-slate-100 flex items-center gap-2.5">
+                <div
+                  onClick={() => {
+                    const allSelected = batchAllItems.every(i => batchAllSelected.has(i.key))
+                    setBatchAllSelected(allSelected ? new Set() : new Set(batchAllItems.map(i => i.key)))
+                  }}
+                  className="cursor-pointer"
+                >
+                  <Checkbox
+                    checked={batchAllItems.length > 0 && batchAllItems.every(i => batchAllSelected.has(i.key))}
+                    indeterminate={batchAllSelected.size > 0 && !batchAllItems.every(i => batchAllSelected.has(i.key))}
+                  />
+                </div>
+                <span className="text-xs text-slate-500">Chọn tất cả</span>
+                <span className="ml-auto text-xs text-slate-400">{batchAllItems.length} khoản chờ xác nhận</span>
+              </div>
+            )}
+
+            {/* Item list */}
+            <div className="overflow-y-auto flex-1">
+              {batchAllItems.length === 0 ? (
+                <div className="py-16 text-center text-sm text-slate-400">
+                  Không có khoản nào chờ xác nhận trong khoảng thời gian này
+                </div>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-slate-50 border-b border-slate-100">
+                    <tr>
+                      <th className="w-10" />
+                      <th className="text-left px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide">Dự án</th>
+                      <th className="text-center px-3 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide">Ngày</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide">Số tiền</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchAllItems.map(item => (
+                      <tr
+                        key={item.key}
+                        onClick={() => setBatchAllSelected(prev => {
+                          const n = new Set(prev); n.has(item.key) ? n.delete(item.key) : n.add(item.key); return n
+                        })}
+                        className="border-t border-slate-50 hover:bg-slate-50 cursor-pointer transition-colors"
+                      >
+                        <td className="pl-4 py-2.5"><Checkbox checked={batchAllSelected.has(item.key)} /></td>
+                        <td className="px-4 py-2.5 text-slate-700">
+                          <div className="font-medium">{item.project_name}</div>
+                          {item.is_cumulative && (
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              Tổng tích lũy: {formatVND(item.rawAmount)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5 text-center text-slate-500">
+                          {new Date(item.date + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <span className="font-semibold text-slate-800">{formatVND(item.confirmAmount)}</span>
+                          {item.is_cumulative && (
+                            <span className="ml-1 text-[10px] font-normal text-blue-500 align-middle">Δ</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between">
+              <div className="text-sm">
+                <span className="text-slate-500 text-xs">Tổng: </span>
+                <span className="font-semibold text-slate-800">
+                  {formatVND(
+                    (batchAllSelected.size > 0
+                      ? batchAllItems.filter(i => batchAllSelected.has(i.key))
+                      : batchAllItems
+                    ).reduce((s, i) => s + i.confirmAmount, 0)
+                  )}
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowBatchAllConfirm(false)}
+                  disabled={batchAllLoading}
+                  className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50"
+                >Hủy</button>
+                <button
+                  onClick={handleBatchAllConfirm}
+                  disabled={batchAllLoading || batchAllItems.length === 0}
+                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-60 transition-colors"
+                >
+                  {batchAllLoading && <Loader2 size={10} className="animate-spin" />}
+                  {batchAllSelected.size > 0
+                    ? `Xác nhận ${batchAllSelected.size} khoản đã chọn`
+                    : `Xác nhận tất cả (${batchAllItems.length} khoản)`
+                  }
+                </button>
+              </div>
             </div>
           </div>
         </div>
