@@ -369,6 +369,17 @@ export default function ExpensesPage() {
     if (res.ok) { await fetchCategories(); openAddCategory() }
     setCategorySaving(false)
   }
+  async function createCategoryFromModal(name: string, color: string): Promise<CostCategory | null> {
+    const res = await fetch('/api/expenses/categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, color }),
+    })
+    if (!res.ok) return null
+    const newCat: CostCategory = await res.json()
+    setCategories(prev => [...prev, newCat])
+    return newCat
+  }
   async function deleteCategory(id: string) {
     if (!confirm('Xóa danh mục này?')) return
     await fetch('/api/expenses/categories', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
@@ -490,7 +501,8 @@ export default function ExpensesPage() {
       {showOtherModal && (
         <OtherModal form={otherForm} editing={!!editingOther} categories={categories}
           projects={projects} saving={otherSaving} onChange={setOtherForm}
-          onSave={saveOther} onClose={() => setShowOtherModal(false)} />
+          onSave={saveOther} onClose={() => setShowOtherModal(false)}
+          onCreateCategory={createCategoryFromModal} />
       )}
       {showCategoryPanel && (
         <CategoryPanel categories={categories} editingCategory={editingCategory}
@@ -697,8 +709,8 @@ function OtherTab({ costs, total, categories, categoryMap, projects, onAdd, onEd
       {/* Toolbar */}
       <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-white">
         <button onClick={onManageCategories}
-          className="text-xs text-slate-500 hover:text-slate-700 transition-colors">
-          ⚙ Quản lý danh mục
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50 transition-colors">
+          ⚙ Danh mục
         </button>
         <button onClick={onAdd}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-800 text-white rounded-md hover:bg-slate-700 transition-colors">
@@ -933,12 +945,32 @@ function CidModal({ form, projects, saving, onChange, onSave, onClose }: {
   )
 }
 
-function OtherModal({ form, editing, categories, projects, saving, onChange, onSave, onClose }: {
+function OtherModal({ form, editing, categories, projects, saving, onChange, onSave, onClose, onCreateCategory }: {
   form: OtherForm; editing: boolean; categories: CostCategory[]
   projects: Project[]; saving: boolean; onChange: (f: OtherForm) => void
   onSave: () => void; onClose: () => void
+  onCreateCategory: (name: string, color: string) => Promise<CostCategory | null>
 }) {
   function set(patch: Partial<OtherForm>) { onChange({ ...form, ...patch }) }
+
+  const [showCatForm, setShowCatForm] = useState(false)
+  const [newCatName, setNewCatName] = useState('')
+  const [newCatColor, setNewCatColor] = useState<ColorKey>('blue')
+  const [savingCat, setSavingCat] = useState(false)
+
+  async function handleCreateCat() {
+    if (!newCatName.trim()) return
+    setSavingCat(true)
+    const newCat = await onCreateCategory(newCatName.trim(), newCatColor)
+    if (newCat) {
+      set({ category_id: newCat.id })
+      setShowCatForm(false)
+      setNewCatName('')
+      setNewCatColor('blue')
+    }
+    setSavingCat(false)
+  }
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-xl p-5 w-full max-w-md" onClick={e => e.stopPropagation()}>
@@ -953,12 +985,51 @@ function OtherModal({ form, editing, categories, projects, saving, onChange, onS
                 onChange={e => set({ amount: e.target.value })} className={INPUT} />
             </Field>
           </div>
-          <Field label="Danh mục">
-            <select value={form.category_id} onChange={e => set({ category_id: e.target.value })} className={INPUT}>
-              <option value="">— Không có danh mục —</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </Field>
+
+          {/* Category field with inline create */}
+          <div>
+            <label className={LABEL}>Danh mục</label>
+            <div className="flex gap-2">
+              <select value={form.category_id} onChange={e => set({ category_id: e.target.value })}
+                className={cn(INPUT, 'flex-1')}>
+                <option value="">— Không có danh mục —</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <button type="button" onClick={() => setShowCatForm(v => !v)}
+                className={cn('px-3 py-2 text-xs border rounded-md transition-colors font-medium whitespace-nowrap',
+                  showCatForm ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-200 text-slate-600 hover:bg-slate-50')}>
+                + Tạo mới
+              </button>
+            </div>
+            {categories.length === 0 && !showCatForm && (
+              <p className="text-[11px] text-slate-400 mt-1">Chưa có danh mục. Nhấn &quot;+ Tạo mới&quot; để tạo ngay.</p>
+            )}
+            {showCatForm && (
+              <div className="mt-2 p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+                <input value={newCatName} onChange={e => setNewCatName(e.target.value)}
+                  placeholder="Tên danh mục..." className={INPUT} autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter') handleCreateCat() }} />
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-slate-400">Màu:</span>
+                  {COLORS.map(c => (
+                    <button key={c} type="button" onClick={() => setNewCatColor(c)}
+                      className={cn('w-5 h-5 rounded-full transition-all', COLOR_DOT[c],
+                        newCatColor === c ? 'ring-2 ring-slate-800 ring-offset-1 scale-110' : 'opacity-50 hover:opacity-100')} />
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => { setShowCatForm(false); setNewCatName('') }}
+                    className="text-xs text-slate-400 hover:text-slate-600 transition-colors">Hủy</button>
+                  <button type="button" onClick={handleCreateCat}
+                    disabled={savingCat || !newCatName.trim()}
+                    className="px-3 py-1 text-xs bg-slate-700 text-white rounded-md hover:bg-slate-600 disabled:opacity-50 transition-colors font-medium">
+                    {savingCat ? '...' : 'Tạo →'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <Field label="Mô tả">
             <input value={form.description} onChange={e => set({ description: e.target.value })} className={INPUT} />
           </Field>
