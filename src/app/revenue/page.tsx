@@ -59,7 +59,7 @@ export default function RevenuePage() {
   const {
     projects, today, viewMode, anchorDate, selectedDate,
     activeTab, setActiveTab,
-    dates, gridData, screenGrid, prevScreenMap,
+    dates, gridData, revenueGrid, screenGrid, prevScreenMap,
     noteMap, payoutMap,
     isLoading, saveStatus,
     canUndo, canRedo, toast, setToast,
@@ -113,13 +113,10 @@ export default function RevenuePage() {
     if (activeTab !== 'screen' || isReadOnlyGlobal) return new Set<string>()
     return new Set(
       filteredProjects
-        .filter(p => dates.some(d => {
-          const key = `${p.project_id}__${d}`
-          return (screenGrid.get(key) ?? 0) > 0 && statusMap.get(key) !== 'confirmed'
-        }))
+        .filter(p => dates.some(d => (screenGrid.get(`${p.project_id}__${d}`) ?? 0) > 0))
         .map(p => p.project_id)
     )
-  }, [activeTab, isReadOnlyGlobal, filteredProjects, dates, screenGrid, statusMap])
+  }, [activeTab, isReadOnlyGlobal, filteredProjects, dates, screenGrid])
 
   // All pending (project_id, date) pairs from checked projects
   const selectedPendingItems = useMemo(() => {
@@ -128,13 +125,11 @@ export default function RevenuePage() {
       dates.forEach(d => {
         const key = `${pid}__${d}`
         const sv = screenGrid.get(key) ?? 0
-        if (sv > 0 && statusMap.get(key) !== 'confirmed') {
-          items.push({ project_id: pid, date: d, amount: sv })
-        }
+        if (sv > 0) items.push({ project_id: pid, date: d, amount: sv })
       })
     })
     return items
-  }, [checkedProjectIds, dates, screenGrid, statusMap])
+  }, [checkedProjectIds, dates, screenGrid])
 
   const selectedPendingTotal = useMemo(
     () => selectedPendingItems.reduce((s, i) => s + i.amount, 0),
@@ -174,7 +169,7 @@ export default function RevenuePage() {
 
   async function handleBatchConfirm() {
     setBatchConfirmLoading(true)
-    const items = selectedPendingItems.map(i => ({ project_id: i.project_id, date: i.date }))
+    const items = selectedPendingItems.map(i => ({ project_id: i.project_id, date: i.date, amount: i.amount }))
     const total = selectedPendingTotal
     const count = items.length
     const res = await fetch('/api/revenue/confirm-batch', {
@@ -649,31 +644,6 @@ export default function RevenuePage() {
                       const confirmedAt = confirmedAtMap.get(key)
                       const tdCls       = cn('p-0 border-r border-slate-100', date === today && 'bg-blue-50/30')
 
-                      // ── Screen tab: confirmed cell → editable with "Đã nhận" badge ──
-                      if (activeTab === 'screen' && !isReadOnly && isConfirmed) {
-                        const confirmedAmount = screenGrid.get(key) ?? 0
-                        return (
-                          <td key={date} className={tdCls}>
-                            <div data-cell={key} className="h-11">
-                              <EditableCell
-                                value={undefined}
-                                onCommit={v => {
-                                  // Additive: new entry is ADDED to the existing confirmed amount
-                                  const existing = screenGrid.get(key) ?? 0
-                                  updateCell(project.project_id, date, existing + v)
-                                }}
-                                onClear={() => {/* confirmed cells — no clear */}}
-                                onNavigate={dir => navigate(pi, di, dir)}
-                                onFocus={() => { focusedCellRef.current = { pi, di } }}
-                                onPaste={handlePaste}
-                                valueSubtitle={`✓ ${formatVND(confirmedAmount)}`}
-                                valueColorClass="text-emerald-600"
-                              />
-                            </div>
-                          </td>
-                        )
-                      }
-
                       // ── Cumulative screen tab (pending) ──────────────────────
                       if (isCumulative && !isReadOnly) {
                         const { delta, cumulative } = getCumulativeDelta(project.project_id, date, di)
@@ -705,11 +675,14 @@ export default function RevenuePage() {
 
                       // ── Revenue tab + regular screen (daily pending) + read-only ──
                       const isRevTab = activeTab === 'revenue'
-                      // Revenue tab: show revenue value always (confirmed or direct entry)
                       const cellValue = gridData.get(key)
 
-                      const confirmedSub = isRevTab && isConfirmed && confirmedAt
-                        ? `✓ ${new Date(confirmedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}`
+                      const confirmedSub = isConfirmed
+                        ? isRevTab && confirmedAt
+                          ? `✓ ${new Date(confirmedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}`
+                          : !isRevTab
+                            ? `✓ Đã nhận ${formatVND(revenueGrid.get(key) ?? 0)}`
+                            : undefined
                         : undefined
 
                       return (

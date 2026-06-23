@@ -10,7 +10,7 @@ interface PendingRow {
   project_id: string
   project_name: string
   date: string
-  screen_revenue: number
+  amount: number
 }
 
 function weekBounds(): { from: string; to: string } {
@@ -64,12 +64,12 @@ export default function PaymentConfirmPage() {
       const res = await fetch(`/api/revenue?from=${fromDate}&to=${toDate}`)
       const data: Record<string, unknown>[] = await res.json()
       const pending: PendingRow[] = data
-        .filter(r => ((r.screen_revenue as number) ?? 0) > 0 && r.status !== 'confirmed')
+        .filter(r => r.type === 'pending' && ((r.amount as number) ?? 0) > 0)
         .map(r => ({
-          project_id:    r.project_id as string,
-          project_name:  projectMap.get(r.project_id as string) ?? (r.project_id as string),
-          date:          r.date as string,
-          screen_revenue: r.screen_revenue as number,
+          project_id:   r.project_id as string,
+          project_name: projectMap.get(r.project_id as string) ?? (r.project_id as string),
+          date:         r.date as string,
+          amount:       r.amount as number,
         }))
         .sort((a, b) => a.date.localeCompare(b.date) || a.project_name.localeCompare(b.project_name))
       setRows(pending)
@@ -89,7 +89,7 @@ export default function PaymentConfirmPage() {
   const selectedTotal = useMemo(
     () => rows
       .filter(r => selected.has(`${r.project_id}__${r.date}`))
-      .reduce((s, r) => s + r.screen_revenue, 0),
+      .reduce((s, r) => s + r.amount, 0),
     [rows, selected]
   )
 
@@ -119,7 +119,7 @@ export default function PaymentConfirmPage() {
     setIsConfirming(true)
     const items = rows
       .filter(r => selected.has(`${r.project_id}__${r.date}`))
-      .map(r => ({ project_id: r.project_id, date: r.date }))
+      .map(r => ({ project_id: r.project_id, date: r.date, amount: r.amount }))
 
     const res = await fetch('/api/revenue/confirm-batch', {
       method: 'POST',
@@ -245,7 +245,7 @@ export default function PaymentConfirmPage() {
                   <Checkbox checked={checked} />
                   <div className="text-sm font-medium text-slate-700 truncate">{row.project_name}</div>
                   <div className="text-xs text-slate-400 whitespace-nowrap">{fmtDate(row.date)}</div>
-                  <div className="font-mono text-sm font-semibold text-slate-800 text-right">{formatVND(row.screen_revenue)}</div>
+                  <div className="font-mono text-sm font-semibold text-slate-800 text-right">{formatVND(row.amount)}</div>
                 </div>
               )
             })}

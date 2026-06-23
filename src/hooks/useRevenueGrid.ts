@@ -33,15 +33,15 @@ function getMonthDates(firstDay: string): string[] {
   return Array.from({ length: days }, (_, i) => `${y}-${String(m).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`)
 }
 
+// New schema: one row per (project_id, date, type)
 type RevenueRow = {
   project_id: string
   date: string
-  revenue: number
-  screen_revenue: number
+  type: 'confirmed' | 'pending'
+  amount: number
   note?: string | null
   payout_start_date?: string | null
   payout_end_date?: string | null
-  status?: string | null
   confirmed_at?: string | null
 }
 
@@ -50,8 +50,8 @@ export function useRevenueGrid() {
   const today = todayStr()
 
   const [viewMode, setViewMode] = useState<ViewMode>('week')
-  const [anchorDate, setAnchorDate] = useState(today)     // week end / month first-day
-  const [selectedDate, setSelectedDate] = useState(today) // day mode
+  const [anchorDate, setAnchorDate] = useState(today)
+  const [selectedDate, setSelectedDate] = useState(today)
   const [customFrom, setCustomFrom] = useState(() => addDays(today, -6))
   const [customTo,   setCustomTo]   = useState(today)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -61,11 +61,13 @@ export function useRevenueGrid() {
 
   const [revenueGrid, setRevenueGrid] = useState<Map<string, number>>(new Map())
   const [screenGrid,  setScreenGrid]  = useState<Map<string, number>>(new Map())
-  const savedRevenueRef = useRef<Map<string, number>>(new Map())
-  const savedScreenRef  = useRef<Map<string, number>>(new Map())
-  const clearedRef      = useRef<Set<string>>(new Set())
 
-  // Refs always holding current grid values (needed inside callbacks without stale deps)
+  // Per-tab pending/cleared tracking (revenue tab = 'confirmed' type, screen tab = 'pending' type)
+  const pendingRevenueKeysRef = useRef<Set<string>>(new Set())
+  const pendingScreenKeysRef  = useRef<Set<string>>(new Set())
+  const clearedRevenueRef     = useRef<Set<string>>(new Set())
+  const clearedScreenRef      = useRef<Set<string>>(new Set())
+
   const revenueGridRef = useRef<Map<string, number>>(new Map())
   const screenGridRef  = useRef<Map<string, number>>(new Map())
   useEffect(() => { revenueGridRef.current = revenueGrid }, [revenueGrid])
@@ -94,28 +96,37 @@ export function useRevenueGrid() {
     setCanRedo(futureRef.current.length > 0)
   }
 
-  // Auto-save (debounced 600ms)
-  const pendingKeysRef = useRef<Set<string>>(new Set())
-  const saveTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const executeSave = useCallback(async () => {
-    if (pendingKeysRef.current.size === 0) return
+    if (pendingRevenueKeysRef.current.size === 0 && pendingScreenKeysRef.current.size === 0) return
     setSaveStatus('saving')
-    const keys = Array.from(pendingKeysRef.current)
-    pendingKeysRef.current.clear()
 
-    const rows = keys.map(key => {
-      const sep = key.indexOf('__')
-      const project_id = key.slice(0, sep)
-      const date = key.slice(sep + 2)
-      const cleared = clearedRef.current.has(key)
-      return {
-        project_id,
-        date,
-        revenue:        cleared ? 0 : (revenueGridRef.current.get(key) ?? savedRevenueRef.current.get(key) ?? 0),
-        screen_revenue: cleared ? 0 : (screenGridRef.current.get(key)  ?? savedScreenRef.current.get(key)  ?? 0),
-      }
-    })
+    const revKeys = Array.from(pendingRevenueKeysRef.current)
+    const scnKeys = Array.from(pendingScreenKeysRef.current)
+    pendingRevenueKeysRef.current.clear()
+    pendingScreenKeysRef.current.clear()
+
+    const rows = [
+      ...revKeys.map(key => {
+        const sep = key.indexOf('__')
+        return {
+          project_id: key.slice(0, sep),
+          date: key.slice(sep + 2),
+          type: 'confirmed' as const,
+          amount: clearedRevenueRef.current.has(key) ? 0 : (revenueGridRef.current.get(key) ?? 0),
+        }
+      }),
+      ...scnKeys.map(key => {
+        const sep = key.indexOf('__')
+        return {
+          project_id: key.slice(0, sep),
+          date: key.slice(sep + 2),
+          type: 'pending' as const,
+          amount: clearedScreenRef.current.has(key) ? 0 : (screenGridRef.current.get(key) ?? 0),
+        }
+      }),
+    ]
 
     try {
       const res = await fetch('/api/revenue', {
@@ -124,12 +135,8 @@ export function useRevenueGrid() {
         body: JSON.stringify({ rows }),
       })
       if (res.ok) {
-        rows.forEach(r => {
-          const k = `${r.project_id}__${r.date}`
-          savedRevenueRef.current.set(k, r.revenue)
-          savedScreenRef.current.set(k, r.screen_revenue)
-        })
-        clearedRef.current.clear()
+        clearedRevenueRef.current.clear()
+        clearedScreenRef.current.clear()
         setSaveStatus('saved')
         setTimeout(() => setSaveStatus('idle'), 3000)
       } else {
@@ -140,14 +147,14 @@ export function useRevenueGrid() {
     }
   }, [])
 
-  // Flush any pending debounced save immediately (call before confirm/revert)
   const flushSave = useCallback(async () => {
     if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
     await executeSave()
   }, [executeSave])
 
-  const scheduleAutoSave = useCallback((key: string) => {
-    pendingKeysRef.current.add(key)
+  const scheduleAutoSave = useCallback((key: string, type: 'confirmed' | 'pending') => {
+    if (type === 'confirmed') pendingRevenueKeysRef.current.add(key)
+    else pendingScreenKeysRef.current.add(key)
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(executeSave, 600)
   }, [executeSave])
@@ -167,7 +174,6 @@ export function useRevenueGrid() {
       }
       return result
     }
-    // 'all' — derived from loaded data below
     return []
   }, [viewMode, anchorDate, selectedDate, customFrom, customTo])
 
@@ -191,7 +197,6 @@ export function useRevenueGrid() {
       projects.filter(p => p.screen_revenue_type === 'cumulative').map(p => p.project_id)
     )
 
-    // Separate daily entries per project for processing
     const byProject = new Map<string, { date: string; value: number }[]>()
     screenGrid.forEach((v, k) => {
       const sep = k.indexOf('__')
@@ -204,17 +209,15 @@ export function useRevenueGrid() {
     const r = new Map<string, number>()
     byProject.forEach((entries, pid) => {
       if (!cumulativeIds.has(pid)) {
-        // Daily project: sum all values in each month
         entries.forEach(({ date, value }) => {
           const mkey = `${pid}__${date.slice(0, 7)}-01`
           r.set(mkey, (r.get(mkey) ?? 0) + value)
         })
       } else {
-        // Cumulative project: per month take the LAST value, then compute monthly delta
         entries.sort((a, b) => a.date.localeCompare(b.date))
         const lastPerMonth = new Map<string, number>()
         entries.forEach(({ date, value }) => {
-          lastPerMonth.set(date.slice(0, 7), value) // later dates overwrite → last value wins
+          lastPerMonth.set(date.slice(0, 7), value)
         })
         let prevValue = 0
         Array.from(lastPerMonth.keys()).sort().forEach(month => {
@@ -260,17 +263,13 @@ export function useRevenueGrid() {
 
       setRevenueGrid(prev => {
         const next = new Map(prev)
-        rows.forEach(r => { if ((r.revenue ?? 0) > 0) next.set(`${r.project_id}__${r.date}`, r.revenue) })
+        rows.forEach(r => { if (r.type === 'confirmed' && r.amount > 0) next.set(`${r.project_id}__${r.date}`, r.amount) })
         return next
       })
       setScreenGrid(prev => {
         const next = new Map(prev)
-        rows.forEach(r => { if ((r.screen_revenue ?? 0) > 0) next.set(`${r.project_id}__${r.date}`, r.screen_revenue) })
+        rows.forEach(r => { if (r.type === 'pending' && r.amount > 0) next.set(`${r.project_id}__${r.date}`, r.amount) })
         return next
-      })
-      rows.forEach(r => {
-        savedRevenueRef.current.set(`${r.project_id}__${r.date}`, r.revenue)
-        savedScreenRef.current.set(`${r.project_id}__${r.date}`, r.screen_revenue ?? 0)
       })
 
       const nextNotes       = new Map<string, string>()
@@ -279,12 +278,14 @@ export function useRevenueGrid() {
       const nextConfirmedAt = new Map<string, string>()
       rows.forEach(r => {
         const k = `${r.project_id}__${r.date}`
-        if (r.note) nextNotes.set(k, r.note)
-        if (r.payout_start_date && r.payout_end_date) {
-          nextPayouts.set(k, { start: r.payout_start_date, end: r.payout_end_date })
+        if (r.type === 'pending') {
+          if (r.note) nextNotes.set(k, r.note)
         }
-        if (r.status === 'confirmed') nextStatus.set(k, 'confirmed')
-        if (r.confirmed_at) nextConfirmedAt.set(k, r.confirmed_at)
+        if (r.type === 'confirmed') {
+          if (r.payout_start_date && r.payout_end_date) nextPayouts.set(k, { start: r.payout_start_date, end: r.payout_end_date })
+          nextStatus.set(k, 'confirmed')
+          if (r.confirmed_at) nextConfirmedAt.set(k, r.confirmed_at)
+        }
       })
       setNoteMap(nextNotes)
       setPayoutMap(nextPayouts)
@@ -297,7 +298,7 @@ export function useRevenueGrid() {
         if (prevRes.ok) {
           const prevRows: RevenueRow[] = await prevRes.json()
           const nextPrev = new Map<string, number>()
-          prevRows.forEach(r => nextPrev.set(`${r.project_id}__${r.date}`, r.screen_revenue ?? 0))
+          prevRows.forEach(r => { if (r.type === 'pending') nextPrev.set(`${r.project_id}__${r.date}`, r.amount) })
           setPrevScreenMap(nextPrev)
         }
       }
@@ -343,7 +344,7 @@ export function useRevenueGrid() {
   const switchMode = useCallback((mode: ViewMode) => {
     setViewMode(mode)
     if (mode === 'day')   setSelectedDate(prev => prev > today ? today : prev)
-    if (mode === 'week')  setAnchorDate(today) // always reset to current week
+    if (mode === 'week')  setAnchorDate(today)
     if (mode === 'month') setAnchorDate(today.slice(0, 7) + '-01')
   }, [today])
 
@@ -353,23 +354,24 @@ export function useRevenueGrid() {
     setViewMode('custom')
   }, [])
 
-  // Determine if at "today" boundary (forward button disabled)
   const isAtToday = useMemo(() => {
     if (viewMode === 'day')    return selectedDate >= today
     if (viewMode === 'week')   return anchorDate >= today
     if (viewMode === 'month')  return anchorDate.slice(0, 7) >= today.slice(0, 7)
     if (viewMode === 'custom') return (customTo || '') >= today
-    return true // all-time nav disabled
+    return true
   }, [viewMode, anchorDate, selectedDate, customTo, today])
 
   const refreshRevenue = useCallback(() => setRefreshKey(k => k + 1), [])
 
-  // Update cell (with undo history)
+  // Update cell (overwrite, with undo history)
   const updateCell = useCallback((projectId: string, date: string, value: number, historyBatch?: HistoryChange[]) => {
     const key = `${projectId}__${date}`
     const tab = activeTab
+    const type = tab === 'revenue' ? 'confirmed' : 'pending'
     const oldValue = tab === 'revenue' ? revenueGridRef.current.get(key) : screenGridRef.current.get(key)
-    clearedRef.current.delete(key)
+    if (tab === 'revenue') clearedRevenueRef.current.delete(key)
+    else clearedScreenRef.current.delete(key)
 
     if (tab === 'revenue') {
       setRevenueGrid(prev => { const n = new Map(prev); n.set(key, value); return n })
@@ -377,26 +379,27 @@ export function useRevenueGrid() {
       setScreenGrid(prev => { const n = new Map(prev); n.set(key, value); return n })
     }
 
-    // Add to history (historyBatch is used for bulk paste - caller aggregates externally)
     if (!historyBatch) {
       historyRef.current = [...historyRef.current.slice(-24), { changes: [{ key, tab, old: oldValue, val: value }] }]
       futureRef.current  = []
       syncUndoRedoState()
     }
 
-    scheduleAutoSave(key)
+    scheduleAutoSave(key, type)
   }, [activeTab, scheduleAutoSave])
 
   const clearCell = useCallback((projectId: string, date: string, historyBatch?: HistoryChange[]) => {
     const key = `${projectId}__${date}`
     const tab = activeTab
+    const type = tab === 'revenue' ? 'confirmed' : 'pending'
     const oldValue = tab === 'revenue' ? revenueGridRef.current.get(key) : screenGridRef.current.get(key)
-    if (oldValue === undefined) return // nothing to clear
+    if (oldValue === undefined) return
 
-    clearedRef.current.add(key)
     if (tab === 'revenue') {
+      clearedRevenueRef.current.add(key)
       setRevenueGrid(prev => { const n = new Map(prev); n.delete(key); return n })
     } else {
+      clearedScreenRef.current.add(key)
       setScreenGrid(prev => { const n = new Map(prev); n.delete(key); return n })
     }
 
@@ -406,23 +409,22 @@ export function useRevenueGrid() {
       syncUndoRedoState()
     }
 
-    scheduleAutoSave(key)
+    scheduleAutoSave(key, type)
   }, [activeTab, scheduleAutoSave])
 
   // Apply a set of changes (used by undo/redo)
   const applyChanges = useCallback((changes: HistoryChange[], direction: 'undo' | 'redo') => {
     changes.forEach(({ key, tab, old, val }) => {
       const restore = direction === 'undo' ? old : val
+      const type = tab === 'revenue' ? 'confirmed' : 'pending'
       if (restore === undefined) {
-        clearedRef.current.add(key)
-        if (tab === 'revenue') setRevenueGrid(prev => { const n = new Map(prev); n.delete(key); return n })
-        else setScreenGrid(prev => { const n = new Map(prev); n.delete(key); return n })
+        if (tab === 'revenue') { clearedRevenueRef.current.add(key); setRevenueGrid(prev => { const n = new Map(prev); n.delete(key); return n }) }
+        else { clearedScreenRef.current.add(key); setScreenGrid(prev => { const n = new Map(prev); n.delete(key); return n }) }
       } else {
-        clearedRef.current.delete(key)
-        if (tab === 'revenue') setRevenueGrid(prev => { const n = new Map(prev); n.set(key, restore); return n })
-        else setScreenGrid(prev => { const n = new Map(prev); n.set(key, restore); return n })
+        if (tab === 'revenue') { clearedRevenueRef.current.delete(key); setRevenueGrid(prev => { const n = new Map(prev); n.set(key, restore); return n }) }
+        else { clearedScreenRef.current.delete(key); setScreenGrid(prev => { const n = new Map(prev); n.set(key, restore); return n }) }
       }
-      scheduleAutoSave(key)
+      scheduleAutoSave(key, type)
     })
   }, [scheduleAutoSave])
 
@@ -452,10 +454,15 @@ export function useRevenueGrid() {
       const tab = activeTab
       const old = tab === 'revenue' ? revenueGridRef.current.get(key) : screenGridRef.current.get(key)
       changes.push({ key, tab, old, val: value })
-      clearedRef.current.delete(key)
-      if (tab === 'revenue') setRevenueGrid(prev => { const n = new Map(prev); n.set(key, value); return n })
-      else setScreenGrid(prev => { const n = new Map(prev); n.set(key, value); return n })
-      pendingKeysRef.current.add(key)
+      if (tab === 'revenue') {
+        clearedRevenueRef.current.delete(key)
+        setRevenueGrid(prev => { const n = new Map(prev); n.set(key, value); return n })
+        pendingRevenueKeysRef.current.add(key)
+      } else {
+        clearedScreenRef.current.delete(key)
+        setScreenGrid(prev => { const n = new Map(prev); n.set(key, value); return n })
+        pendingScreenKeysRef.current.add(key)
+      }
     })
     if (changes.length > 0) {
       historyRef.current = [...historyRef.current.slice(-24), { changes }]
@@ -477,7 +484,7 @@ export function useRevenueGrid() {
       console.error('[revertCells] API error:', res.status, body)
       return false
     }
-    // Immediate local state update — no need to wait for refreshRevenue
+    // Immediate local state removal
     setStatusMap(prev => {
       const n = new Map(prev)
       items.forEach(({ project_id, date }) => n.delete(`${project_id}__${date}`))
@@ -488,32 +495,29 @@ export function useRevenueGrid() {
       items.forEach(({ project_id, date }) => n.delete(`${project_id}__${date}`))
       return n
     })
+    setRevenueGrid(prev => {
+      const n = new Map(prev)
+      items.forEach(({ project_id, date }) => n.delete(`${project_id}__${date}`))
+      return n
+    })
     return true
   }, [])
 
   const confirmCell = useCallback(async (projectId: string, date: string) => {
+    const key = `${projectId}__${date}`
+    const amount = screenGridRef.current.get(key) ?? 0
     const res = await fetch('/api/revenue/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, date }),
+      body: JSON.stringify({ project_id: projectId, date, amount }),
     })
     if (!res.ok) return
-    const { confirmed_at, revenue: confirmedRevenue } = await res.json()
-    const key = `${projectId}__${date}`
-    const ts  = confirmed_at || new Date().toISOString()
+    const { confirmed_at } = await res.json()
+    const ts = confirmed_at || new Date().toISOString()
 
     setStatusMap(prev => { const n = new Map(prev); n.set(key, 'confirmed'); return n })
     setConfirmedAtMap(prev => { const n = new Map(prev); n.set(key, ts); return n })
-
-    // Reflect confirmed revenue in local state so revenue tab shows it immediately
-    if ((confirmedRevenue ?? 0) > 0) {
-      setRevenueGrid(prev => {
-        const n = new Map(prev)
-        if (!n.has(key) || (n.get(key) ?? 0) === 0) n.set(key, confirmedRevenue)
-        return n
-      })
-      savedRevenueRef.current.set(key, confirmedRevenue)
-    }
+    setRevenueGrid(prev => { const n = new Map(prev); n.set(key, amount); return n })
   }, [])
 
   const saveNote = useCallback(async (projectId: string, date: string, note: string) => {
@@ -522,7 +526,7 @@ export function useRevenueGrid() {
     await fetch('/api/revenue', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, date, note: note || null }),
+      body: JSON.stringify({ project_id: projectId, date, type: 'pending', note: note || null }),
     })
   }, [])
 
@@ -536,7 +540,7 @@ export function useRevenueGrid() {
     await fetch('/api/revenue', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: projectId, date, payout_start_date: start, payout_end_date: end }),
+      body: JSON.stringify({ project_id: projectId, date, type: 'confirmed', payout_start_date: start, payout_end_date: end }),
     })
   }, [])
 
@@ -544,7 +548,7 @@ export function useRevenueGrid() {
     projects, today, viewMode, anchorDate, selectedDate,
     activeTab, setActiveTab,
     dates: effectiveDates,
-    gridData, screenGrid, prevScreenMap,
+    gridData, revenueGrid, screenGrid, prevScreenMap,
     noteMap, payoutMap,
     isLoading, saveStatus, isAtToday,
     canUndo, canRedo, toast, setToast,

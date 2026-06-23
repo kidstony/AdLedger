@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from('affiliate_revenue')
-    .select('project_id, date, revenue, screen_revenue, note, payout_start_date, payout_end_date, status, confirmed_at')
+    .select('project_id, date, type, amount, note, payout_start_date, payout_end_date, confirmed_at')
     .gte('date', from)
     .lte('date', to)
 
@@ -20,21 +20,44 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const rows: { project_id: string; date: string; revenue: number; screen_revenue?: number }[] = body.rows ?? []
+  const rows: { project_id: string; date: string; type: 'confirmed' | 'pending'; amount: number }[] = body.rows ?? []
 
   if (rows.length === 0) return NextResponse.json({ success: true, count: 0 })
 
-  const { error } = await supabaseAdmin
-    .from('affiliate_revenue')
-    .upsert(rows, { onConflict: 'project_id,date' })
+  const toDelete = rows.filter(r => r.amount === 0)
+  const toUpsert = rows.filter(r => r.amount > 0)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (toDelete.length > 0) {
+    const deleteResults = await Promise.all(
+      toDelete.map(r =>
+        supabaseAdmin
+          .from('affiliate_revenue')
+          .delete()
+          .eq('project_id', r.project_id)
+          .eq('date', r.date)
+          .eq('type', r.type)
+      )
+    )
+    const deleteFailed = deleteResults.filter(r => r.error)
+    if (deleteFailed.length > 0) {
+      console.error('[POST /api/revenue] delete errors:', deleteFailed.map(r => r.error))
+    }
+  }
+
+  if (toUpsert.length > 0) {
+    const { error } = await supabaseAdmin
+      .from('affiliate_revenue')
+      .upsert(toUpsert, { onConflict: 'project_id,date,type' })
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
   return NextResponse.json({ success: true, count: rows.length })
 }
 
-// Partial update: note and/or payout dates only (does not touch revenue/screen_revenue)
+// Partial update: note (on pending row) or payout dates (on confirmed row)
 export async function PATCH(req: NextRequest) {
-  const { project_id, date, note, payout_start_date, payout_end_date } = await req.json()
+  const { project_id, date, type = 'pending', note, payout_start_date, payout_end_date } = await req.json()
 
   if (!project_id || !date) return NextResponse.json({ error: 'project_id and date required' }, { status: 400 })
 
@@ -45,10 +68,12 @@ export async function PATCH(req: NextRequest) {
 
   if (Object.keys(fields).length === 0) return NextResponse.json({ success: true })
 
-  // Upsert with defaults so the row is created if it doesn't exist yet
   const { error } = await supabaseAdmin
     .from('affiliate_revenue')
-    .upsert({ project_id, date, revenue: 0, screen_revenue: 0, ...fields }, { onConflict: 'project_id,date' })
+    .update(fields)
+    .eq('project_id', project_id)
+    .eq('date', date)
+    .eq('type', type)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ success: true })

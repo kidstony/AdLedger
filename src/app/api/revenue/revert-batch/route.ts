@@ -14,9 +14,10 @@ export async function POST(req: NextRequest) {
     (items as Item[]).map(({ project_id, date }) =>
       supabaseAdmin
         .from('affiliate_revenue')
-        .update({ status: 'pending', confirmed_at: null })
+        .delete()
         .eq('project_id', project_id)
         .eq('date', date)
+        .eq('type', 'confirmed')
     )
   )
 
@@ -26,6 +27,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Some reverts failed', failed: failed.length }, { status: 500 })
   }
 
-  console.log(`[revert-batch] Reverted ${items.length} items:`, items)
+  console.log(`[revert-batch] Deleted ${items.length} confirmed rows:`, items)
   return NextResponse.json({ success: true, count: items.length })
 }
