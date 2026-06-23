@@ -3,11 +3,13 @@
 import { useRef, useMemo, useState, useEffect, useCallback } from 'react'
 import {
   ChevronLeft, ChevronRight, Loader2, Banknote, Monitor,
-  Search, Keyboard, CheckCircle2, Cloud,
+  Search, Keyboard, CheckCircle2, Cloud, SlidersHorizontal,
 } from 'lucide-react'
 import { useRevenueGrid } from '@/hooks/useRevenueGrid'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import EditableCell from '@/components/revenue/EditableCell'
+import ProjectFilterDropdown, { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
+import RevenueSummaryCards from '@/components/revenue/RevenueSummaryCards'
 import { cn, formatVND } from '@/lib/utils'
 
 // ── date helpers ────────────────────────────────────────────────────────────
@@ -28,7 +30,7 @@ const SHORTCUTS = [
   { keys: 'Ctrl+V',          desc: 'Dán hàng loạt (Excel)' },
   { keys: 'Ctrl+Z',          desc: 'Hoàn tác' },
   { keys: 'Ctrl+Shift+Z',    desc: 'Làm lại' },
-  { keys: '/',               desc: 'Tìm kiếm nhanh' },
+  { keys: '/',               desc: 'Tìm nhanh trong bảng' },
   { keys: 'Esc',             desc: 'Xóa tìm kiếm' },
   { keys: 'Double-click',    desc: 'Gắn thẻ kỳ đối soát' },
 ]
@@ -52,17 +54,48 @@ export default function RevenuePage() {
   const focusedCellRef  = useRef<{ pi: number; di: number } | null>(null)
   const searchRef       = useRef<HTMLInputElement>(null)
 
-  const [searchQuery, setSearchQuery] = useState('')
-  const [noteModal,   setNoteModal]   = useState<NoteModal | null>(null)
-  const [payoutModal, setPayoutModal] = useState<PayoutModal | null>(null)
+  const [searchQuery,  setSearchQuery]  = useState('')
+  const [filterIds,    setFilterIds]    = useState<Set<string>>(new Set())
+  const [noteModal,    setNoteModal]    = useState<NoteModal | null>(null)
+  const [payoutModal,  setPayoutModal]  = useState<PayoutModal | null>(null)
   const [showShortcuts, setShowShortcuts] = useState(false)
 
-  // filtered projects
+  // Projects filtered by dropdown selection + inline search
   const filteredProjects = useMemo(() => {
+    let result = projects
+    if (filterIds.size > 0) result = result.filter(p => filterIds.has(p.project_id))
     const q = searchQuery.trim().toLowerCase()
-    if (!q) return projects
-    return projects.filter(p => p.name.toLowerCase().includes(q))
-  }, [projects, searchQuery])
+    if (q) result = result.filter(p => p.name.toLowerCase().includes(q))
+    return result
+  }, [projects, filterIds, searchQuery])
+
+  // Data for filter dropdown: compute per-project totals in current period
+  const filterProjectData = useMemo<FilterProject[]>(() =>
+    projects.map(p => {
+      const total = dates.reduce((sum, d) => sum + (gridData.get(`${p.project_id}__${d}`) ?? 0), 0)
+      return { project_id: p.project_id, name: p.name, isActive: total > 0, monthlyRevenue: total }
+    }),
+    [projects, gridData, dates]
+  )
+
+  // Per-project totals (respects cumulative delta logic, used for summary cards)
+  const perProjectTotals = useMemo(() =>
+    filteredProjects.map(p => {
+      const total = dates.reduce((sum, d, di) => {
+        const key = `${p.project_id}__${d}`
+        if (viewMode !== 'all' && activeTab === 'screen' && p.screen_revenue_type === 'cumulative') {
+          const curr     = screenGrid.get(key) ?? 0
+          const prevDate = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
+          const prevKey  = `${p.project_id}__${prevDate}`
+          const prev     = di === 0 ? (prevScreenMap.get(prevKey) ?? 0) : (screenGrid.get(prevKey) ?? 0)
+          return sum + Math.max(0, curr - prev)
+        }
+        return sum + (gridData.get(key) ?? 0)
+      }, 0)
+      return { project_id: p.project_id, name: p.name, total }
+    }),
+    [filteredProjects, dates, gridData, screenGrid, prevScreenMap, activeTab, viewMode]
+  )
 
   // ── keyboard shortcuts (global) ─────────────────────────────────────────────
   useEffect(() => {
@@ -294,6 +327,35 @@ export default function RevenuePage() {
           </button>
         </div>
       </div>
+
+      {/* ── Filter bar ─────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-lg px-3 py-2">
+        <div className="flex items-center gap-2 text-xs text-slate-500 font-medium shrink-0">
+          <SlidersHorizontal size={12} />
+          Lọc dự án:
+        </div>
+        <ProjectFilterDropdown
+          projects={filterProjectData}
+          selectedIds={filterIds}
+          onApply={ids => { setFilterIds(ids) }}
+        />
+        <div className="w-px h-5 bg-slate-200 mx-1" />
+        <span className="text-xs text-slate-400">
+          {filteredProjects.length < projects.length
+            ? <><span className="font-semibold text-slate-600">{filteredProjects.length}</span> / {projects.length} dự án</>
+            : <span className="text-slate-400">Tất cả {projects.length} dự án</span>
+          }
+        </span>
+      </div>
+
+      {/* ── Summary cards ──────────────────────────────────────────────────── */}
+      <RevenueSummaryCards
+        projectTotals={perProjectTotals}
+        totalProjectCount={projects.length}
+        dates={dates}
+        viewMode={viewMode}
+        anchorDate={anchorDate}
+      />
 
       {/* ── Search + Table ─────────────────────────────────────────────────── */}
       <div className="relative border border-slate-200 rounded-lg overflow-hidden">
