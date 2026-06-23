@@ -46,7 +46,7 @@ interface Props {
   initialData?: Project
   existingIds: string[]
   masterProjects: MasterProject[]
-  onSave: (project: Project) => void
+  onSave: (project: Project) => Promise<string | null>
   onClose: () => void
 }
 
@@ -63,6 +63,8 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
     initialData ?? { project_id: nextProjectId(existingIds), cid: '0000000000', name: '', mcc_id: 'uncategorized', master_project_id: null }
   )
   const [errors, setErrors] = useState<Partial<Record<keyof Project, string>>>({})
+  const [saveError, setSaveError] = useState('')
+  const [saving, setSaving] = useState(false)
 
   // Bank cascading state
   const [banks, setBanks] = useState<Bank[]>([])
@@ -120,10 +122,16 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
     return Object.keys(errs).length === 0
   }
 
-  function handleSave() {
-    if (validate()) {
-      onSave(form)
+  async function handleSave() {
+    if (!validate()) return
+    setSaving(true)
+    setSaveError('')
+    try {
+      const err = await onSave(form)
+      if (err) { setSaveError(err); return }
       onClose()
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -245,9 +253,10 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
             })()}
           </div>
 
+          {saveError && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded">{saveError}</p>}
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose}>Hủy</Button>
-            <Button onClick={handleSave}>Lưu</Button>
+            <Button variant="outline" onClick={onClose} disabled={saving}>Hủy</Button>
+            <Button onClick={handleSave} disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu'}</Button>
           </div>
         </div>
       </DialogContent>

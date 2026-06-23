@@ -9,8 +9,8 @@ import { Project } from '@/lib/types'
 interface ProjectsContextValue {
   projects: Project[]
   isLoading: boolean
-  addProject: (p: Project) => Promise<void>
-  updateProject: (p: Project) => Promise<void>
+  addProject: (p: Project) => Promise<string | null>
+  updateProject: (p: Project) => Promise<string | null>
   deleteProject: (id: string) => Promise<void>
   deleteProjects: (ids: string[]) => Promise<void>
 }
@@ -66,16 +66,27 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     setIsLoading(false)
   }
 
-  async function addProject(p: Project) {
+  async function addProject(p: Project): Promise<string | null> {
     setProjects(prev => [...prev, p])
-    const { error } = await supabase.from('projects').insert(p)
+    const { error } = await supabase.from('projects').insert({
+      project_id: p.project_id,
+      cid: p.cid,
+      name: p.name,
+      mcc_id: p.mcc_id,
+      master_project_id: p.master_project_id ?? null,
+      screen_revenue_type: p.screen_revenue_type ?? 'daily',
+      ref_link: p.ref_link ?? null,
+      bank_account_id: p.bank_account_id ?? null,
+    })
     if (error) {
       console.error('Lỗi thêm dự án:', error)
       setProjects(prev => prev.filter(x => x.project_id !== p.project_id))
+      return error.message
     }
+    return null
   }
 
-  async function updateProject(updated: Project) {
+  async function updateProject(updated: Project): Promise<string | null> {
     setProjects(prev => prev.map(p => p.project_id === updated.project_id ? updated : p))
     const { error } = await supabase
       .from('projects')
@@ -93,7 +104,9 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       console.error('Lỗi cập nhật dự án:', error)
       const { data } = await supabase.from('projects').select('*, bank_accounts(*, banks(*))').order('project_id')
       if (data) setProjects(data as Project[])
+      return error.message
     }
+    return null
   }
 
   async function deleteProject(id: string) {
