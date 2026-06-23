@@ -89,6 +89,17 @@ export default function PaymentConfirmPage() {
   const allSelected  = rows.length > 0 && selected.size === rows.length
   const someSelected = selected.size > 0 && !allSelected
 
+  // items that will actually be confirmed: selected subset OR all rows if nothing ticked
+  const confirmItems = useMemo(
+    () => selected.size > 0
+      ? rows.filter(r => selected.has(`${r.project_id}__${r.date}`))
+      : rows,
+    [rows, selected]
+  )
+  const confirmTotal = useMemo(
+    () => confirmItems.reduce((s, r) => s + r.amount, 0),
+    [confirmItems]
+  )
   const selectedTotal = useMemo(
     () => rows
       .filter(r => selected.has(`${r.project_id}__${r.date}`))
@@ -96,7 +107,7 @@ export default function PaymentConfirmPage() {
     [rows, selected]
   )
 
-  // Actual date range of selected rows (for modal text)
+  // date range of selected rows (used in modal text for partial selection)
   const [minSelDate, maxSelDate] = useMemo(() => {
     const dates = rows
       .filter(r => selected.has(`${r.project_id}__${r.date}`))
@@ -135,10 +146,8 @@ export default function PaymentConfirmPage() {
 
   async function handleConfirm() {
     setIsConfirming(true)
-    const items = rows
-      .filter(r => selected.has(`${r.project_id}__${r.date}`))
-      .map(r => ({ project_id: r.project_id, date: r.date, amount: r.amount }))
-    const total = selectedTotal
+    const items = confirmItems.map(r => ({ project_id: r.project_id, date: r.date, amount: r.amount }))
+    const total = confirmTotal
 
     const res = await fetch('/api/revenue/confirm-batch', {
       method: 'POST',
@@ -174,11 +183,13 @@ export default function PaymentConfirmPage() {
   const fmtDate = (d: string) =>
     new Date(d + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
 
-  const fmtDateRange = () => {
+  const fmtSelDateRange = () => {
     if (!minSelDate) return ''
     if (minSelDate === maxSelDate) return `ngày ${fmtDate(minSelDate)}`
     return `từ ${fmtDate(minSelDate)} đến ${fmtDate(maxSelDate)}`
   }
+
+  const isConfirmAll = selected.size === 0
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
@@ -288,25 +299,28 @@ export default function PaymentConfirmPage() {
         {/* Footer */}
         {!isLoading && (
           <div className="px-4 py-3 border-t border-slate-100">
-            {selected.size > 0 && (
+            {rows.length > 0 && (
               <div className="flex items-center justify-between mb-2.5 text-xs">
-                <span className="text-slate-500">{selected.size} khoản đã chọn</span>
-                <span className="font-semibold text-slate-800">{formatVND(selectedTotal)}</span>
+                {isConfirmAll
+                  ? <span className="text-slate-500">Tất cả {rows.length} khoản</span>
+                  : <span className="text-slate-500">{selected.size} khoản đã chọn</span>
+                }
+                <span className="font-semibold text-slate-800">{formatVND(confirmTotal)}</span>
               </div>
             )}
             <button
               onClick={() => setShowModal(true)}
-              disabled={selected.size === 0}
+              disabled={rows.length === 0}
               className={cn(
                 'w-full py-2.5 rounded-lg text-sm font-semibold transition-colors',
-                selected.size > 0
+                rows.length > 0
                   ? 'bg-emerald-600 text-white hover:bg-emerald-700 active:bg-emerald-800'
                   : 'bg-slate-100 text-slate-300 cursor-not-allowed'
               )}
             >
-              {selected.size > 0
-                ? `Xác nhận thanh toán (${selected.size} khoản)`
-                : 'Xác nhận thanh toán'}
+              {isConfirmAll
+                ? `Xác nhận tất cả (${rows.length} khoản)`
+                : `Xác nhận ${selected.size} khoản đã chọn`}
             </button>
           </div>
         )}
@@ -318,10 +332,20 @@ export default function PaymentConfirmPage() {
           <div className="bg-white rounded-xl shadow-xl p-5 w-[340px]">
             <h3 className="font-semibold text-slate-800 mb-2">Xác nhận thanh toán</h3>
             <p className="text-sm text-slate-600 mb-4">
-              Xác nhận{' '}
-              <span className="font-semibold">{selected.size} khoản</span>, tổng{' '}
-              <span className="font-semibold text-emerald-700">{formatVND(selectedTotal)}</span>{' '}
-              {fmtDateRange()} đã được thanh toán?
+              {isConfirmAll ? (
+                <>
+                  Xác nhận <span className="font-semibold">tất cả {rows.length} khoản</span> pending{' '}
+                  từ <span className="font-semibold">{fmtDate(fromDate)}</span> đến{' '}
+                  <span className="font-semibold">{fmtDate(toDate)}</span>, tổng{' '}
+                  <span className="font-semibold text-emerald-700">{formatVND(confirmTotal)}</span>?
+                </>
+              ) : (
+                <>
+                  Xác nhận <span className="font-semibold">{selected.size} khoản</span> đã chọn,{' '}
+                  tổng <span className="font-semibold text-emerald-700">{formatVND(confirmTotal)}</span>{' '}
+                  {fmtSelDateRange()}?
+                </>
+              )}
             </p>
             <div className="flex justify-end gap-2">
               <button
