@@ -9,15 +9,19 @@ export interface Bank {
   id: string
   name: string
   type: 'local' | 'international'
+  bank_category: 'traditional' | 'crypto'
   created_at: string
 }
 
 export interface BankAccount {
   id: string
   bank_id: string
-  account_identifier: string
+  account_identifier: string   // email/số TK for traditional
   owner_name: string
   note?: string | null
+  coin_type?: string | null    // crypto only
+  network?: string | null      // crypto only
+  wallet_address?: string | null // crypto only
   created_at: string
   banks?: Bank | null
 }

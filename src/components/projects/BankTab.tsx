@@ -1,51 +1,99 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { Plus, Pencil, Trash2, ChevronRight, ArrowLeft, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronRight, ArrowLeft, X, Copy, Check, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Bank, BankAccount, Project } from '@/lib/types'
 
-interface Props {
-  projects: Project[]
+// ─── Crypto constants ─────────────────────────────────────────────────────────
+
+const COINS = ['USDT', 'USDC', 'BTC', 'ETH', 'BNB', 'SOL', 'TRX', 'TON', 'Khác']
+
+const COIN_NETWORKS: Record<string, string[]> = {
+  USDT: ['TRC20', 'ERC20', 'BEP20', 'SOL'],
+  USDC: ['ERC20', 'BEP20', 'SOL'],
+  BTC: ['Bitcoin', 'Lightning'],
+  ETH: ['ERC20'],
+  BNB: ['BEP20'],
+  SOL: ['SOL'],
+  TRX: ['TRC20'],
+  TON: ['TON'],
+  Khác: ['ERC20', 'TRC20', 'BEP20', 'SOL', 'Khác'],
+}
+
+const NETWORK_STYLES: Record<string, string> = {
+  TRC20:    'bg-green-100 text-green-700',
+  ERC20:    'bg-blue-100 text-blue-700',
+  BEP20:    'bg-yellow-100 text-yellow-700',
+  SOL:      'bg-purple-100 text-purple-700',
+  Bitcoin:  'bg-orange-100 text-orange-700',
+  Lightning:'bg-yellow-100 text-yellow-700',
+  TON:      'bg-cyan-100 text-cyan-700',
+}
+
+const NETWORK_WARNING: Record<string, string> = {
+  TRC20:    'Chỉ nhận từ mạng TRON. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
+  ERC20:    'Chỉ nhận từ mạng Ethereum. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
+  BEP20:    'Chỉ nhận từ mạng BNB Smart Chain. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
+  SOL:      'Chỉ nhận từ mạng Solana. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
+  Bitcoin:  'Chỉ nhận từ mạng Bitcoin mainnet.',
+  Lightning:'Chỉ nhận qua Lightning Network (off-chain).',
+  TON:      'Chỉ nhận từ mạng TON.',
+}
+
+function networkStyle(n: string | null | undefined) {
+  return NETWORK_STYLES[n ?? ''] ?? 'bg-slate-100 text-slate-600'
+}
+
+function shortenAddr(addr: string) {
+  if (addr.length <= 12) return addr
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`
+}
+
+function CopyButton({ text, className }: { text: string; className?: string }) {
+  const [done, setDone] = useState(false)
+  function copy() {
+    navigator.clipboard.writeText(text)
+    setDone(true)
+    setTimeout(() => setDone(false), 1500)
+  }
+  return (
+    <button onClick={copy} title="Copy" className={`p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors ${className}`}>
+      {done ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
+    </button>
+  )
 }
 
 // ─── Tầng 1: Danh sách Bank ──────────────────────────────────────────────────
 
-function BankList({ projects, onEnter }: { projects: Project[]; onEnter: (bank: Bank) => void }) {
+interface Props { projects: Project[] }
+
+function BankList({ projects, onEnter }: { projects: Project[]; onEnter: (b: Bank) => void }) {
   const [banks, setBanks] = useState<(Bank & { bank_accounts: [{ count: number }] })[]>([])
   const [loading, setLoading] = useState(true)
   const [dialog, setDialog] = useState<{ mode: 'add' | 'edit'; data?: Bank } | null>(null)
-  const [form, setForm] = useState({ name: '', type: 'international' as 'local' | 'international' })
+  const [form, setForm] = useState({ name: '', type: 'international' as 'local' | 'international', bank_category: '' as '' | 'traditional' | 'crypto' })
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<Bank | null>(null)
   const [deleteError, setDeleteError] = useState('')
 
   function load() {
-    fetch('/api/banks')
-      .then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setBanks(d) })
-      .finally(() => setLoading(false))
+    fetch('/api/banks').then(r => r.json()).then(d => { if (Array.isArray(d)) setBanks(d) }).finally(() => setLoading(false))
   }
   useEffect(() => { load() }, [])
 
-  // Count projects per bank (via bank_accounts)
   const projectsByBank = useMemo(() => {
     const map = new Map<string, number>()
-    projects.forEach(p => {
-      if (p.bank_accounts?.bank_id) {
-        const bid = p.bank_accounts.bank_id
-        map.set(bid, (map.get(bid) ?? 0) + 1)
-      }
-    })
+    projects.forEach(p => { if (p.bank_accounts?.bank_id) map.set(p.bank_accounts.bank_id, (map.get(p.bank_accounts.bank_id) ?? 0) + 1) })
     return map
   }, [projects])
 
-  function openAdd() { setForm({ name: '', type: 'international' }); setDialog({ mode: 'add' }) }
-  function openEdit(b: Bank) { setForm({ name: b.name, type: b.type }); setDialog({ mode: 'edit', data: b }) }
+  function openAdd() { setForm({ name: '', type: 'international', bank_category: '' }); setDialog({ mode: 'add' }) }
+  function openEdit(b: Bank) { setForm({ name: b.name, type: b.type, bank_category: b.bank_category }); setDialog({ mode: 'edit', data: b }) }
 
   async function handleSave() {
-    if (!form.name.trim()) return
+    if (!form.name.trim() || !form.bank_category) return
     setSaving(true)
     try {
       if (dialog?.mode === 'add') {
@@ -70,28 +118,24 @@ function BankList({ projects, onEnter }: { projects: Project[]; onEnter: (bank: 
     setConfirmDelete(null)
   }
 
+  const categoryIcon = (b: Bank) => b.bank_category === 'crypto' ? '₿' : '🏦'
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">{banks.length} ngân hàng</p>
+        <p className="text-sm text-slate-500">{banks.length} ngân hàng / ví</p>
         <Button onClick={openAdd} className="gap-1.5"><Plus size={14} /> Thêm bank</Button>
       </div>
 
       {loading ? (
-        <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
-          {[1, 2, 3].map(i => <div key={i} className="px-4 py-3 flex gap-4"><div className="w-32 h-3 bg-slate-200 rounded animate-pulse" /><div className="w-20 h-3 bg-slate-200 rounded animate-pulse" /></div>)}
-        </div>
+        <div className="border border-slate-200 rounded-lg divide-y">{[1,2,3].map(i => <div key={i} className="px-4 py-3 flex gap-4"><div className="w-32 h-3 bg-slate-200 rounded animate-pulse"/></div>)}</div>
       ) : banks.length === 0 ? (
-        <div className="border border-slate-200 rounded-lg p-10 text-center text-sm text-slate-400">Chưa có ngân hàng nào. Nhấn "+ Thêm bank" để bắt đầu.</div>
+        <div className="border border-slate-200 rounded-lg p-10 text-center text-sm text-slate-400">Chưa có ngân hàng / ví nào.</div>
       ) : (
         <div className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                {['Tên ngân hàng', 'Loại', 'Số tài khoản', ''].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
-                ))}
-              </tr>
+              <tr>{['Tên', 'Phân loại', 'Số tài khoản', ''].map(h => <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>)}</tr>
             </thead>
             <tbody>
               {banks.map(bank => {
@@ -99,22 +143,24 @@ function BankList({ projects, onEnter }: { projects: Project[]; onEnter: (bank: 
                 const projCount = projectsByBank.get(bank.id) ?? 0
                 return (
                   <tr key={bank.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => onEnter(bank)}>
-                    <td className="px-4 py-3 font-medium text-slate-800">💳 {bank.name}</td>
+                    <td className="px-4 py-3 font-medium text-slate-800">{categoryIcon(bank)} {bank.name}</td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${bank.type === 'international' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
-                        {bank.type === 'international' ? 'Quốc tế' : 'Nội địa'}
-                      </span>
+                      {bank.bank_category === 'crypto' ? (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-orange-50 text-orange-600 border border-orange-200">₿ Crypto / Web3</span>
+                      ) : (
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${bank.type === 'international' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
+                          🏦 {bank.type === 'international' ? 'Quốc tế' : 'Nội địa'}
+                        </span>
+                      )}
                     </td>
-                    <td className="px-4 py-3 text-slate-600 text-xs">
-                      {accCount > 0
-                        ? <>{accCount} tài khoản{projCount > 0 ? ` · ${projCount} dự án` : ''}</>
-                        : <span className="text-slate-300">Chưa có TK</span>}
+                    <td className="px-4 py-3 text-xs text-slate-600">
+                      {accCount > 0 ? <>{accCount} tài khoản{projCount > 0 ? ` · ${projCount} dự án` : ''}</> : <span className="text-slate-300">Chưa có TK</span>}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end" onClick={e => e.stopPropagation()}>
-                        <button onClick={() => openEdit(bank)} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors"><Pencil size={13} /></button>
-                        <button onClick={() => { setDeleteError(''); setConfirmDelete(bank) }} className="p-1.5 rounded hover:bg-red-100 text-slate-500 hover:text-red-600 transition-colors"><Trash2 size={13} /></button>
-                        <button onClick={() => onEnter(bank)} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors"><ChevronRight size={15} /></button>
+                        <button onClick={() => openEdit(bank)} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors"><Pencil size={13}/></button>
+                        <button onClick={() => { setDeleteError(''); setConfirmDelete(bank) }} className="p-1.5 rounded hover:bg-red-100 text-slate-500 hover:text-red-600 transition-colors"><Trash2 size={13}/></button>
+                        <button onClick={() => onEnter(bank)} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors"><ChevronRight size={15}/></button>
                       </div>
                     </td>
                   </tr>
@@ -125,30 +171,54 @@ function BankList({ projects, onEnter }: { projects: Project[]; onEnter: (bank: 
         </div>
       )}
 
+      {/* Add/Edit bank modal */}
       {dialog && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
-            <h3 className="font-semibold text-slate-800 mb-4">{dialog.mode === 'add' ? 'Thêm ngân hàng' : 'Sửa ngân hàng'}</h3>
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-600">Tên ngân hàng</label>
-                <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="PayPal, MB Bank, Vietcombank..." autoFocus />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-600">Loại</label>
-                <div className="flex gap-2">
-                  {(['international', 'local'] as const).map(t => (
-                    <button key={t} onClick={() => setForm(f => ({ ...f, type: t }))}
-                      className={`flex-1 py-2 text-sm rounded-md border transition-colors ${form.type === t ? 'bg-slate-800 text-white border-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                      {t === 'international' ? 'Quốc tế' : 'Nội địa'}
-                    </button>
-                  ))}
+            <h3 className="font-semibold text-slate-800 mb-4">{dialog.mode === 'add' ? 'Thêm bank / ví' : 'Sửa bank / ví'}</h3>
+            <div className="space-y-4">
+              {/* Step 1: category (only for add) */}
+              {dialog.mode === 'add' && (
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-slate-600">Loại bank này là gì?</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([['traditional', '🏦', 'Ngân hàng\n/ Ví điện tử'], ['crypto', '₿', 'Crypto\n/ Web3']] as const).map(([cat, icon, label]) => (
+                      <button key={cat} onClick={() => setForm(f => ({ ...f, bank_category: cat }))}
+                        className={`p-3 rounded-lg border-2 text-center transition-colors ${form.bank_category === cat ? 'border-slate-800 bg-slate-50' : 'border-slate-200 hover:border-slate-300'}`}>
+                        <div className="text-2xl mb-1">{icon}</div>
+                        <div className="text-xs font-medium text-slate-700 whitespace-pre-line">{label}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Show remaining fields only after category chosen (add) or always (edit) */}
+              {(form.bank_category || dialog.mode === 'edit') && (
+                <>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-600">Tên</label>
+                    <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder={form.bank_category === 'crypto' ? 'Binance, Bybit, MetaMask...' : 'PayPal, MB Bank, Vietcombank...'} autoFocus />
+                  </div>
+                  {form.bank_category === 'traditional' && (
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-slate-600">Phạm vi</label>
+                      <div className="flex gap-2">
+                        {(['international', 'local'] as const).map(t => (
+                          <button key={t} onClick={() => setForm(f => ({ ...f, type: t }))}
+                            className={`flex-1 py-2 text-sm rounded-md border transition-colors ${form.type === t ? 'bg-slate-800 text-white border-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                            {t === 'international' ? 'Quốc tế' : 'Nội địa'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
             <div className="flex justify-end gap-2 mt-5">
               <Button variant="outline" onClick={() => setDialog(null)}>Hủy</Button>
-              <Button onClick={handleSave} disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu'}</Button>
+              <Button onClick={handleSave} disabled={saving || (!form.bank_category && dialog.mode === 'add')}>{saving ? 'Đang lưu...' : 'Lưu'}</Button>
             </div>
           </div>
         </div>
@@ -157,9 +227,8 @@ function BankList({ projects, onEnter }: { projects: Project[]; onEnter: (bank: 
       {confirmDelete && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
-            <h3 className="font-semibold text-slate-800 mb-2">Xóa ngân hàng?</h3>
-            <p className="text-sm text-slate-600 mb-1"><strong>{confirmDelete.name}</strong> sẽ bị xóa vĩnh viễn.</p>
-            {deleteError && <p className="text-sm text-red-600 mt-2 bg-red-50 px-3 py-2 rounded">{deleteError}</p>}
+            <h3 className="font-semibold text-slate-800 mb-2">Xóa {confirmDelete.name}?</h3>
+            {deleteError && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded mt-2">{deleteError}</p>}
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="outline" onClick={() => setConfirmDelete(null)}>Hủy</Button>
               <Button variant="destructive" onClick={() => handleDelete(confirmDelete)}>Xóa</Button>
@@ -171,50 +240,54 @@ function BankList({ projects, onEnter }: { projects: Project[]; onEnter: (bank: 
   )
 }
 
-// ─── Tầng 2: Danh sách tài khoản trong 1 bank ────────────────────────────────
+// ─── Tầng 2: Danh sách tài khoản ─────────────────────────────────────────────
 
 function AccountList({ bank, projects, onBack }: { bank: Bank; projects: Project[]; onBack: () => void }) {
+  const isCrypto = bank.bank_category === 'crypto'
   const [accounts, setAccounts] = useState<BankAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [dialog, setDialog] = useState<{ mode: 'add' | 'edit'; data?: BankAccount } | null>(null)
-  const [form, setForm] = useState({ account_identifier: '', owner_name: '', note: '' })
+  const [form, setForm] = useState({ account_identifier: '', owner_name: '', note: '', coin_type: 'USDT', network: 'TRC20', wallet_address: '' })
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<BankAccount | null>(null)
   const [deleteError, setDeleteError] = useState('')
-  const [usagePopup, setUsagePopup] = useState<{ account: BankAccount; projectList: Project[] } | null>(null)
+  const [usagePopup, setUsagePopup] = useState<{ account: BankAccount; list: Project[] } | null>(null)
 
   function load() {
-    fetch(`/api/bank-accounts?bank_id=${bank.id}`)
-      .then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setAccounts(d) })
-      .finally(() => setLoading(false))
+    fetch(`/api/bank-accounts?bank_id=${bank.id}`).then(r => r.json()).then(d => { if (Array.isArray(d)) setAccounts(d) }).finally(() => setLoading(false))
   }
   useEffect(() => { load() }, [bank.id])
 
-  const usageCount = useMemo(() => {
+  const usageMap = useMemo(() => {
     const map = new Map<string, Project[]>()
-    projects.forEach(p => {
-      if (p.bank_account_id) {
-        if (!map.has(p.bank_account_id)) map.set(p.bank_account_id, [])
-        map.get(p.bank_account_id)!.push(p)
-      }
-    })
+    projects.forEach(p => { if (p.bank_account_id) { if (!map.has(p.bank_account_id)) map.set(p.bank_account_id, []); map.get(p.bank_account_id)!.push(p) } })
     return map
   }, [projects])
 
-  function openAdd() { setForm({ account_identifier: '', owner_name: '', note: '' }); setDialog({ mode: 'add' }) }
-  function openEdit(acc: BankAccount) { setForm({ account_identifier: acc.account_identifier, owner_name: acc.owner_name, note: acc.note ?? '' }); setDialog({ mode: 'edit', data: acc }) }
+  function openAdd() {
+    setForm({ account_identifier: '', owner_name: '', note: '', coin_type: 'USDT', network: 'TRC20', wallet_address: '' })
+    setDialog({ mode: 'add' })
+  }
+  function openEdit(acc: BankAccount) {
+    setForm({ account_identifier: acc.account_identifier ?? '', owner_name: acc.owner_name, note: acc.note ?? '', coin_type: acc.coin_type ?? 'USDT', network: acc.network ?? 'TRC20', wallet_address: acc.wallet_address ?? '' })
+    setDialog({ mode: 'edit', data: acc })
+  }
 
   async function handleSave() {
-    if (!form.account_identifier.trim() || !form.owner_name.trim()) return
+    if (!form.owner_name.trim()) return
+    if (isCrypto && !form.wallet_address.trim()) return
+    if (!isCrypto && !form.account_identifier.trim()) return
     setSaving(true)
     try {
+      const payload = isCrypto
+        ? { bank_id: bank.id, owner_name: form.owner_name, note: form.note || null, coin_type: form.coin_type, network: form.network, wallet_address: form.wallet_address, account_identifier: null }
+        : { bank_id: bank.id, account_identifier: form.account_identifier, owner_name: form.owner_name, note: form.note || null, coin_type: null, network: null, wallet_address: null }
       if (dialog?.mode === 'add') {
-        const res = await fetch('/api/bank-accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bank_id: bank.id, ...form, note: form.note || null }) })
+        const res = await fetch('/api/bank-accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         const created = await res.json()
         if (created.id) setAccounts(prev => [...prev, created])
       } else if (dialog?.data) {
-        const res = await fetch('/api/bank-accounts', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: dialog.data.id, ...form, note: form.note || null }) })
+        const res = await fetch('/api/bank-accounts', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: dialog.data.id, ...payload }) })
         const updated = await res.json()
         if (updated.id) setAccounts(prev => prev.map(a => a.id === updated.id ? updated : a))
       }
@@ -231,62 +304,78 @@ function AccountList({ bank, projects, onBack }: { bank: Bank; projects: Project
     setConfirmDelete(null)
   }
 
+  const networks = COIN_NETWORKS[form.coin_type] ?? ['ERC20', 'TRC20', 'BEP20']
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors">
-            <ArrowLeft size={14} /> Quay lại
-          </button>
+          <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors"><ArrowLeft size={14}/> Quay lại</button>
           <span className="text-slate-300">|</span>
           <div className="flex items-center gap-2">
-            <span className="text-lg">💳</span>
+            <span>{bank.bank_category === 'crypto' ? '₿' : '🏦'}</span>
             <span className="font-semibold text-slate-800">{bank.name}</span>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${bank.type === 'international' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>
-              {bank.type === 'international' ? 'Quốc tế' : 'Nội địa'}
-            </span>
+            {bank.bank_category === 'crypto'
+              ? <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-orange-50 text-orange-600 border border-orange-200">Crypto / Web3</span>
+              : <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${bank.type === 'international' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'}`}>{bank.type === 'international' ? 'Quốc tế' : 'Nội địa'}</span>
+            }
           </div>
         </div>
-        <Button onClick={openAdd} className="gap-1.5"><Plus size={14} /> Thêm tài khoản</Button>
+        <Button onClick={openAdd} className="gap-1.5"><Plus size={14}/> Thêm tài khoản</Button>
       </div>
 
       {loading ? (
-        <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
-          {[1, 2, 3].map(i => <div key={i} className="px-4 py-3 flex gap-4"><div className="w-40 h-3 bg-slate-200 rounded animate-pulse" /><div className="w-24 h-3 bg-slate-200 rounded animate-pulse" /></div>)}
-        </div>
+        <div className="border border-slate-200 rounded-lg divide-y">{[1,2,3].map(i => <div key={i} className="px-4 py-3 flex gap-4"><div className="w-40 h-3 bg-slate-200 rounded animate-pulse"/></div>)}</div>
       ) : accounts.length === 0 ? (
-        <div className="border border-slate-200 rounded-lg p-10 text-center text-sm text-slate-400">Chưa có tài khoản nào trong {bank.name}. Nhấn "+ Thêm tài khoản".</div>
+        <div className="border border-slate-200 rounded-lg p-10 text-center text-sm text-slate-400">Chưa có tài khoản nào.</div>
       ) : (
         <div className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Email / Số TK', 'Người quản lý', 'Ghi chú', 'Sử dụng', ''].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
-                ))}
+                {isCrypto
+                  ? ['Địa chỉ ví', 'Loại', 'Người quản lý', 'Sử dụng', ''].map(h => <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>)
+                  : ['Email / Số TK', 'Người quản lý', 'Ghi chú', 'Sử dụng', ''].map(h => <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>)
+                }
               </tr>
             </thead>
             <tbody>
               {accounts.map(acc => {
-                const projList = usageCount.get(acc.id) ?? []
+                const projList = usageMap.get(acc.id) ?? []
                 return (
                   <tr key={acc.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 font-mono text-xs text-slate-700">{acc.account_identifier}</td>
-                    <td className="px-4 py-3 text-slate-600">{acc.owner_name}</td>
-                    <td className="px-4 py-3 text-slate-400 text-xs">{acc.note ?? <span className="text-slate-300">—</span>}</td>
+                    {isCrypto ? (
+                      <>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5 font-mono text-xs text-slate-700">
+                            <span>{acc.wallet_address ? shortenAddr(acc.wallet_address) : <span className="text-slate-300">—</span>}</span>
+                            {acc.wallet_address && <CopyButton text={acc.wallet_address} />}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-semibold text-slate-700">{acc.coin_type}</span>
+                            {acc.network && <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${networkStyle(acc.network)}`}>{acc.network}</span>}
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="px-4 py-3 font-mono text-xs text-slate-700">{acc.account_identifier ?? <span className="text-slate-300">—</span>}</td>
+                        <td className="px-4 py-3 text-slate-600">{acc.owner_name}</td>
+                        <td className="px-4 py-3 text-slate-400 text-xs">{acc.note ?? <span className="text-slate-300">—</span>}</td>
+                      </>
+                    )}
+                    {isCrypto && <td className="px-4 py-3 text-slate-600 text-sm">{acc.owner_name}</td>}
                     <td className="px-4 py-3">
-                      {projList.length > 0 ? (
-                        <button
-                          onClick={() => setUsagePopup({ account: acc, projectList: projList })}
-                          className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 transition-colors cursor-pointer">
-                          {projList.length} dự án
-                        </button>
-                      ) : <span className="text-slate-300 text-xs">—</span>}
+                      {projList.length > 0
+                        ? <button onClick={() => setUsagePopup({ account: acc, list: projList })} className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 transition-colors">{projList.length} dự án</button>
+                        : <span className="text-slate-300 text-xs">—</span>}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end">
-                        <button onClick={() => openEdit(acc)} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors"><Pencil size={13} /></button>
-                        <button onClick={() => { setDeleteError(''); setConfirmDelete(acc) }} className="p-1.5 rounded hover:bg-red-100 text-slate-500 hover:text-red-600 transition-colors"><Trash2 size={13} /></button>
+                        <button onClick={() => openEdit(acc)} className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors"><Pencil size={13}/></button>
+                        <button onClick={() => { setDeleteError(''); setConfirmDelete(acc) }} className="p-1.5 rounded hover:bg-red-100 text-slate-500 hover:text-red-600 transition-colors"><Trash2 size={13}/></button>
                       </div>
                     </td>
                   </tr>
@@ -297,26 +386,71 @@ function AccountList({ bank, projects, onBack }: { bank: Bank; projects: Project
         </div>
       )}
 
-      {/* Add/Edit account modal */}
+      {/* Add/Edit modal */}
       {dialog && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4 max-h-[90vh] overflow-y-auto">
             <h3 className="font-semibold text-slate-800 mb-1">{dialog.mode === 'add' ? 'Thêm tài khoản' : 'Sửa tài khoản'}</h3>
-            <p className="text-xs text-slate-400 mb-4">💳 {bank.name}</p>
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-600">Email / Số tài khoản</label>
-                <Input value={form.account_identifier} onChange={e => setForm(f => ({ ...f, account_identifier: e.target.value }))} placeholder="account@email.com hoặc 0901234567" autoFocus />
+            <p className="text-xs text-slate-400 mb-4">{bank.bank_category === 'crypto' ? '₿' : '🏦'} {bank.name}</p>
+
+            {isCrypto ? (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-600">Loại coin</label>
+                  <select value={form.coin_type} onChange={e => { const coin = e.target.value; const nets = COIN_NETWORKS[coin] ?? ['ERC20']; setForm(f => ({ ...f, coin_type: coin, network: nets[0] })) }}
+                    className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300">
+                    {COINS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-600">Network</label>
+                  <select value={form.network} onChange={e => setForm(f => ({ ...f, network: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300">
+                    {networks.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+                {/* Warning banner */}
+                {NETWORK_WARNING[form.network] && (
+                  <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-md">
+                    <AlertTriangle size={14} className="text-amber-600 shrink-0 mt-0.5" />
+                    <div className="text-xs text-amber-800">
+                      <span className="font-bold">{form.coin_type} {form.network}</span> — {NETWORK_WARNING[form.network]}
+                    </div>
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-600">Địa chỉ ví</label>
+                  <div className="relative">
+                    <Input value={form.wallet_address} onChange={e => setForm(f => ({ ...f, wallet_address: e.target.value }))} placeholder="TXxxx... hoặc 0x..." className="pr-8" />
+                    {form.wallet_address && <div className="absolute right-2 top-1/2 -translate-y-1/2"><CopyButton text={form.wallet_address} /></div>}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-600">Người quản lý</label>
+                  <Input value={form.owner_name} onChange={e => setForm(f => ({ ...f, owner_name: e.target.value }))} placeholder="Nguyễn Văn A" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-600">Ghi chú (tuỳ chọn)</label>
+                  <Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="..." />
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-600">Người quản lý</label>
-                <Input value={form.owner_name} onChange={e => setForm(f => ({ ...f, owner_name: e.target.value }))} placeholder="Nguyễn Văn A" />
+            ) : (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-600">Email / Số tài khoản</label>
+                  <Input value={form.account_identifier} onChange={e => setForm(f => ({ ...f, account_identifier: e.target.value }))} placeholder="account@email.com hoặc 0901234567" autoFocus />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-600">Người quản lý</label>
+                  <Input value={form.owner_name} onChange={e => setForm(f => ({ ...f, owner_name: e.target.value }))} placeholder="Nguyễn Văn A" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-600">Ghi chú (tuỳ chọn)</label>
+                  <Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="..." />
+                </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-600">Ghi chú (tuỳ chọn)</label>
-                <Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="..." />
-              </div>
-            </div>
+            )}
+
             <div className="flex justify-end gap-2 mt-5">
               <Button variant="outline" onClick={() => setDialog(null)}>Hủy</Button>
               <Button onClick={handleSave} disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu'}</Button>
@@ -325,15 +459,14 @@ function AccountList({ bank, projects, onBack }: { bank: Bank; projects: Project
         </div>
       )}
 
-      {/* Delete confirm */}
       {confirmDelete && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
             <h3 className="font-semibold text-slate-800 mb-2">Xóa tài khoản?</h3>
-            <p className="text-sm text-slate-600 mb-1">
-              <span className="font-mono">{confirmDelete.account_identifier}</span> sẽ bị xóa.
+            <p className="text-sm text-slate-600 mb-1 font-mono text-xs">
+              {isCrypto ? (confirmDelete.wallet_address ? shortenAddr(confirmDelete.wallet_address) : '—') : (confirmDelete.account_identifier ?? '—')}
             </p>
-            {deleteError && <p className="text-sm text-red-600 mt-2 bg-red-50 px-3 py-2 rounded">{deleteError}</p>}
+            {deleteError && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded mt-2">{deleteError}</p>}
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="outline" onClick={() => setConfirmDelete(null)}>Hủy</Button>
               <Button variant="destructive" onClick={() => handleDelete(confirmDelete)}>Xóa</Button>
@@ -342,30 +475,27 @@ function AccountList({ bank, projects, onBack }: { bank: Bank; projects: Project
         </div>
       )}
 
-      {/* Usage popup: click X dự án → show list */}
       {usagePopup && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="font-semibold text-slate-800">Dự án đang sử dụng</h3>
-                <p className="text-xs text-slate-400 mt-0.5 font-mono">{usagePopup.account.account_identifier}</p>
+                <p className="text-xs text-slate-400 mt-0.5 font-mono">
+                  {isCrypto && usagePopup.account.wallet_address ? shortenAddr(usagePopup.account.wallet_address) : usagePopup.account.account_identifier}
+                </p>
               </div>
-              <button onClick={() => setUsagePopup(null)} className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
-                <X size={15} />
-              </button>
+              <button onClick={() => setUsagePopup(null)} className="p-1.5 rounded hover:bg-slate-100 text-slate-400"><X size={15}/></button>
             </div>
             <ul className="space-y-1.5">
-              {usagePopup.projectList.map(p => (
-                <li key={p.project_id} className="flex items-center gap-2 px-3 py-2 rounded-md bg-slate-50 text-sm text-slate-700">
+              {usagePopup.list.map(p => (
+                <li key={p.project_id} className="flex items-center gap-2 px-3 py-2 rounded-md bg-slate-50 text-sm">
                   <span className="font-mono text-xs text-slate-400">{p.project_id}</span>
-                  <span className="font-medium">{p.name}</span>
+                  <span className="font-medium text-slate-700">{p.name}</span>
                 </li>
               ))}
             </ul>
-            <div className="flex justify-end mt-4">
-              <Button variant="outline" onClick={() => setUsagePopup(null)}>Đóng</Button>
-            </div>
+            <div className="flex justify-end mt-4"><Button variant="outline" onClick={() => setUsagePopup(null)}>Đóng</Button></div>
           </div>
         </div>
       )}
@@ -373,11 +503,10 @@ function AccountList({ bank, projects, onBack }: { bank: Bank; projects: Project
   )
 }
 
-// ─── Main export ──────────────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function BankTab({ projects }: Props) {
   const [selectedBank, setSelectedBank] = useState<Bank | null>(null)
-
   return selectedBank
     ? <AccountList bank={selectedBank} projects={projects} onBack={() => setSelectedBank(null)} />
     : <BankList projects={projects} onEnter={setSelectedBank} />

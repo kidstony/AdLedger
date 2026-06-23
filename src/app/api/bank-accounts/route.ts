@@ -13,14 +13,22 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const { bank_id, account_identifier, owner_name, note } = await req.json()
-  if (!bank_id || !account_identifier || !owner_name) {
-    return NextResponse.json({ error: 'bank_id, account_identifier, and owner_name required' }, { status: 400 })
+  const { bank_id, account_identifier, owner_name, note, coin_type, network, wallet_address } = await req.json()
+  if (!bank_id || !owner_name) {
+    return NextResponse.json({ error: 'bank_id and owner_name required' }, { status: 400 })
   }
 
   const { data, error } = await supabaseAdmin
     .from('bank_accounts')
-    .insert({ bank_id, account_identifier, owner_name, note: note ?? null })
+    .insert({
+      bank_id,
+      account_identifier: account_identifier ?? null,
+      owner_name,
+      note: note ?? null,
+      coin_type: coin_type ?? null,
+      network: network ?? null,
+      wallet_address: wallet_address ?? null,
+    })
     .select()
     .single()
 
@@ -29,12 +37,19 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const { id, account_identifier, owner_name, note } = await req.json()
+  const { id, account_identifier, owner_name, note, coin_type, network, wallet_address } = await req.json()
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
   const { data, error } = await supabaseAdmin
     .from('bank_accounts')
-    .update({ account_identifier, owner_name, note: note ?? null })
+    .update({
+      account_identifier: account_identifier ?? null,
+      owner_name,
+      note: note ?? null,
+      coin_type: coin_type ?? null,
+      network: network ?? null,
+      wallet_address: wallet_address ?? null,
+    })
     .eq('id', id)
     .select()
     .single()

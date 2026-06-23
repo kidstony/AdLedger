@@ -12,12 +12,12 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { name, type } = await req.json()
-  if (!name || !type) return NextResponse.json({ error: 'name and type required' }, { status: 400 })
+  const { name, type, bank_category } = await req.json()
+  if (!name || !bank_category) return NextResponse.json({ error: 'name and bank_category required' }, { status: 400 })
 
   const { data, error } = await supabaseAdmin
     .from('banks')
-    .insert({ name, type })
+    .insert({ name, type: type ?? 'international', bank_category })
     .select()
     .single()
 
@@ -26,12 +26,12 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const { id, name, type } = await req.json()
+  const { id, name, type, bank_category } = await req.json()
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
   const { data, error } = await supabaseAdmin
     .from('banks')
-    .update({ name, type })
+    .update({ name, type, bank_category })
     .eq('id', id)
     .select()
     .single()

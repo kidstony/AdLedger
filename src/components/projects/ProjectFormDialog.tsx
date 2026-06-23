@@ -1,10 +1,40 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { Copy, Check } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Project, MasterProject, Bank, BankAccount } from '@/lib/types'
+
+const NETWORK_STYLES: Record<string, string> = {
+  TRC20:    'bg-green-100 text-green-700',
+  ERC20:    'bg-blue-100 text-blue-700',
+  BEP20:    'bg-yellow-100 text-yellow-700',
+  SOL:      'bg-purple-100 text-purple-700',
+  Bitcoin:  'bg-orange-100 text-orange-700',
+  Lightning:'bg-yellow-100 text-yellow-700',
+  TON:      'bg-cyan-100 text-cyan-700',
+}
+
+function networkStyle(n: string | null | undefined) {
+  return NETWORK_STYLES[n ?? ''] ?? 'bg-slate-100 text-slate-600'
+}
+
+function shortenAddr(addr: string) {
+  if (addr.length <= 12) return addr
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`
+}
+
+function CopyBtn({ text }: { text: string }) {
+  const [done, setDone] = useState(false)
+  return (
+    <button onClick={() => { navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500) }}
+      className="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors">
+      {done ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
+    </button>
+  )
+}
 
 interface Props {
   mode: 'add' | 'edit'
@@ -153,36 +183,61 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
               >
                 <option value="">— Chọn ngân hàng —</option>
                 {banks.map(b => (
-                  <option key={b.id} value={b.id}>{b.name} ({b.type === 'international' ? 'Quốc tế' : 'Nội địa'})</option>
+                  <option key={b.id} value={b.id}>
+                    {b.bank_category === 'crypto' ? '₿' : '🏦'} {b.name}
+                    {b.bank_category === 'traditional' ? ` · ${b.type === 'international' ? 'Quốc tế' : 'Nội địa'}` : ' · Crypto'}
+                  </option>
                 ))}
               </select>
             </div>
 
-            {/* Step 2: chọn tài khoản (chỉ hiện khi đã chọn bank) */}
-            {selectedBankId && (
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-600">Tài khoản</label>
-                <select
-                  value={form.bank_account_id ?? ''}
-                  onChange={e => handleAccountChange(e.target.value)}
-                  disabled={loadingAccounts}
-                  className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-60"
-                >
-                  <option value="">— Chọn tài khoản —</option>
-                  {accounts.map(a => (
-                    <option key={a.id} value={a.id}>{a.account_identifier}</option>
-                  ))}
-                </select>
-              </div>
-            )}
+            {/* Step 2: chọn tài khoản */}
+            {selectedBankId && (() => {
+              const selectedBank = banks.find(b => b.id === selectedBankId)
+              const isCrypto = selectedBank?.bank_category === 'crypto'
+              return (
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-slate-600">Tài khoản</label>
+                  <select
+                    value={form.bank_account_id ?? ''}
+                    onChange={e => handleAccountChange(e.target.value)}
+                    disabled={loadingAccounts}
+                    className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-60"
+                  >
+                    <option value="">— Chọn tài khoản —</option>
+                    {accounts.map(a => isCrypto
+                      ? <option key={a.id} value={a.id}>{a.coin_type} · {a.network} · {a.wallet_address ? shortenAddr(a.wallet_address) : '—'} · {a.owner_name}</option>
+                      : <option key={a.id} value={a.id}>{a.account_identifier} · {a.owner_name}</option>
+                    )}
+                  </select>
 
-            {/* Auto-fill: người quản lý */}
-            {selectedAccount && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-md text-sm">
-                <span className="text-slate-500 text-xs">Người quản lý:</span>
-                <span className="font-medium text-slate-700">{selectedAccount.owner_name}</span>
-              </div>
-            )}
+                  {/* Confirmation card */}
+                  {selectedAccount && (
+                    isCrypto ? (
+                      <div className="border border-green-200 bg-green-50 rounded-md px-3 py-2.5 space-y-1">
+                        <p className="text-xs font-semibold text-green-800">{selectedBank?.name}</p>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-bold text-slate-700">{selectedAccount.coin_type}</span>
+                          {selectedAccount.network && <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${networkStyle(selectedAccount.network)}`}>{selectedAccount.network}</span>}
+                        </div>
+                        {selectedAccount.wallet_address && (
+                          <div className="flex items-center gap-1 font-mono text-xs text-slate-700">
+                            <span className="break-all">{selectedAccount.wallet_address}</span>
+                            <CopyBtn text={selectedAccount.wallet_address} />
+                          </div>
+                        )}
+                        <p className="text-xs text-slate-500">Người quản lý: <span className="font-medium text-slate-700">{selectedAccount.owner_name}</span></p>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-md text-sm">
+                        <span className="text-slate-500 text-xs">Người quản lý:</span>
+                        <span className="font-medium text-slate-700">{selectedAccount.owner_name}</span>
+                      </div>
+                    )
+                  )}
+                </div>
+              )
+            })()}
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
