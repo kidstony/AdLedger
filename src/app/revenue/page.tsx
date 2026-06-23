@@ -98,17 +98,19 @@ export default function RevenuePage() {
     dates.map((date, di) =>
       filteredProjects.reduce((sum, p) => {
         const key = `${p.project_id}__${date}`
-        if (activeTab === 'screen' && p.screen_revenue_type === 'cumulative') {
-          const curr = screenGrid.get(key) ?? 0
+        // In all-time view, gridData already contains correct monthly deltas for cumulative projects
+        // so we just sum gridData directly. Daily delta logic only applies to day/week/month views.
+        if (viewMode !== 'all' && activeTab === 'screen' && p.screen_revenue_type === 'cumulative') {
+          const curr     = screenGrid.get(key) ?? 0
           const prevDate = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
           const prevKey  = `${p.project_id}__${prevDate}`
-          const prev = di === 0 ? (prevScreenMap.get(prevKey) ?? 0) : (screenGrid.get(prevKey) ?? 0)
+          const prev     = di === 0 ? (prevScreenMap.get(prevKey) ?? 0) : (screenGrid.get(prevKey) ?? 0)
           return sum + Math.max(0, curr - prev)
         }
         return sum + (gridData.get(key) ?? 0)
       }, 0)
     ),
-    [dates, filteredProjects, gridData, screenGrid, prevScreenMap, activeTab]
+    [dates, filteredProjects, gridData, screenGrid, prevScreenMap, activeTab, viewMode]
   )
 
   // ── navigation ──────────────────────────────────────────────────────────────

@@ -163,15 +163,47 @@ export function useRevenueGrid() {
 
   const monthlyScreenGrid = useMemo(() => {
     if (viewMode !== 'all') return new Map<string, number>()
-    const r = new Map<string, number>()
+
+    const cumulativeIds = new Set(
+      projects.filter(p => p.screen_revenue_type === 'cumulative').map(p => p.project_id)
+    )
+
+    // Separate daily entries per project for processing
+    const byProject = new Map<string, { date: string; value: number }[]>()
     screenGrid.forEach((v, k) => {
       const sep = k.indexOf('__')
       const pid  = k.slice(0, sep)
-      const mkey = `${pid}__${k.slice(sep + 2, sep + 9)}-01`
-      r.set(mkey, (r.get(mkey) ?? 0) + v)
+      const date = k.slice(sep + 2)
+      if (!byProject.has(pid)) byProject.set(pid, [])
+      byProject.get(pid)!.push({ date, value: v })
+    })
+
+    const r = new Map<string, number>()
+    byProject.forEach((entries, pid) => {
+      if (!cumulativeIds.has(pid)) {
+        // Daily project: sum all values in each month
+        entries.forEach(({ date, value }) => {
+          const mkey = `${pid}__${date.slice(0, 7)}-01`
+          r.set(mkey, (r.get(mkey) ?? 0) + value)
+        })
+      } else {
+        // Cumulative project: per month take the LAST value, then compute monthly delta
+        entries.sort((a, b) => a.date.localeCompare(b.date))
+        const lastPerMonth = new Map<string, number>()
+        entries.forEach(({ date, value }) => {
+          lastPerMonth.set(date.slice(0, 7), value) // later dates overwrite → last value wins
+        })
+        let prevValue = 0
+        Array.from(lastPerMonth.keys()).sort().forEach(month => {
+          const last  = lastPerMonth.get(month)!
+          const delta = last - prevValue
+          r.set(`${pid}__${month}-01`, delta)
+          prevValue = last
+        })
+      }
     })
     return r
-  }, [viewMode, screenGrid])
+  }, [viewMode, screenGrid, projects])
 
   const allTimeDates = useMemo(() => {
     if (viewMode !== 'all') return []
