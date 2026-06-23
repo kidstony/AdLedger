@@ -1092,6 +1092,7 @@ interface SummaryRowData {
   key: string
   label: string
   subLabel?: string
+  projectCount?: number
   qc: number
   rental: number
   other: number
@@ -1148,18 +1149,25 @@ function SummaryTab({
   const rows: SummaryRowData[] = useMemo(() => {
     if (groupBy === 'cid') {
       const allCids = new Set<string>([...adSpendByCid.keys(), ...rentalByCid.keys(), ...otherByCid.keys()])
-      const firstProjectNameByCid = new Map<string, string>()
-      projects.forEach(p => { if (!firstProjectNameByCid.has(p.cid)) firstProjectNameByCid.set(p.cid, p.name) })
+      const projectsByCid = new Map<string, Project[]>()
+      projects.forEach(p => {
+        if (!projectsByCid.has(p.cid)) projectsByCid.set(p.cid, [])
+        projectsByCid.get(p.cid)!.push(p)
+      })
 
       const normal: SummaryRowData[] = [...allCids]
         .filter(c => c !== '')
-        .map(cid => ({
-          key: cid, label: formatCid(cid),
-          subLabel: firstProjectNameByCid.get(cid),
-          qc: adSpendByCid.get(cid) ?? 0,
-          rental: rentalByCid.get(cid) ?? 0,
-          other: otherByCid.get(cid) ?? 0,
-        }))
+        .map(cid => {
+          const projs = projectsByCid.get(cid) ?? []
+          return {
+            key: cid, label: formatCid(cid),
+            subLabel: projs.length <= 3 ? projs.map(p => p.name).join(' · ') : undefined,
+            projectCount: projs.length,
+            qc: adSpendByCid.get(cid) ?? 0,
+            rental: rentalByCid.get(cid) ?? 0,
+            other: otherByCid.get(cid) ?? 0,
+          }
+        })
 
       const chungOther = otherByCid.get('') ?? 0
       if (chungOther > 0) normal.push({ key: '', label: 'Chung (không gán dự án)', qc: 0, rental: 0, other: chungOther })
@@ -1306,16 +1314,35 @@ function SummaryTab({
               const total = row.qc + row.rental + row.other
               const isExpanded = expandedKey === row.key
               const detailRows = isExpanded ? buildDetailRows(row.key) : []
+              const multiProject = groupBy === 'cid' && (row.projectCount ?? 0) > 1
               return (
                 <>
                   <tr key={row.key} onClick={() => { onExpandKey(isExpanded ? null : row.key); setDrillPage(0) }}
-                    className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors">
+                    className="group border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <span className={cn('text-slate-300 text-[10px] shrink-0 transition-transform duration-150', isExpanded && 'rotate-90')}>▶</span>
-                        <div>
-                          <p className={cn('font-medium', groupBy === 'cid' ? 'font-mono text-slate-700' : 'text-slate-800')}>{row.label}</p>
-                          {row.subLabel && <p className="text-[11px] text-slate-400">{row.subLabel}</p>}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="min-w-0">
+                            <p className={cn('font-medium', groupBy === 'cid' ? 'font-mono text-slate-700' : 'text-slate-800')}>{row.label}</p>
+                            {row.subLabel
+                              ? <p className="text-[11px] text-slate-400 truncate">{row.subLabel}</p>
+                              : (row.projectCount ?? 0) > 3 && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-600 font-medium">
+                                    {row.projectCount} dự án
+                                  </span>
+                                )
+                            }
+                          </div>
+                          {multiProject && (
+                            <button
+                              onClick={e => { e.stopPropagation(); onGroupByChange('project'); onSearchChange(row.label) }}
+                              title="Xem theo dự án"
+                              className="opacity-0 group-hover:opacity-100 shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-500 hover:bg-blue-100 transition-all"
+                            >
+                              Xem dự án →
+                            </button>
+                          )}
                         </div>
                       </div>
                     </td>
