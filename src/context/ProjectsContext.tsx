@@ -32,13 +32,13 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   async function loadAllProjects() {
     setIsLoading(true)
     const { data, error } = await supabase
-      .from('projects').select('*, payment_accounts(*)').order('project_id')
+      .from('projects').select('*, bank_accounts(*, banks(*))').order('project_id')
 
     if (error) { console.error('Lỗi tải dự án:', error); setIsLoading(false); return }
 
     if (data.length === 0) {
       const { data: seeded, error: seedError } = await supabase
-        .from('projects').insert(MOCK_PROJECTS).select('*, payment_accounts(*)')
+        .from('projects').insert(MOCK_PROJECTS).select('*, bank_accounts(*, banks(*))')
       if (seedError) console.error('Lỗi seed data:', seedError)
       else setProjects(seeded ?? [])
     } else {
@@ -59,7 +59,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     if (ids.length === 0) { setProjects([]); setIsLoading(false); return }
 
     const { data, error } = await supabase
-      .from('projects').select('*, payment_accounts(*)').in('project_id', ids).order('project_id')
+      .from('projects').select('*, bank_accounts(*, banks(*))').in('project_id', ids).order('project_id')
 
     if (error) console.error('Lỗi tải dự án được phân công:', error)
     else setProjects(data as Project[])
@@ -86,12 +86,12 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
         master_project_id: updated.master_project_id ?? null,
         screen_revenue_type: updated.screen_revenue_type ?? 'daily',
         ref_link: updated.ref_link ?? null,
-        payment_account_id: updated.payment_account_id ?? null,
+        bank_account_id: updated.bank_account_id ?? null,
       })
       .eq('project_id', updated.project_id)
     if (error) {
       console.error('Lỗi cập nhật dự án:', error)
-      const { data } = await supabase.from('projects').select('*, payment_accounts(*)').order('project_id')
+      const { data } = await supabase.from('projects').select('*, bank_accounts(*, banks(*))').order('project_id')
       if (data) setProjects(data as Project[])
     }
   }

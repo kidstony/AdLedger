@@ -5,13 +5,21 @@ export interface MasterProject {
   created_at?: string
 }
 
-export interface PaymentAccount {
+export interface Bank {
   id: string
-  bank_type: string
-  label: string
-  manager_name: string
-  account_number: string
+  name: string
+  type: 'local' | 'international'
   created_at: string
+}
+
+export interface BankAccount {
+  id: string
+  bank_id: string
+  account_identifier: string
+  owner_name: string
+  note?: string | null
+  created_at: string
+  banks?: Bank | null
 }
 
 export interface Project {
@@ -23,8 +31,8 @@ export interface Project {
   google_campaign_id?: string | null
   screen_revenue_type?: 'daily' | 'cumulative'
   ref_link?: string | null
-  payment_account_id?: string | null
-  payment_accounts?: PaymentAccount | null
+  bank_account_id?: string | null
+  bank_accounts?: (BankAccount & { banks?: Bank | null }) | null
 }
 
 export interface CampaignDiscovery {

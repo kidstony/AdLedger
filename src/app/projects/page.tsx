@@ -278,10 +278,11 @@ export default function ProjectsPage() {
                           </td>
                           {/* Bank Nhận */}
                           <td className="px-4 py-3">
-                            {p.payment_accounts ? (
+                            {p.bank_accounts ? (
                               <div className="text-xs text-slate-600 whitespace-nowrap">
-                                <span className="font-medium">{p.payment_accounts.label}</span>
-                                <span className="text-slate-400"> · {p.payment_accounts.manager_name}</span>
+                                <span className="text-slate-400 text-xs">{p.bank_accounts.banks?.name} · </span>
+                                <span className="font-mono">{p.bank_accounts.account_identifier}</span>
+                                <span className="text-slate-400"> · {p.bank_accounts.owner_name}</span>
                               </div>
                             ) : <span className="text-slate-300 text-xs">—</span>}
                           </td>
