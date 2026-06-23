@@ -283,11 +283,12 @@ export default function ProjectsPage() {
                           <td className="px-4 py-3 min-w-[180px]">
                             {p.bank_accounts ? (
                               p.bank_accounts.banks?.bank_category === 'crypto' ? (
-                                // Crypto: line1 = bank + coin + network badge, line2 = wallet + copy + owner
-                                <div className="space-y-0.5">
+                                <div className="space-y-1">
                                   <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-xs text-slate-400">₿ {p.bank_accounts.banks?.name}</span>
-                                    <span className="text-xs font-semibold text-slate-700">{p.bank_accounts.coin_type}</span>
+                                    <span className="text-xs px-1.5 py-0.5 rounded-md font-semibold bg-orange-50 text-orange-700 border border-orange-200">
+                                      ₿ {p.bank_accounts.banks?.name}
+                                    </span>
+                                    <span className="text-xs font-bold text-slate-800">{p.bank_accounts.coin_type}</span>
                                     {p.bank_accounts.network && (
                                       <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${networkBadge(p.bank_accounts.network)}`}>
                                         {p.bank_accounts.network}
@@ -295,7 +296,7 @@ export default function ProjectsPage() {
                                     )}
                                   </div>
                                   <div className="flex items-center gap-1">
-                                    <span className="font-mono text-xs text-slate-600">
+                                    <span className="font-mono text-xs text-slate-500">
                                       {p.bank_accounts.wallet_address ? shortenAddr(p.bank_accounts.wallet_address) : '—'}
                                     </span>
                                     {p.bank_accounts.wallet_address && (
@@ -312,10 +313,11 @@ export default function ProjectsPage() {
                                   </div>
                                 </div>
                               ) : (
-                                // Traditional: line1 = bank name, line2 = account + owner
-                                <div className="space-y-0.5">
-                                  <p className="text-xs text-slate-400">🏦 {p.bank_accounts.banks?.name}</p>
-                                  <p className="text-xs text-slate-700">
+                                <div className="space-y-1">
+                                  <span className="text-xs px-1.5 py-0.5 rounded-md font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                                    🏦 {p.bank_accounts.banks?.name}
+                                  </span>
+                                  <p className="text-xs text-slate-600 mt-0.5">
                                     {p.bank_accounts.account_identifier && (
                                       <span className="font-mono">{p.bank_accounts.account_identifier} · </span>
                                     )}
