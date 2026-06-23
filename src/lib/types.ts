@@ -109,3 +109,25 @@ export interface OtherCost {
   created_at: string
   cost_categories?: CostCategory | null
 }
+
+export interface RentalGroupCid {
+  id: string
+  group_id: string
+  cid: string
+  account_label: string
+  project_id: string | null
+  created_at: string
+}
+
+export interface RentalGroup {
+  id: string
+  name: string
+  rate_type: RentalRateType
+  rate_value: number
+  period_from: string | null
+  period_to: string | null
+  payment_date: string | null
+  note: string | null
+  created_at: string
+  rental_group_cids?: RentalGroupCid[]
+}

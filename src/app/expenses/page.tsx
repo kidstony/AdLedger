@@ -5,7 +5,7 @@ import { SlidersHorizontal } from 'lucide-react'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
 import { cn, formatVND } from '@/lib/utils'
-import type { AccountRentalRate, CostCategory, OtherCost, Project, RentalRateType } from '@/lib/types'
+import type { CostCategory, OtherCost, Project, RentalGroup, RentalRateType } from '@/lib/types'
 
 // ─── Date helpers ────────────────────────────────────────────────────────────
 
@@ -38,56 +38,74 @@ function mondayOfWeekStr() {
   return localDateStr(d)
 }
 
-// ─── Rental cost computation ──────────────────────────────────────────────────
+// ─── Group-based rental cost computation ──────────────────────────────────────
 
-function computeRentalCost(
-  rate: AccountRentalRate,
+const MS_PER_DAY = 86400000
+
+function computeTimeFactor(
+  rate_type: RentalRateType,
   from: string,
   to: string,
-  adSpendByCid: Map<string, number>
+  period_from: string | null,
+  period_to: string | null,
 ): number {
-  if (rate.rate_type === 'one_time') {
-    const pd = rate.payment_date ?? ''
-    return pd >= from && pd <= to ? rate.rate_value : 0
-  }
-  const periodStart = rate.period_from ?? '1900-01-01'
-  const periodEnd = rate.period_to ?? '9999-12-31'
-  const overlapFrom = from > periodStart ? from : periodStart
-  const overlapTo = to < periodEnd ? to : periodEnd
-  if (overlapFrom > overlapTo) return 0
-  const msPerDay = 86400000
-  const days = Math.round((new Date(overlapTo + 'T00:00:00').getTime() - new Date(overlapFrom + 'T00:00:00').getTime()) / msPerDay) + 1
-  switch (rate.rate_type) {
-    case 'percentage': return (adSpendByCid.get(rate.cid ?? '') ?? 0) * (rate.rate_value / 100)
-    case 'daily': return rate.rate_value * days
-    case 'weekly': return rate.rate_value * (days / 7)
-    case 'monthly': {
-      let total = 0
-      let cur = new Date(overlapFrom + 'T00:00:00')
-      const end = new Date(overlapTo + 'T00:00:00')
-      while (cur <= end) {
-        const y = cur.getFullYear(), mon = cur.getMonth()
-        const daysInMonth = new Date(y, mon + 1, 0).getDate()
-        const monthEnd = new Date(y, mon + 1, 0)
-        const chunkTo = end < monthEnd ? end : monthEnd
-        const daysInChunk = Math.round((chunkTo.getTime() - cur.getTime()) / msPerDay) + 1
-        total += rate.rate_value * (daysInChunk / daysInMonth)
-        cur = new Date(y, mon + 1, 1)
-      }
-      return total
+  const pStart = period_from ?? '1900-01-01'
+  const pEnd   = period_to   ?? '9999-12-31'
+  const oFrom  = from > pStart ? from : pStart
+  const oTo    = to   < pEnd   ? to   : pEnd
+  if (oFrom > oTo) return 0
+  const days = Math.round((new Date(oTo + 'T00:00:00').getTime() - new Date(oFrom + 'T00:00:00').getTime()) / MS_PER_DAY) + 1
+  if (rate_type === 'daily')   return days
+  if (rate_type === 'weekly')  return days / 7
+  if (rate_type === 'monthly') {
+    let total = 0
+    let cur = new Date(oFrom + 'T00:00:00')
+    const end = new Date(oTo + 'T00:00:00')
+    while (cur <= end) {
+      const y = cur.getFullYear(), mon = cur.getMonth()
+      const daysInMonth = new Date(y, mon + 1, 0).getDate()
+      const monthEnd = new Date(y, mon + 1, 0)
+      const chunkTo = end < monthEnd ? end : monthEnd
+      const daysInChunk = Math.round((chunkTo.getTime() - cur.getTime()) / MS_PER_DAY) + 1
+      total += daysInChunk / daysInMonth
+      cur = new Date(y, mon + 1, 1)
     }
+    return total
   }
   return 0
+}
+
+function computeCidCost(
+  cid: string,
+  group: RentalGroup,
+  from: string,
+  to: string,
+  adSpendByCid: Map<string, number>,
+): number {
+  if (group.rate_type === 'one_time') {
+    const pd = group.payment_date ?? ''
+    return pd >= from && pd <= to ? group.rate_value : 0
+  }
+  if (group.rate_type === 'percentage') {
+    return (adSpendByCid.get(cid) ?? 0) * (group.rate_value / 100)
+  }
+  return group.rate_value * computeTimeFactor(group.rate_type, from, to, group.period_from, group.period_to)
+}
+
+function computeGroupCost(group: RentalGroup, from: string, to: string, adSpendByCid: Map<string, number>): number {
+  return (group.rental_group_cids ?? []).reduce(
+    (sum, c) => sum + computeCidCost(c.cid, group, from, to, adSpendByCid), 0
+  )
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const RATE_TYPE_LABELS: Record<RentalRateType, string> = {
   percentage: '% Ad Spend',
-  daily: '/ngày',
-  weekly: '/tuần',
-  monthly: '/tháng',
-  one_time: '1 lần',
+  daily:      '/ngày',
+  weekly:     '/tuần',
+  monthly:    '/tháng',
+  one_time:   '1 lần',
 }
 
 const COLORS = ['blue', 'orange', 'green', 'red', 'purple', 'yellow', 'pink', 'slate'] as const
@@ -112,10 +130,12 @@ const COLOR_DOT: Record<string, string> = {
 
 // ─── Form types ───────────────────────────────────────────────────────────────
 
-interface RentalForm {
-  account_label: string; cid: string; project_id: string
-  rate_type: RentalRateType; rate_value: string
+interface GroupForm {
+  name: string; rate_type: RentalRateType; rate_value: string
   period_from: string; period_to: string; payment_date: string; note: string
+}
+interface CidForm {
+  cid: string; account_label: string; project_id: string
 }
 interface OtherForm {
   date: string; category_id: string; amount: string; description: string; project_id: string
@@ -144,15 +164,19 @@ export default function ExpensesPage() {
   // Tab 1
   const [adSpendRows, setAdSpendRows] = useState<{ campaign_id: string; date: string; spend: number }[]>([])
 
-  // Tab 2
-  const [rentalRates, setRentalRates] = useState<AccountRentalRate[]>([])
-  const [showRentalModal, setShowRentalModal] = useState(false)
-  const [editingRental, setEditingRental] = useState<AccountRentalRate | null>(null)
-  const [rentalForm, setRentalForm] = useState<RentalForm>({
-    account_label: '', cid: '', project_id: '', rate_type: 'percentage',
-    rate_value: '', period_from: firstOfMonthStr(), period_to: '', payment_date: '', note: '',
+  // Tab 2 — group state
+  const [rentalGroups, setRentalGroups] = useState<RentalGroup[]>([])
+  const [showGroupModal, setShowGroupModal] = useState(false)
+  const [editingGroup, setEditingGroup] = useState<RentalGroup | null>(null)
+  const [groupForm, setGroupForm] = useState<GroupForm>({
+    name: '', rate_type: 'monthly', rate_value: '',
+    period_from: firstOfMonthStr(), period_to: '', payment_date: '', note: '',
   })
-  const [rentalSaving, setRentalSaving] = useState(false)
+  const [groupSaving, setGroupSaving] = useState(false)
+  const [showCidModal, setShowCidModal] = useState(false)
+  const [cidModalGroupId, setCidModalGroupId] = useState<string | null>(null)
+  const [cidForm, setCidForm] = useState<CidForm>({ cid: '', account_label: '', project_id: '' })
+  const [cidSaving, setCidSaving] = useState(false)
 
   // Tab 3
   const [otherCosts, setOtherCosts] = useState<OtherCost[]>([])
@@ -193,13 +217,11 @@ export default function ExpensesPage() {
     return map
   }, [adSpendRows, projectByCampaignId])
 
-  const rentalWithCost = useMemo(
-    () => rentalRates.map(r => ({ ...r, cost: computeRentalCost(r, fromStr, toStr, adSpendByCid) })),
-    [rentalRates, fromStr, toStr, adSpendByCid]
-  )
-
   const totalQc     = useMemo(() => [...spendByProject.values()].reduce((a, b) => a + b, 0), [spendByProject])
-  const totalRental = useMemo(() => rentalWithCost.reduce((a, r) => a + r.cost, 0), [rentalWithCost])
+  const totalRental = useMemo(
+    () => rentalGroups.reduce((sum, g) => sum + computeGroupCost(g, fromStr, toStr, adSpendByCid), 0),
+    [rentalGroups, fromStr, toStr, adSpendByCid]
+  )
   const totalOther  = useMemo(() => otherCosts.reduce((a, c) => a + c.amount, 0), [otherCosts])
 
   const adSpendProjects = useMemo(() => {
@@ -222,9 +244,9 @@ export default function ExpensesPage() {
     const { data } = await supabase.from('ad_spend').select('campaign_id, date, spend').gte('date', fromStr).lte('date', toStr)
     setAdSpendRows(data ?? [])
   }
-  async function fetchRentalRates() {
-    const res = await fetch('/api/expenses/rental-rates')
-    if (res.ok) setRentalRates(await res.json())
+  async function fetchRentalGroups() {
+    const res = await fetch('/api/expenses/rental-groups')
+    if (res.ok) setRentalGroups(await res.json())
   }
   async function fetchOtherCosts() {
     const res = await fetch(`/api/expenses/other?from=${fromStr}&to=${toStr}`)
@@ -236,31 +258,79 @@ export default function ExpensesPage() {
   }
 
   useEffect(() => { fetchAdSpend(); fetchOtherCosts() }, [fromStr, toStr]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchRentalRates(); fetchCategories() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchRentalGroups(); fetchCategories() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Rental CRUD ───────────────────────────────────────────────────────────
+  // ── Group CRUD ────────────────────────────────────────────────────────────
 
-  function openAddRental() {
-    setEditingRental(null)
-    setRentalForm({ account_label: '', cid: '', project_id: '', rate_type: 'percentage', rate_value: '', period_from: fromStr, period_to: '', payment_date: '', note: '' })
-    setShowRentalModal(true)
+  function openAddGroup() {
+    setEditingGroup(null)
+    setGroupForm({ name: '', rate_type: 'monthly', rate_value: '', period_from: fromStr, period_to: '', payment_date: '', note: '' })
+    setShowGroupModal(true)
   }
-  function openEditRental(rate: AccountRentalRate) {
-    setEditingRental(rate)
-    setRentalForm({ account_label: rate.account_label, cid: rate.cid ?? '', project_id: rate.project_id ?? '', rate_type: rate.rate_type, rate_value: String(rate.rate_value), period_from: rate.period_from ?? '', period_to: rate.period_to ?? '', payment_date: rate.payment_date ?? '', note: rate.note ?? '' })
-    setShowRentalModal(true)
+  function openEditGroup(g: RentalGroup) {
+    setEditingGroup(g)
+    setGroupForm({
+      name: g.name, rate_type: g.rate_type, rate_value: String(g.rate_value),
+      period_from: g.period_from ?? '', period_to: g.period_to ?? '',
+      payment_date: g.payment_date ?? '', note: g.note ?? '',
+    })
+    setShowGroupModal(true)
   }
-  async function saveRental() {
-    setRentalSaving(true)
-    const payload = { ...(editingRental ? { id: editingRental.id } : {}), account_label: rentalForm.account_label.trim(), cid: rentalForm.cid.trim() || null, project_id: rentalForm.project_id || null, rate_type: rentalForm.rate_type, rate_value: parseFloat(rentalForm.rate_value) || 0, period_from: rentalForm.rate_type !== 'one_time' ? (rentalForm.period_from || null) : null, period_to: rentalForm.rate_type !== 'one_time' ? (rentalForm.period_to || null) : null, payment_date: rentalForm.rate_type === 'one_time' ? (rentalForm.payment_date || null) : null, note: rentalForm.note.trim() || null }
-    const res = await fetch('/api/expenses/rental-rates', { method: editingRental ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-    if (res.ok) { await fetchRentalRates(); setShowRentalModal(false) }
-    setRentalSaving(false)
+  async function saveGroup() {
+    setGroupSaving(true)
+    const isOneTime = groupForm.rate_type === 'one_time'
+    const payload = {
+      ...(editingGroup ? { id: editingGroup.id } : {}),
+      name: groupForm.name.trim(),
+      rate_type: groupForm.rate_type,
+      rate_value: parseFloat(groupForm.rate_value) || 0,
+      period_from:  !isOneTime ? (groupForm.period_from || null) : null,
+      period_to:    !isOneTime ? (groupForm.period_to || null) : null,
+      payment_date: isOneTime  ? (groupForm.payment_date || null) : null,
+      note: groupForm.note.trim() || null,
+    }
+    const res = await fetch('/api/expenses/rental-groups', {
+      method: editingGroup ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (res.ok) { await fetchRentalGroups(); setShowGroupModal(false) }
+    setGroupSaving(false)
   }
-  async function deleteRental(id: string) {
-    if (!confirm('Xóa cấu hình này?')) return
-    await fetch('/api/expenses/rental-rates', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
-    await fetchRentalRates()
+  async function deleteGroup(id: string) {
+    if (!confirm('Xóa danh mục này và tất cả CID trong đó?')) return
+    await fetch('/api/expenses/rental-groups', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    await fetchRentalGroups()
+  }
+
+  // ── CID CRUD ──────────────────────────────────────────────────────────────
+
+  function openAddCid(groupId: string) {
+    setCidModalGroupId(groupId)
+    setCidForm({ cid: '', account_label: '', project_id: '' })
+    setShowCidModal(true)
+  }
+  async function saveCid() {
+    if (!cidModalGroupId) return
+    setCidSaving(true)
+    const payload = {
+      group_id: cidModalGroupId,
+      cid: cidForm.cid.trim(),
+      account_label: cidForm.account_label.trim() || cidForm.cid.trim(),
+      project_id: cidForm.project_id || null,
+    }
+    const res = await fetch('/api/expenses/rental-group-cids', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (res.ok) { await fetchRentalGroups(); setShowCidModal(false) }
+    setCidSaving(false)
+  }
+  async function deleteCid(id: string) {
+    if (!confirm('Xóa CID này khỏi nhóm?')) return
+    await fetch('/api/expenses/rental-group-cids', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    await fetchRentalGroups()
   }
 
   // ── Other CRUD ────────────────────────────────────────────────────────────
@@ -391,8 +461,12 @@ export default function ExpensesPage() {
       <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
         {tab === 'qc' && <QcTab projects={adSpendProjects} total={totalQc} />}
         {tab === 'rental' && (
-          <RentalTab rates={rentalWithCost} total={totalRental} projects={projects}
-            onAdd={openAddRental} onEdit={openEditRental} onDelete={deleteRental} />
+          <RentalTab
+            groups={rentalGroups} total={totalRental}
+            from={fromStr} to={toStr} adSpendByCid={adSpendByCid}
+            onAddGroup={openAddGroup} onEditGroup={openEditGroup}
+            onDeleteGroup={deleteGroup} onAddCid={openAddCid} onDeleteCid={deleteCid}
+          />
         )}
         {tab === 'other' && (
           <OtherTab costs={otherCosts} total={totalOther} categories={categories}
@@ -403,10 +477,15 @@ export default function ExpensesPage() {
       </div>
 
       {/* Modals */}
-      {showRentalModal && (
-        <RentalModal form={rentalForm} editing={!!editingRental} projects={projects}
-          saving={rentalSaving} onChange={setRentalForm}
-          onSave={saveRental} onClose={() => setShowRentalModal(false)} />
+      {showGroupModal && (
+        <GroupModal form={groupForm} editing={!!editingGroup}
+          saving={groupSaving} onChange={setGroupForm}
+          onSave={saveGroup} onClose={() => setShowGroupModal(false)} />
+      )}
+      {showCidModal && (
+        <CidModal form={cidForm} projects={projects}
+          saving={cidSaving} onChange={setCidForm}
+          onSave={saveCid} onClose={() => setShowCidModal(false)} />
       )}
       {showOtherModal && (
         <OtherModal form={otherForm} editing={!!editingOther} categories={categories}
@@ -480,75 +559,127 @@ function QcTab({ projects, total }: {
   )
 }
 
-// Tab 2 — Thuê tài khoản
-type RentalWithCost = AccountRentalRate & { cost: number }
-
-function RentalTab({ rates, total, projects, onAdd, onEdit, onDelete }: {
-  rates: RentalWithCost[]; total: number; projects: Project[]
-  onAdd: () => void; onEdit: (r: AccountRentalRate) => void; onDelete: (id: string) => void
+// Tab 2 — Thuê tài khoản (group-based)
+function RentalTab({ groups, total, from, to, adSpendByCid, onAddGroup, onEditGroup, onDeleteGroup, onAddCid, onDeleteCid }: {
+  groups: RentalGroup[]; total: number
+  from: string; to: string; adSpendByCid: Map<string, number>
+  onAddGroup: () => void; onEditGroup: (g: RentalGroup) => void
+  onDeleteGroup: (id: string) => void; onAddCid: (groupId: string) => void
+  onDeleteCid: (id: string) => void
 }) {
-  const projectMap = useMemo(() => new Map(projects.map(p => [p.project_id, p.name])), [projects])
   return (
     <>
       {/* Toolbar */}
       <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-white">
-        <span className="text-xs text-slate-400">Chi phí kỳ này tự tính theo khoảng ngày đã chọn.</span>
-        <button onClick={onAdd}
+        <span className="text-xs text-slate-400">Nhóm các CID lại theo danh mục, chi phí tự tính theo kỳ.</span>
+        <button onClick={onAddGroup}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-800 text-white rounded-md hover:bg-slate-700 transition-colors">
-          + Thêm cấu hình
+          + Tạo danh mục
         </button>
       </div>
 
-      <table className="w-full text-sm border-collapse">
-        <thead className="bg-slate-50">
-          <tr>
-            {['CID / Tài khoản', 'Dự án', 'Dạng phí', 'Giá trị', 'Áp dụng từ', 'Chi phí kỳ này', ''].map((h, i) => (
-              <th key={i} className={cn('px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide border-b border-slate-200', i === 5 ? 'text-right' : 'text-left')}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rates.length === 0 && (
-            <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-slate-400">Chưa có cấu hình. Nhấn "+ Thêm cấu hình" để bắt đầu.</td></tr>
-          )}
-          {rates.map(r => (
-            <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50/60">
-              <td className="px-4 py-2.5">
-                <div className="font-medium text-xs text-slate-700">{r.account_label}</div>
-                {r.cid && <div className="text-slate-400 font-mono text-[11px] mt-0.5">{r.cid}</div>}
-              </td>
-              <td className="px-4 py-2.5 text-slate-500 text-xs">
-                {r.project_id ? (projectMap.get(r.project_id) ?? r.project_id) : <span className="text-slate-300">(chung)</span>}
-              </td>
-              <td className="px-4 py-2.5">
-                <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-medium">{RATE_TYPE_LABELS[r.rate_type]}</span>
-              </td>
-              <td className="px-4 py-2.5 text-slate-700 font-mono text-xs">
-                {r.rate_type === 'percentage' ? `${r.rate_value}%` : formatVND(r.rate_value)}
-              </td>
-              <td className="px-4 py-2.5 text-slate-400 text-xs">
-                {r.rate_type === 'one_time' ? (r.payment_date ?? '—') : (r.period_from ?? '—')}
-              </td>
-              <td className="px-4 py-2.5 text-right font-bold text-sm text-green-700">{formatVND(r.cost)}</td>
-              <td className="px-4 py-2.5">
-                <div className="flex gap-3 justify-end">
-                  <button onClick={() => onEdit(r)} className="text-xs text-slate-400 hover:text-slate-700 transition-colors">Sửa</button>
-                  <button onClick={() => onDelete(r.id)} className="text-xs text-red-400 hover:text-red-600 transition-colors">Xóa</button>
-                </div>
-              </td>
+      {groups.length === 0 ? (
+        <div className="py-16 text-center text-sm text-slate-400">
+          Chưa có danh mục nào. Nhấn &quot;+ Tạo danh mục&quot; để bắt đầu.
+        </div>
+      ) : (
+        <table className="w-full text-sm border-collapse">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="text-left px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide border-b border-slate-200">Danh mục / CID</th>
+              <th className="text-left px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide border-b border-slate-200">Dạng phí</th>
+              <th className="text-left px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide border-b border-slate-200">Giá trị</th>
+              <th className="text-left px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide border-b border-slate-200">Áp dụng</th>
+              <th className="text-right px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide border-b border-slate-200">Chi phí kỳ này</th>
+              <th className="border-b border-slate-200 w-24" />
             </tr>
-          ))}
-        </tbody>
-        {rates.length > 0 && (
+          </thead>
+          <tbody>
+            {groups.map(g => {
+              const groupCost = computeGroupCost(g, from, to, adSpendByCid)
+              const cids = g.rental_group_cids ?? []
+              return (
+                <>
+                  {/* Group header row */}
+                  <tr key={`g-${g.id}`} className="bg-slate-50 border-b border-slate-200">
+                    <td className="px-4 py-2.5">
+                      <span className="text-xs font-semibold text-slate-700">📁 {g.name}</span>
+                      {g.note && <span className="ml-2 text-slate-400 text-[11px]">({g.note})</span>}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className="text-[11px] bg-slate-200 text-slate-600 px-2 py-0.5 rounded font-medium">
+                        {RATE_TYPE_LABELS[g.rate_type]}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-700 font-mono text-xs">
+                      {g.rate_type === 'percentage' ? `${g.rate_value}%` : formatVND(g.rate_value)}
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-400 text-xs">
+                      {g.rate_type === 'one_time' ? (g.payment_date ?? '—') : (g.period_from ? `${g.period_from} →` : '—')}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-bold text-sm text-green-700">{formatVND(groupCost)}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex gap-3 justify-end">
+                        <button onClick={() => onEditGroup(g)} className="text-xs text-slate-400 hover:text-slate-700 transition-colors">Sửa</button>
+                        <button onClick={() => onDeleteGroup(g.id)} className="text-xs text-red-400 hover:text-red-600 transition-colors">Xóa</button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  {/* CID sub-rows */}
+                  {cids.map(c => {
+                    const cidCost = computeCidCost(c.cid, g, from, to, adSpendByCid)
+                    return (
+                      <tr key={`c-${c.id}`} className="border-b border-slate-100 hover:bg-blue-50/30">
+                        <td className="px-4 py-2 pl-10">
+                          <div className="flex items-center gap-2">
+                            <span className="text-slate-300 text-xs">└</span>
+                            <div>
+                              <span className="text-xs text-slate-600 font-medium">{c.account_label}</span>
+                              <span className="ml-2 text-slate-400 font-mono text-[11px]">{c.cid}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 text-slate-300 text-xs">↳</td>
+                        <td className="px-4 py-2">
+                          {g.rate_type === 'percentage' && (
+                            <span className="text-slate-400 text-[11px]">spend: {formatVND(adSpendByCid.get(c.cid) ?? 0)}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2" />
+                        <td className="px-4 py-2 text-right text-xs font-semibold text-slate-600">{formatVND(cidCost)}</td>
+                        <td className="px-4 py-2">
+                          <div className="flex justify-end">
+                            <button onClick={() => onDeleteCid(c.id)} className="text-xs text-red-300 hover:text-red-500 transition-colors">Xóa</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+
+                  {/* Add CID row */}
+                  <tr key={`add-${g.id}`} className="border-b border-slate-100">
+                    <td colSpan={6} className="px-4 py-2 pl-10">
+                      <button onClick={() => onAddCid(g.id)}
+                        className="text-xs text-slate-400 hover:text-blue-600 transition-colors flex items-center gap-1">
+                        <span className="text-slate-300">└</span>
+                        + Thêm CID vào nhóm
+                      </button>
+                    </td>
+                  </tr>
+                </>
+              )
+            })}
+          </tbody>
           <tfoot className="bg-slate-50 border-t-2 border-slate-200">
             <tr>
-              <td colSpan={5} className="px-4 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide">TỔNG</td>
+              <td colSpan={4} className="px-4 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide">TỔNG</td>
               <td className="px-4 py-2.5 text-right font-bold text-sm text-green-700">{formatVND(total)}</td>
               <td />
             </tr>
           </tfoot>
-        )}
-      </table>
+        </table>
+      )}
     </>
   )
 }
@@ -636,29 +767,28 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <div><label className={LABEL}>{label}</label>{children}</div>
 }
 
-function RentalModal({ form, editing, projects, saving, onChange, onSave, onClose }: {
-  form: RentalForm; editing: boolean; projects: Project[]
-  saving: boolean; onChange: (f: RentalForm) => void; onSave: () => void; onClose: () => void
+function GroupModal({ form, editing, saving, onChange, onSave, onClose }: {
+  form: GroupForm; editing: boolean
+  saving: boolean; onChange: (f: GroupForm) => void; onSave: () => void; onClose: () => void
 }) {
-  function set(patch: Partial<RentalForm>) { onChange({ ...form, ...patch }) }
+  function set(patch: Partial<GroupForm>) { onChange({ ...form, ...patch }) }
   const isOneTime = form.rate_type === 'one_time'
-  const valueLabel = { percentage: 'Tỷ lệ (%)', daily: 'Phí / ngày ($)', weekly: 'Phí / tuần ($)', monthly: 'Phí / tháng ($)', one_time: 'Số tiền ($)' }[form.rate_type]
-  const uniqueCids = [...new Set(projects.map(p => p.cid))]
+  const valueLabel = {
+    percentage: 'Tỷ lệ (%)',
+    daily: 'Phí / ngày ($)',
+    weekly: 'Phí / tuần ($)',
+    monthly: 'Phí / tháng ($)',
+    one_time: 'Số tiền ($)',
+  }[form.rate_type]
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-xl p-5 w-full max-w-md" onClick={e => e.stopPropagation()}>
-        <h3 className="font-semibold text-slate-800 mb-4">{editing ? 'Sửa cấu hình' : 'Thêm cấu hình thuê tài khoản'}</h3>
+        <h3 className="font-semibold text-slate-800 mb-4">{editing ? 'Sửa danh mục' : 'Tạo danh mục thuê tài khoản'}</h3>
         <div className="space-y-3">
-          <Field label="CID / Tên tài khoản *">
-            <input value={form.account_label} onChange={e => set({ account_label: e.target.value })}
-              placeholder="VD: CID-1234 hoặc Account #45" className={INPUT} />
-          </Field>
-          <Field label="CID (Google Customer ID)">
-            <select value={form.cid} onChange={e => set({ cid: e.target.value })} className={INPUT}>
-              <option value="">— Không gắn CID —</option>
-              {uniqueCids.map(cid => <option key={cid} value={cid}>{cid}</option>)}
-            </select>
+          <Field label="Tên danh mục *">
+            <input value={form.name} onChange={e => set({ name: e.target.value })}
+              placeholder="VD: BM Proxy tháng 06, Thuê cố định..." className={INPUT} />
           </Field>
           <Field label="Dạng phí">
             <div className="grid grid-cols-3 gap-2">
@@ -696,9 +826,55 @@ function RentalModal({ form, editing, projects, saving, onChange, onSave, onClos
         </div>
         <div className="flex justify-end gap-2 mt-5">
           <button onClick={onClose} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">Hủy</button>
-          <button onClick={onSave} disabled={saving || !form.account_label.trim() || !form.rate_value}
+          <button onClick={onSave} disabled={saving || !form.name.trim() || !form.rate_value}
             className="px-4 py-1.5 text-xs bg-slate-800 text-white rounded-md hover:bg-slate-700 disabled:opacity-50 transition-colors font-medium">
             {saving ? 'Đang lưu...' : 'Lưu'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CidModal({ form, projects, saving, onChange, onSave, onClose }: {
+  form: CidForm; projects: Project[]
+  saving: boolean; onChange: (f: CidForm) => void; onSave: () => void; onClose: () => void
+}) {
+  function set(patch: Partial<CidForm>) { onChange({ ...form, ...patch }) }
+  const uniqueCids = [...new Map(projects.map(p => [p.cid, p])).values()]
+
+  function handleCidSelect(cid: string) {
+    const proj = projects.find(p => p.cid === cid)
+    set({ cid, account_label: form.account_label || (proj?.name ?? ''), project_id: form.project_id || (proj?.project_id ?? '') })
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl p-5 w-full max-w-sm" onClick={e => e.stopPropagation()}>
+        <h3 className="font-semibold text-slate-800 mb-4">Thêm CID vào nhóm</h3>
+        <div className="space-y-3">
+          <Field label="CID (Google Customer ID) *">
+            <select value={form.cid} onChange={e => handleCidSelect(e.target.value)} className={INPUT}>
+              <option value="">— Chọn CID —</option>
+              {uniqueCids.map(p => <option key={p.cid} value={p.cid}>{p.cid} — {p.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Tên tài khoản (hiển thị)">
+            <input value={form.account_label} onChange={e => set({ account_label: e.target.value })}
+              placeholder="Tự động điền từ tên dự án" className={INPUT} />
+          </Field>
+          <Field label="Dự án liên kết (tuỳ chọn)">
+            <select value={form.project_id} onChange={e => set({ project_id: e.target.value })} className={INPUT}>
+              <option value="">— Không gắn —</option>
+              {projects.map(p => <option key={p.project_id} value={p.project_id}>{p.name} ({p.cid})</option>)}
+            </select>
+          </Field>
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">Hủy</button>
+          <button onClick={onSave} disabled={saving || !form.cid}
+            className="px-4 py-1.5 text-xs bg-slate-800 text-white rounded-md hover:bg-slate-700 disabled:opacity-50 transition-colors font-medium">
+            {saving ? 'Đang thêm...' : 'Thêm'}
           </button>
         </div>
       </div>
