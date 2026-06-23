@@ -1387,21 +1387,6 @@ function SummaryTab({
                     <tr key={row.key + '-detail'}>
                       <td colSpan={5} className="p-0">
                         <div className="bg-slate-50/80 border-b border-slate-200">
-                          {/* Drilldown header with mode toggle */}
-                          <div className="flex items-center justify-between px-10 py-2 border-b border-slate-200">
-                            <span className="text-[11px] text-slate-400 font-medium uppercase tracking-wide">
-                              Chi tiết · {detailRows.length} {DRILL_HEADER_LABELS[drillMode].toLowerCase()}
-                            </span>
-                            <div className="flex items-center rounded border border-slate-200 overflow-hidden text-[11px] font-medium">
-                              {(['daily', 'weekly', 'monthly', 'quarterly', 'yearly'] as DrillMode[]).map((m, i) => (
-                                <button key={m} onClick={e => { e.stopPropagation(); setDrillMode(m); setDrillPage(0) }}
-                                  className={cn('px-2.5 py-1 transition-colors', i > 0 && 'border-l border-slate-200',
-                                    drillMode === m ? 'bg-slate-700 text-white' : 'text-slate-500 hover:bg-slate-100')}>
-                                  {DRILL_MODE_LABELS[m]}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
                           {detailRows.length === 0 ? (
                             <p className="px-10 py-3 text-xs text-slate-400">Không có dữ liệu</p>
                           ) : (() => {
