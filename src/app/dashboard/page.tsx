@@ -3,7 +3,7 @@
 import { RefreshCw, Search, Zap, Database } from 'lucide-react'
 import { usePnlData } from '@/hooks/usePnlData'
 import SummaryCards from '@/components/dashboard/SummaryCards'
-import DateRangePicker from '@/components/dashboard/DateRangePicker'
+import DateRangePicker from '@/components/ui/DateRangePicker'
 import PnlTable from '@/components/dashboard/PnlTable'
 import { cn } from '@/lib/utils'
 
@@ -57,7 +57,11 @@ export default function DashboardPage() {
       />
 
       <div className="flex items-center gap-3">
-        <DateRangePicker value={dateRange} onChange={setDateRange} />
+        <DateRangePicker
+          from={dateRange.from.toISOString().split('T')[0]}
+          to={dateRange.to.toISOString().split('T')[0]}
+          onApply={(f, t) => setDateRange({ from: new Date(f + 'T00:00:00'), to: new Date(t + 'T00:00:00') })}
+        />
 
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />

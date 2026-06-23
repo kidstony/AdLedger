@@ -8,7 +8,7 @@ import { usePnlData } from '@/hooks/usePnlData'
 import { Button } from '@/components/ui/button'
 import { MasterProject } from '@/lib/types'
 import { formatVND, formatCid } from '@/lib/utils'
-import DateRangePicker from '@/components/dashboard/DateRangePicker'
+import DateRangePicker from '@/components/ui/DateRangePicker'
 
 function formatRoi(roi: number) {
   return `${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%`
@@ -100,7 +100,11 @@ export default function MasterProjectsPage() {
         <Button onClick={openAdd} className="gap-1.5"><Plus size={14} /> Tạo Tổng Dự Án</Button>
       </div>
 
-      <DateRangePicker value={dateRange} onChange={setDateRange} />
+      <DateRangePicker
+        from={dateRange.from.toISOString().split('T')[0]}
+        to={dateRange.to.toISOString().split('T')[0]}
+        onApply={(f, t) => setDateRange({ from: new Date(f + 'T00:00:00'), to: new Date(t + 'T00:00:00') })}
+      />
 
       {/* Create/Edit modal */}
       {showForm && (

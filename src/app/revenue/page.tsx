@@ -12,6 +12,7 @@ import EditableCell from '@/components/revenue/EditableCell'
 import ProjectFilterDropdown, { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
 import RevenueSummaryCards from '@/components/revenue/RevenueSummaryCards'
 import { cn, formatVND } from '@/lib/utils'
+import DateRangePicker from '@/components/ui/DateRangePicker'
 
 // ── date helpers ────────────────────────────────────────────────────────────
 function fmtShort(d: string) { return new Date(d + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) }
@@ -512,43 +513,23 @@ export default function RevenuePage() {
 
       {/* ── Navigation bar ─────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 flex-wrap">
-        {/* Date range inputs */}
-        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
-          <span className="text-[11px] text-slate-400 whitespace-nowrap">Từ ngày</span>
-          <input
-            type="date" value={displayFrom} max={today}
-            disabled={viewMode === 'all'}
-            onChange={e => handleFromChange(e.target.value)}
-            className="text-xs text-slate-700 outline-none bg-transparent disabled:opacity-40 disabled:cursor-not-allowed w-32"
-          />
-          <span className="text-slate-300 text-sm">—</span>
-          <span className="text-[11px] text-slate-400 whitespace-nowrap">Đến ngày</span>
-          <input
-            type="date" value={displayTo} min={displayFrom} max={today}
-            disabled={viewMode === 'all'}
-            onChange={e => handleToChange(e.target.value)}
-            className="text-xs text-slate-700 outline-none bg-transparent disabled:opacity-40 disabled:cursor-not-allowed w-32"
-          />
-        </div>
+        {/* Google Ads-style date range picker */}
+        <DateRangePicker
+          from={viewMode === 'all' ? '2020-01-01' : (displayFrom || today)}
+          to={viewMode === 'all' ? today : (displayTo || today)}
+          onApply={(f, t) => setCustomRange(f, t)}
+        />
 
-        {/* Preset buttons */}
-        <div className="flex items-center gap-1 rounded-lg border border-slate-200 overflow-hidden text-xs font-medium bg-white">
-          {([
-            { key: 'week', label: 'Tuần này' },
-            { key: 'month', label: 'Tháng này' },
-            { key: 'all', label: 'Toàn thời gian' },
-          ] as const).map((p, i) => (
-            <button
-              key={p.key}
-              onClick={() => switchMode(p.key)}
-              className={cn(
-                'px-3 py-1.5 transition-colors',
-                i > 0 && 'border-l border-slate-200',
-                viewMode === p.key ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50'
-              )}
-            >{p.label}</button>
-          ))}
-        </div>
+        {/* Toàn thời gian toggle */}
+        <button
+          onClick={() => switchMode(viewMode === 'all' ? 'week' : 'all')}
+          className={cn(
+            'px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors',
+            viewMode === 'all'
+              ? 'bg-slate-800 text-white border-slate-800'
+              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+          )}
+        >Toàn thời gian</button>
 
         {/* Revenue type tab */}
         <div className="ml-auto flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
