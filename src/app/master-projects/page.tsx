@@ -7,7 +7,7 @@ import { useProjectsContext } from '@/context/ProjectsContext'
 import { usePnlData } from '@/hooks/usePnlData'
 import { Button } from '@/components/ui/button'
 import { MasterProject } from '@/lib/types'
-import { formatVND } from '@/lib/utils'
+import { formatVND, formatCid } from '@/lib/utils'
 import DateRangePicker from '@/components/dashboard/DateRangePicker'
 
 function formatRoi(roi: number) {
@@ -222,7 +222,7 @@ export default function MasterProjectsPage() {
                       return (
                         <tr key={child.project_id} className={`border-b border-slate-50 text-xs ${childProfit ? 'bg-slate-50/50' : 'bg-red-50/50'}`}>
                           <td className="px-4 py-2.5 pl-10 text-slate-600">{child.name}</td>
-                          <td className="px-4 py-2.5 font-mono text-slate-400">{child.cid}</td>
+                          <td className="px-4 py-2.5 font-mono text-slate-400">{formatCid(child.cid)}</td>
                           <td className="px-4 py-2.5 text-slate-500">{formatVND(child.total_spend)}</td>
                           <td className="px-4 py-2.5 text-slate-500">{formatVND(child.total_revenue)}</td>
                           <td className="px-4 py-2.5 text-blue-500">

@@ -544,7 +544,7 @@ function QcTab({ projects, total }: {
         {projects.map(p => (
           <tr key={p.project_id} className="border-b border-slate-100 hover:bg-slate-50/60">
             <td className="px-4 py-2.5 text-slate-700 font-medium text-xs">{p.name}</td>
-            <td className="px-4 py-2.5 text-slate-400 font-mono text-xs">{p.cid}</td>
+            <td className="px-4 py-2.5 text-slate-400 font-mono text-xs">{formatCid(p.cid)}</td>
             <td className="px-4 py-2.5 text-right font-semibold text-xs text-slate-800">{formatVND(p.spend)}</td>
           </tr>
         ))}

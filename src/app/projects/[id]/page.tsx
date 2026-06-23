@@ -7,7 +7,7 @@ import { MOCK_PNL_DAILY } from '@/lib/mock-data'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
 import ProfitChart from '@/components/project-detail/ProfitChart'
-import { formatVNDFull, formatROI, formatVND, getProfitTextClass, getRoiTextClass, cn } from '@/lib/utils'
+import { formatVNDFull, formatROI, formatVND, getProfitTextClass, getRoiTextClass, cn, formatCid } from '@/lib/utils'
 import { PnlDaily } from '@/lib/types'
 
 type RangeKey = '30d' | '90d' | '180d' | '365d'
@@ -135,7 +135,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         </div>
         {project && (
           <p className="text-sm text-slate-500 mt-0.5">
-            CID: <span className="font-mono">{project.cid}</span> · {project.project_id}
+            CID: <span className="font-mono">{formatCid(project.cid)}</span> · {project.project_id}
             {project.google_campaign_id && (
               <span className="ml-2">· Campaign: <span className="font-mono">{project.google_campaign_id}</span></span>
             )}

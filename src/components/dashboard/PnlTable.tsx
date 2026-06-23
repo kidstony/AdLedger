@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowUp, ArrowDown, ArrowUpDown, Monitor } from 'lucide-react'
 import { PnlSummary, SortColumn, SortDirection } from '@/lib/types'
-import { formatVND, formatROI, getProfitRowClass, getProfitTextClass, getRoiTextClass, cn } from '@/lib/utils'
+import { formatVND, formatROI, getProfitRowClass, getProfitTextClass, getRoiTextClass, cn, formatCid } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface Props {
@@ -137,7 +137,7 @@ export default function PnlTable({ data, isLoading }: Props) {
                     <TooltipContent>{row.name} · {row.project_id}</TooltipContent>
                   </Tooltip>
                 </td>
-                <td className="px-4 py-3 font-mono text-xs text-slate-400">{row.cid}</td>
+                <td className="px-4 py-3 font-mono text-xs text-slate-400">{formatCid(row.cid)}</td>
                 <td className="px-4 py-3 text-right font-mono text-slate-700">{formatVND(row.total_spend)}</td>
                 <td className="px-4 py-3 text-right font-mono text-slate-700">{formatVND(row.total_revenue)}</td>
                 <td className="px-4 py-3 text-right font-mono text-blue-500">
