@@ -47,6 +47,15 @@ export async function DELETE(req: NextRequest) {
   const id = new URL(req.url).searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
+  const { count } = await supabaseAdmin
+    .from('projects')
+    .select('*', { count: 'exact', head: true })
+    .eq('bank_account_id', id)
+
+  if ((count ?? 0) > 0) {
+    return NextResponse.json({ error: `${count} dự án đang dùng tài khoản này, không thể xóa.` }, { status: 409 })
+  }
+
   const { error } = await supabaseAdmin.from('bank_accounts').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ success: true })

@@ -1,10 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Pencil, Trash2, Search, UserCheck, Link2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Search, UserCheck, Link2, Copy, Check } from 'lucide-react'
 import { useProjects } from '@/hooks/useProjects'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
-import BankTab from '@/components/projects/BankTab'
 import { Project, CampaignDiscovery } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/context/AuthContext'
@@ -23,7 +22,6 @@ export default function ProjectsPage() {
   const { projects, isLoading, addProject, updateProject, deleteProject, deleteProjects } = useProjects()
   const { role } = useAuth()
   const { masterProjects } = useMasterProjectsContext()
-  const [tab, setTab] = useState<'projects' | 'banks'>('projects')
   const [dialog, setDialog] = useState<{ mode: 'add' | 'edit'; data?: Project } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Project | null>(null)
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
@@ -141,34 +139,12 @@ export default function ProjectsPage() {
           <h2 className="text-xl font-semibold text-slate-800">Quản lý dự án</h2>
           <p className="text-sm text-slate-500 mt-0.5">{projects.length} dự án · Thêm/sửa/xóa mapping CID</p>
         </div>
-        {tab === 'projects' && (
-          <Button onClick={() => setDialog({ mode: 'add' })} className="gap-1.5">
-            <Plus size={14} /> Thêm dự án
-          </Button>
-        )}
+        <Button onClick={() => setDialog({ mode: 'add' })} className="gap-1.5">
+          <Plus size={14} /> Thêm dự án
+        </Button>
       </div>
 
-      {/* Tab navigation */}
-      <div className="flex gap-1 border-b border-slate-200">
-        {(['projects', 'banks'] as const).map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              tab === t
-                ? 'border-slate-800 text-slate-800'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            {t === 'projects' ? 'Dự án' : 'Bank Nhận'}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'banks' && <BankTab projects={projects} />}
-
-      {tab === 'projects' && (
-        <>
+      <>
           <div className="relative w-64">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -263,28 +239,35 @@ export default function ProjectsPage() {
                               </span>
                             ) : <span className="text-slate-300 text-xs">—</span>}
                           </td>
-                          {/* Link Ref */}
-                          <td className="px-4 py-3">
+                                          {/* Link Ref */}
+                          <td className="px-4 py-3 max-w-[160px]">
                             {p.ref_link ? (
-                              <button
-                                onClick={() => copyLink(p.ref_link!, p.project_id)}
-                                className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 transition-colors"
-                                title={p.ref_link}
-                              >
-                                <Link2 size={11} />
-                                {copied === p.project_id ? 'Đã copy!' : 'Copy'}
-                              </button>
+                              <div className="flex items-center gap-1.5 group">
+                                <Link2 size={11} className="text-slate-400 shrink-0" />
+                                <span className="text-xs text-slate-600 truncate" title={p.ref_link}>
+                                  {p.ref_link.replace(/^https?:\/\//, '').slice(0, 30)}{p.ref_link.length > 35 ? '…' : ''}
+                                </span>
+                                <button
+                                  onClick={() => copyLink(p.ref_link!, p.project_id)}
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 shrink-0"
+                                  title="Copy link"
+                                >
+                                  {copied === p.project_id ? <Check size={11} className="text-green-500" /> : <Copy size={11} />}
+                                </button>
+                              </div>
                             ) : <span className="text-slate-300 text-xs">—</span>}
                           </td>
                           {/* Bank Nhận */}
                           <td className="px-4 py-3">
                             {p.bank_accounts ? (
-                              <div className="text-xs text-slate-600 whitespace-nowrap">
-                                <span className="text-slate-400 text-xs">{p.bank_accounts.banks?.name} · </span>
-                                <span className="font-mono">{p.bank_accounts.account_identifier}</span>
-                                <span className="text-slate-400"> · {p.bank_accounts.owner_name}</span>
-                              </div>
-                            ) : <span className="text-slate-300 text-xs">—</span>}
+                              <span className="text-xs text-slate-700 whitespace-nowrap">
+                                💳 {p.bank_accounts.banks?.name} · {p.bank_accounts.owner_name}
+                              </span>
+                            ) : (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 font-medium border border-amber-200 whitespace-nowrap">
+                                Chưa cấu hình
+                              </span>
+                            )}
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1 justify-end">
@@ -319,8 +302,7 @@ export default function ProjectsPage() {
               </div>
             </div>
           )}
-        </>
-      )}
+      </>
 
       {/* Employee assignment modal */}
       {assigningProjectId && (
