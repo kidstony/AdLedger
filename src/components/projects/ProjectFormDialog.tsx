@@ -15,6 +15,11 @@ const NETWORK_STYLES: Record<string, string> = {
   Bitcoin:  'bg-orange-100 text-orange-700',
   Lightning:'bg-yellow-100 text-yellow-700',
   TON:      'bg-cyan-100 text-cyan-700',
+  ARB:      'bg-sky-100 text-sky-700',
+  OP:       'bg-red-100 text-red-700',
+  BASE:     'bg-indigo-100 text-indigo-700',
+  POL:      'bg-violet-100 text-violet-700',
+  AVAX:     'bg-rose-100 text-rose-700',
 }
 
 function networkStyle(n: string | null | undefined) {

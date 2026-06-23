@@ -12,14 +12,14 @@ const COINS = ['USDT', 'USDC', 'BTC', 'ETH', 'BNB', 'SOL', 'TRX', 'TON', 'Khác'
 
 const COIN_NETWORKS: Record<string, string[]> = {
   USDT: ['TRC20', 'ERC20', 'BEP20', 'SOL'],
-  USDC: ['ERC20', 'BEP20', 'SOL'],
+  USDC: ['ERC20', 'BEP20', 'TRC20', 'ARB', 'OP', 'BASE', 'POL', 'SOL', 'AVAX'],
   BTC: ['Bitcoin', 'Lightning'],
-  ETH: ['ERC20'],
+  ETH: ['ERC20', 'ARB', 'OP', 'BASE'],
   BNB: ['BEP20'],
   SOL: ['SOL'],
   TRX: ['TRC20'],
   TON: ['TON'],
-  Khác: ['ERC20', 'TRC20', 'BEP20', 'SOL', 'Khác'],
+  Khác: ['ERC20', 'TRC20', 'BEP20', 'SOL', 'ARB', 'OP', 'BASE', 'POL', 'AVAX', 'Khác'],
 }
 
 const NETWORK_STYLES: Record<string, string> = {
@@ -30,16 +30,26 @@ const NETWORK_STYLES: Record<string, string> = {
   Bitcoin:  'bg-orange-100 text-orange-700',
   Lightning:'bg-yellow-100 text-yellow-700',
   TON:      'bg-cyan-100 text-cyan-700',
+  ARB:      'bg-sky-100 text-sky-700',
+  OP:       'bg-red-100 text-red-700',
+  BASE:     'bg-indigo-100 text-indigo-700',
+  POL:      'bg-violet-100 text-violet-700',
+  AVAX:     'bg-rose-100 text-rose-700',
 }
 
 const NETWORK_WARNING: Record<string, string> = {
   TRC20:    'Chỉ nhận từ mạng TRON. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
   ERC20:    'Chỉ nhận từ mạng Ethereum. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
-  BEP20:    'Chỉ nhận từ mạng BNB Smart Chain. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
-  SOL:      'Chỉ nhận từ mạng Solana. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
+  BEP20:    'Chỉ nhận từ mạng BNB Chain. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
+  SOL:      'Chỉ nhận từ mạng Solana (SPL). Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
   Bitcoin:  'Chỉ nhận từ mạng Bitcoin mainnet.',
   Lightning:'Chỉ nhận qua Lightning Network (off-chain).',
   TON:      'Chỉ nhận từ mạng TON.',
+  ARB:      'Chỉ nhận từ mạng Arbitrum One. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
+  OP:       'Chỉ nhận từ mạng Optimism (OP Mainnet). Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
+  BASE:     'Chỉ nhận từ mạng Base. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
+  POL:      'Chỉ nhận từ mạng Polygon PoS. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
+  AVAX:     'Chỉ nhận từ mạng Avalanche C-Chain. Gửi sai network sẽ MẤT TIỀN vĩnh viễn.',
 }
 
 function networkStyle(n: string | null | undefined) {
