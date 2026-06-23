@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useMemo, useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import {
   ChevronLeft, ChevronRight, Loader2, Banknote, Monitor,
   Search, Keyboard, CheckCircle2, Cloud, SlidersHorizontal, CircleCheck,
@@ -374,6 +375,17 @@ export default function RevenuePage() {
             : <span className="text-slate-400">Tất cả {projects.length} dự án</span>
           }
         </span>
+        {activeTab === 'screen' && (
+          <>
+            <div className="flex-1" />
+            <Link
+              href="/revenue/confirm"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors shrink-0"
+            >
+              <CheckCircle2 size={11} /> Xác nhận hàng loạt
+            </Link>
+          </>
+        )}
       </div>
 
       {/* ── Summary cards ──────────────────────────────────────────────────── */}
