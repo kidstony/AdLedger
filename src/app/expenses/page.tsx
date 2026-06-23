@@ -1,11 +1,13 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
+import { SlidersHorizontal } from 'lucide-react'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
+import { cn, formatVND } from '@/lib/utils'
 import type { AccountRentalRate, CostCategory, OtherCost, Project, RentalRateType } from '@/lib/types'
 
-// ─── Date helpers ───────────────────────────────────────────────────────────
+// ─── Date helpers ────────────────────────────────────────────────────────────
 
 function localDateStr(d: Date): string {
   const y = d.getFullYear()
@@ -18,8 +20,25 @@ function firstOfMonthStr() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
 }
+function firstOfPrevMonthStr() {
+  const d = new Date()
+  d.setDate(1)
+  d.setMonth(d.getMonth() - 1)
+  return localDateStr(d)
+}
+function lastOfPrevMonthStr() {
+  const d = new Date()
+  d.setDate(0)
+  return localDateStr(d)
+}
+function mondayOfWeekStr() {
+  const d = new Date()
+  const day = d.getDay() === 0 ? 6 : d.getDay() - 1
+  d.setDate(d.getDate() - day)
+  return localDateStr(d)
+}
 
-// ─── Rental cost computation ─────────────────────────────────────────────────
+// ─── Rental cost computation ──────────────────────────────────────────────────
 
 function computeRentalCost(
   rate: AccountRentalRate,
@@ -31,30 +50,23 @@ function computeRentalCost(
     const pd = rate.payment_date ?? ''
     return pd >= from && pd <= to ? rate.rate_value : 0
   }
-
   const periodStart = rate.period_from ?? '1900-01-01'
   const periodEnd = rate.period_to ?? '9999-12-31'
   const overlapFrom = from > periodStart ? from : periodStart
   const overlapTo = to < periodEnd ? to : periodEnd
   if (overlapFrom > overlapTo) return 0
-
   const msPerDay = 86400000
   const days = Math.round((new Date(overlapTo + 'T00:00:00').getTime() - new Date(overlapFrom + 'T00:00:00').getTime()) / msPerDay) + 1
-
   switch (rate.rate_type) {
-    case 'percentage':
-      return (adSpendByCid.get(rate.cid ?? '') ?? 0) * (rate.rate_value / 100)
-    case 'daily':
-      return rate.rate_value * days
-    case 'weekly':
-      return rate.rate_value * (days / 7)
+    case 'percentage': return (adSpendByCid.get(rate.cid ?? '') ?? 0) * (rate.rate_value / 100)
+    case 'daily': return rate.rate_value * days
+    case 'weekly': return rate.rate_value * (days / 7)
     case 'monthly': {
       let total = 0
       let cur = new Date(overlapFrom + 'T00:00:00')
       const end = new Date(overlapTo + 'T00:00:00')
       while (cur <= end) {
-        const y = cur.getFullYear()
-        const mon = cur.getMonth()
+        const y = cur.getFullYear(), mon = cur.getMonth()
         const daysInMonth = new Date(y, mon + 1, 0).getDate()
         const monthEnd = new Date(y, mon + 1, 0)
         const chunkTo = end < monthEnd ? end : monthEnd
@@ -68,7 +80,7 @@ function computeRentalCost(
   return 0
 }
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const RATE_TYPE_LABELS: Record<RentalRateType, string> = {
   percentage: '% Ad Spend',
@@ -81,56 +93,53 @@ const RATE_TYPE_LABELS: Record<RentalRateType, string> = {
 const COLORS = ['blue', 'orange', 'green', 'red', 'purple', 'yellow', 'pink', 'slate'] as const
 type ColorKey = (typeof COLORS)[number]
 
-const COLOR_CLASSES: Record<string, string> = {
-  blue:   'bg-blue-500/20 text-blue-300',
-  orange: 'bg-orange-500/20 text-orange-300',
-  green:  'bg-green-500/20 text-green-300',
-  red:    'bg-red-500/20 text-red-300',
-  purple: 'bg-purple-500/20 text-purple-300',
-  yellow: 'bg-yellow-500/20 text-yellow-300',
-  pink:   'bg-pink-500/20 text-pink-300',
-  slate:  'bg-slate-500/20 text-slate-300',
+const COLOR_BADGE: Record<string, string> = {
+  blue:   'bg-blue-100 text-blue-700',
+  orange: 'bg-orange-100 text-orange-700',
+  green:  'bg-green-100 text-green-700',
+  red:    'bg-red-100 text-red-700',
+  purple: 'bg-purple-100 text-purple-700',
+  yellow: 'bg-yellow-100 text-yellow-700',
+  pink:   'bg-pink-100 text-pink-700',
+  slate:  'bg-slate-100 text-slate-600',
 }
 
 const COLOR_DOT: Record<string, string> = {
-  blue:   'bg-blue-500',
-  orange: 'bg-orange-500',
-  green:  'bg-green-500',
-  red:    'bg-red-500',
-  purple: 'bg-purple-500',
-  yellow: 'bg-yellow-500',
-  pink:   'bg-pink-500',
-  slate:  'bg-slate-500',
+  blue: 'bg-blue-500', orange: 'bg-orange-500', green: 'bg-green-500',
+  red: 'bg-red-500', purple: 'bg-purple-500', yellow: 'bg-yellow-500',
+  pink: 'bg-pink-500', slate: 'bg-slate-400',
 }
 
-function fmt(n: number) {
-  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
-// ─── Form types ──────────────────────────────────────────────────────────────
+// ─── Form types ───────────────────────────────────────────────────────────────
 
 interface RentalForm {
   account_label: string; cid: string; project_id: string
   rate_type: RentalRateType; rate_value: string
   period_from: string; period_to: string; payment_date: string; note: string
 }
-
 interface OtherForm {
-  date: string; category_id: string; amount: string
-  description: string; project_id: string
+  date: string; category_id: string; amount: string; description: string; project_id: string
 }
-
 interface CategoryForm { name: string; color: ColorKey }
 
-// ─── Main page ───────────────────────────────────────────────────────────────
-
 type Tab = 'qc' | 'rental' | 'other'
+type Preset = 'week' | 'month' | 'prev_month' | 'custom'
+
+// ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function ExpensesPage() {
   const { projects } = useProjectsContext()
   const [tab, setTab] = useState<Tab>('qc')
   const [fromStr, setFromStr] = useState(firstOfMonthStr)
   const [toStr, setToStr] = useState(todayStr)
+  const [preset, setPreset] = useState<Preset>('month')
+
+  function applyPreset(p: Preset) {
+    setPreset(p)
+    if (p === 'week')       { setFromStr(mondayOfWeekStr()); setToStr(todayStr()) }
+    if (p === 'month')      { setFromStr(firstOfMonthStr()); setToStr(todayStr()) }
+    if (p === 'prev_month') { setFromStr(firstOfPrevMonthStr()); setToStr(lastOfPrevMonthStr()) }
+  }
 
   // Tab 1
   const [adSpendRows, setAdSpendRows] = useState<{ campaign_id: string; date: string; spend: number }[]>([])
@@ -159,7 +168,7 @@ export default function ExpensesPage() {
   const [categoryForm, setCategoryForm] = useState<CategoryForm>({ name: '', color: 'blue' })
   const [categorySaving, setCategorySaving] = useState(false)
 
-  // ── Derived maps ──────────────────────────────────────────────────────────
+  // ── Derived ───────────────────────────────────────────────────────────────
 
   const projectByCampaignId = useMemo(
     () => new Map(projects.filter(p => p.google_campaign_id).map(p => [p.google_campaign_id!, p])),
@@ -170,8 +179,7 @@ export default function ExpensesPage() {
     const map = new Map<string, number>()
     adSpendRows.forEach(row => {
       const p = projectByCampaignId.get(row.campaign_id)
-      if (!p) return
-      map.set(p.project_id, (map.get(p.project_id) ?? 0) + row.spend)
+      if (p) map.set(p.project_id, (map.get(p.project_id) ?? 0) + row.spend)
     })
     return map
   }, [adSpendRows, projectByCampaignId])
@@ -180,8 +188,7 @@ export default function ExpensesPage() {
     const map = new Map<string, number>()
     adSpendRows.forEach(row => {
       const p = projectByCampaignId.get(row.campaign_id)
-      if (!p) return
-      map.set(p.cid, (map.get(p.cid) ?? 0) + row.spend)
+      if (p) map.set(p.cid, (map.get(p.cid) ?? 0) + row.spend)
     })
     return map
   }, [adSpendRows, projectByCampaignId])
@@ -191,9 +198,9 @@ export default function ExpensesPage() {
     [rentalRates, fromStr, toStr, adSpendByCid]
   )
 
-  const totalQc = useMemo(() => [...spendByProject.values()].reduce((a, b) => a + b, 0), [spendByProject])
+  const totalQc     = useMemo(() => [...spendByProject.values()].reduce((a, b) => a + b, 0), [spendByProject])
   const totalRental = useMemo(() => rentalWithCost.reduce((a, r) => a + r.cost, 0), [rentalWithCost])
-  const totalOther = useMemo(() => otherCosts.reduce((a, c) => a + c.amount, 0), [otherCosts])
+  const totalOther  = useMemo(() => otherCosts.reduce((a, c) => a + c.amount, 0), [otherCosts])
 
   const adSpendProjects = useMemo(() => {
     const seen = new Set<string>()
@@ -212,38 +219,24 @@ export default function ExpensesPage() {
   // ── Fetchers ──────────────────────────────────────────────────────────────
 
   async function fetchAdSpend() {
-    const { data } = await supabase
-      .from('ad_spend')
-      .select('campaign_id, date, spend')
-      .gte('date', fromStr)
-      .lte('date', toStr)
+    const { data } = await supabase.from('ad_spend').select('campaign_id, date, spend').gte('date', fromStr).lte('date', toStr)
     setAdSpendRows(data ?? [])
   }
-
   async function fetchRentalRates() {
     const res = await fetch('/api/expenses/rental-rates')
     if (res.ok) setRentalRates(await res.json())
   }
-
   async function fetchOtherCosts() {
     const res = await fetch(`/api/expenses/other?from=${fromStr}&to=${toStr}`)
     if (res.ok) setOtherCosts(await res.json())
   }
-
   async function fetchCategories() {
     const res = await fetch('/api/expenses/categories')
     if (res.ok) setCategories(await res.json())
   }
 
-  useEffect(() => {
-    fetchAdSpend()
-    fetchOtherCosts()
-  }, [fromStr, toStr]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    fetchRentalRates()
-    fetchCategories()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchAdSpend(); fetchOtherCosts() }, [fromStr, toStr]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchRentalRates(); fetchCategories() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Rental CRUD ───────────────────────────────────────────────────────────
 
@@ -252,41 +245,18 @@ export default function ExpensesPage() {
     setRentalForm({ account_label: '', cid: '', project_id: '', rate_type: 'percentage', rate_value: '', period_from: fromStr, period_to: '', payment_date: '', note: '' })
     setShowRentalModal(true)
   }
-
   function openEditRental(rate: AccountRentalRate) {
     setEditingRental(rate)
-    setRentalForm({
-      account_label: rate.account_label, cid: rate.cid ?? '', project_id: rate.project_id ?? '',
-      rate_type: rate.rate_type, rate_value: String(rate.rate_value),
-      period_from: rate.period_from ?? '', period_to: rate.period_to ?? '',
-      payment_date: rate.payment_date ?? '', note: rate.note ?? '',
-    })
+    setRentalForm({ account_label: rate.account_label, cid: rate.cid ?? '', project_id: rate.project_id ?? '', rate_type: rate.rate_type, rate_value: String(rate.rate_value), period_from: rate.period_from ?? '', period_to: rate.period_to ?? '', payment_date: rate.payment_date ?? '', note: rate.note ?? '' })
     setShowRentalModal(true)
   }
-
   async function saveRental() {
     setRentalSaving(true)
-    const payload = {
-      ...(editingRental ? { id: editingRental.id } : {}),
-      account_label: rentalForm.account_label.trim(),
-      cid: rentalForm.cid.trim() || null,
-      project_id: rentalForm.project_id || null,
-      rate_type: rentalForm.rate_type,
-      rate_value: parseFloat(rentalForm.rate_value) || 0,
-      period_from: rentalForm.rate_type !== 'one_time' ? (rentalForm.period_from || null) : null,
-      period_to: rentalForm.rate_type !== 'one_time' ? (rentalForm.period_to || null) : null,
-      payment_date: rentalForm.rate_type === 'one_time' ? (rentalForm.payment_date || null) : null,
-      note: rentalForm.note.trim() || null,
-    }
-    const res = await fetch('/api/expenses/rental-rates', {
-      method: editingRental ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+    const payload = { ...(editingRental ? { id: editingRental.id } : {}), account_label: rentalForm.account_label.trim(), cid: rentalForm.cid.trim() || null, project_id: rentalForm.project_id || null, rate_type: rentalForm.rate_type, rate_value: parseFloat(rentalForm.rate_value) || 0, period_from: rentalForm.rate_type !== 'one_time' ? (rentalForm.period_from || null) : null, period_to: rentalForm.rate_type !== 'one_time' ? (rentalForm.period_to || null) : null, payment_date: rentalForm.rate_type === 'one_time' ? (rentalForm.payment_date || null) : null, note: rentalForm.note.trim() || null }
+    const res = await fetch('/api/expenses/rental-rates', { method: editingRental ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
     if (res.ok) { await fetchRentalRates(); setShowRentalModal(false) }
     setRentalSaving(false)
   }
-
   async function deleteRental(id: string) {
     if (!confirm('Xóa cấu hình này?')) return
     await fetch('/api/expenses/rental-rates', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
@@ -300,35 +270,18 @@ export default function ExpensesPage() {
     setOtherForm({ date: toStr, category_id: '', amount: '', description: '', project_id: '' })
     setShowOtherModal(true)
   }
-
   function openEditOther(cost: OtherCost) {
     setEditingOther(cost)
-    setOtherForm({
-      date: cost.date, category_id: cost.category_id ?? '',
-      amount: String(cost.amount), description: cost.description ?? '', project_id: cost.project_id ?? '',
-    })
+    setOtherForm({ date: cost.date, category_id: cost.category_id ?? '', amount: String(cost.amount), description: cost.description ?? '', project_id: cost.project_id ?? '' })
     setShowOtherModal(true)
   }
-
   async function saveOther() {
     setOtherSaving(true)
-    const payload = {
-      ...(editingOther ? { id: editingOther.id } : {}),
-      date: otherForm.date,
-      category_id: otherForm.category_id || null,
-      amount: parseFloat(otherForm.amount) || 0,
-      description: otherForm.description.trim() || null,
-      project_id: otherForm.project_id || null,
-    }
-    const res = await fetch('/api/expenses/other', {
-      method: editingOther ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+    const payload = { ...(editingOther ? { id: editingOther.id } : {}), date: otherForm.date, category_id: otherForm.category_id || null, amount: parseFloat(otherForm.amount) || 0, description: otherForm.description.trim() || null, project_id: otherForm.project_id || null }
+    const res = await fetch('/api/expenses/other', { method: editingOther ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
     if (res.ok) { await fetchOtherCosts(); setShowOtherModal(false) }
     setOtherSaving(false)
   }
-
   async function deleteOther(id: string) {
     if (!confirm('Xóa khoản chi phí này?')) return
     await fetch('/api/expenses/other', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
@@ -337,34 +290,17 @@ export default function ExpensesPage() {
 
   // ── Category CRUD ─────────────────────────────────────────────────────────
 
-  function openEditCategory(cat: CostCategory) {
-    setEditingCategory(cat)
-    setCategoryForm({ name: cat.name, color: cat.color as ColorKey })
-  }
-
-  function openAddCategory() {
-    setEditingCategory(null)
-    setCategoryForm({ name: '', color: 'blue' })
-  }
-
+  function openEditCategory(cat: CostCategory) { setEditingCategory(cat); setCategoryForm({ name: cat.name, color: cat.color as ColorKey }) }
+  function openAddCategory() { setEditingCategory(null); setCategoryForm({ name: '', color: 'blue' }) }
   async function saveCategory() {
     setCategorySaving(true)
-    const payload = {
-      ...(editingCategory ? { id: editingCategory.id } : {}),
-      name: categoryForm.name.trim(),
-      color: categoryForm.color,
-    }
-    const res = await fetch('/api/expenses/categories', {
-      method: editingCategory ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+    const payload = { ...(editingCategory ? { id: editingCategory.id } : {}), name: categoryForm.name.trim(), color: categoryForm.color }
+    const res = await fetch('/api/expenses/categories', { method: editingCategory ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
     if (res.ok) { await fetchCategories(); openAddCategory() }
     setCategorySaving(false)
   }
-
   async function deleteCategory(id: string) {
-    if (!confirm('Xóa danh mục này? Các chi phí liên quan sẽ mất danh mục.')) return
+    if (!confirm('Xóa danh mục này?')) return
     await fetch('/api/expenses/categories', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
     await Promise.all([fetchCategories(), fetchOtherCosts()])
   }
@@ -372,66 +308,111 @@ export default function ExpensesPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-white">Nhập Chi Phí</h1>
-        <div className="flex items-center gap-2">
-          <input type="date" value={fromStr} onChange={e => setFromStr(e.target.value)}
-            className="bg-slate-800 border border-slate-600 text-white rounded px-3 py-1.5 text-sm" />
-          <span className="text-slate-500">—</span>
-          <input type="date" value={toStr} onChange={e => setToStr(e.target.value)}
-            className="bg-slate-800 border border-slate-600 text-white rounded px-3 py-1.5 text-sm" />
+    <div className="p-6 space-y-4">
+
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <h2 className="text-xl font-semibold text-slate-800">Nhập Chi Phí</h2>
+
+      {/* ── Navigation bar ─────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 flex-wrap">
+        {/* Date range inputs */}
+        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
+          <span className="text-[11px] text-slate-400 whitespace-nowrap">Từ ngày</span>
+          <input type="date" value={fromStr}
+            onChange={e => { setFromStr(e.target.value); setPreset('custom') }}
+            className="text-xs text-slate-700 outline-none bg-transparent w-32" />
+          <span className="text-slate-300 text-sm">—</span>
+          <span className="text-[11px] text-slate-400 whitespace-nowrap">Đến ngày</span>
+          <input type="date" value={toStr}
+            onChange={e => { setToStr(e.target.value); setPreset('custom') }}
+            className="text-xs text-slate-700 outline-none bg-transparent w-32" />
+        </div>
+
+        {/* Preset buttons */}
+        <div className="flex items-center gap-0 rounded-lg border border-slate-200 overflow-hidden text-xs font-medium bg-white">
+          {([
+            { key: 'week',       label: 'Tuần này' },
+            { key: 'month',      label: 'Tháng này' },
+            { key: 'prev_month', label: 'Tháng trước' },
+          ] as const).map((p, i) => (
+            <button key={p.key} onClick={() => applyPreset(p.key)}
+              className={cn('px-3 py-1.5 transition-colors', i > 0 && 'border-l border-slate-200',
+                preset === p.key ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50')}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab switcher */}
+        <div className="ml-auto flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
+          {([
+            { key: 'qc',     label: 'Chi phí QC' },
+            { key: 'rental', label: 'Thuê tài khoản' },
+            { key: 'other',  label: 'Chi phí khác' },
+          ] as const).map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={cn('px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
+                tab === t.key ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+              {t.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Summary cards */}
+      {/* ── Summary cards ──────────────────────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-4">
-        <SummaryCard label="Chi phí QC" value={totalQc} sub="Auto sync" active={tab === 'qc'} onClick={() => setTab('qc')} />
-        <SummaryCard label="Thuê tài khoản" value={totalRental} sub="Tự tính" active={tab === 'rental'} onClick={() => setTab('rental')} />
-        <SummaryCard label="Chi phí khác" value={totalOther} sub={`${otherCosts.length} khoản`} active={tab === 'other'} onClick={() => setTab('other')} />
+        <SummaryCard label="Chi phí QC" value={totalQc} sub="Auto sync từ Google Ads"
+          active={tab === 'qc'} onClick={() => setTab('qc')} />
+        <SummaryCard label="Thuê tài khoản" value={totalRental} sub="Tự tính theo date range"
+          active={tab === 'rental'} onClick={() => setTab('rental')} />
+        <SummaryCard label="Chi phí khác" value={totalOther}
+          sub={otherCosts.length > 0 ? `${otherCosts.length} khoản trong kỳ` : 'Chưa có khoản nào'}
+          active={tab === 'other'} onClick={() => setTab('other')} />
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-slate-700 flex">
-        {(['qc', 'rental', 'other'] as Tab[]).map((t, i) => (
-          <button key={t} onClick={() => setTab(t)}
-            className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              tab === t ? 'border-blue-400 text-blue-400' : 'border-transparent text-slate-400 hover:text-white'
-            }`}>
-            {['Chi phí QC', 'Thuê tài khoản', 'Chi phí khác'][i]}
-          </button>
-        ))}
+      {/* ── Filter bar (for QC tab) ─────────────────────────────────────────── */}
+      {tab === 'qc' && (
+        <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-lg px-3 py-2">
+          <div className="flex items-center gap-2 text-xs text-slate-500 font-medium shrink-0">
+            <SlidersHorizontal size={12} />
+            Nguồn:
+          </div>
+          <span className="text-xs text-slate-400">Ad Spend tự động từ Google Ads</span>
+          <span className="ml-auto text-xs text-slate-400">
+            {adSpendProjects.length > 0
+              ? <><span className="font-semibold text-slate-600">{adSpendProjects.length}</span> dự án có chi phí</>
+              : 'Không có dữ liệu'
+            }
+          </span>
+        </div>
+      )}
+
+      {/* ── Tab content ────────────────────────────────────────────────────── */}
+      <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
+        {tab === 'qc' && <QcTab projects={adSpendProjects} total={totalQc} />}
+        {tab === 'rental' && (
+          <RentalTab rates={rentalWithCost} total={totalRental} projects={projects}
+            onAdd={openAddRental} onEdit={openEditRental} onDelete={deleteRental} />
+        )}
+        {tab === 'other' && (
+          <OtherTab costs={otherCosts} total={totalOther} categories={categories}
+            categoryMap={categoryMap} projects={projects}
+            onAdd={openAddOther} onEdit={openEditOther} onDelete={deleteOther}
+            onManageCategories={() => setShowCategoryPanel(true)} />
+        )}
       </div>
 
-      {/* Tab content */}
-      {tab === 'qc' && <QcTab projects={adSpendProjects} total={totalQc} />}
-      {tab === 'rental' && (
-        <RentalTab rates={rentalWithCost} total={totalRental} projects={projects}
-          onAdd={openAddRental} onEdit={openEditRental} onDelete={deleteRental} />
-      )}
-      {tab === 'other' && (
-        <OtherTab costs={otherCosts} total={totalOther} categories={categories}
-          categoryMap={categoryMap} projects={projects}
-          onAdd={openAddOther} onEdit={openEditOther} onDelete={deleteOther}
-          onManageCategories={() => setShowCategoryPanel(true)} />
-      )}
-
-      {/* Rental modal */}
+      {/* Modals */}
       {showRentalModal && (
         <RentalModal form={rentalForm} editing={!!editingRental} projects={projects}
           saving={rentalSaving} onChange={setRentalForm}
           onSave={saveRental} onClose={() => setShowRentalModal(false)} />
       )}
-
-      {/* Other cost modal */}
       {showOtherModal && (
         <OtherModal form={otherForm} editing={!!editingOther} categories={categories}
           projects={projects} saving={otherSaving} onChange={setOtherForm}
           onSave={saveOther} onClose={() => setShowOtherModal(false)} />
       )}
-
-      {/* Category panel */}
       {showCategoryPanel && (
         <CategoryPanel categories={categories} editingCategory={editingCategory}
           form={categoryForm} saving={categorySaving}
@@ -443,250 +424,232 @@ export default function ExpensesPage() {
   )
 }
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function SummaryCard({ label, value, sub, active, onClick }: {
   label: string; value: number; sub: string; active: boolean; onClick: () => void
 }) {
   return (
     <button onClick={onClick}
-      className={`text-left rounded-lg border p-4 transition-colors w-full ${
-        active ? 'border-blue-500 bg-blue-900/20' : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'
-      }`}>
-      <div className="text-slate-400 text-xs mb-1">{label}</div>
-      <div className="text-white text-2xl font-bold">{fmt(value)}</div>
-      <div className="text-slate-500 text-xs mt-0.5">{sub}</div>
+      className={cn('text-left rounded-lg border p-4 transition-all w-full bg-white',
+        active ? 'border-blue-300 shadow-sm ring-1 ring-blue-200' : 'border-slate-200 hover:border-slate-300')}>
+      <div className="text-slate-500 text-xs mb-1">{label}</div>
+      <div className={cn('text-2xl font-bold', active ? 'text-blue-700' : 'text-slate-800')}>{formatVND(value)}</div>
+      <div className="text-slate-400 text-xs mt-0.5">{sub}</div>
     </button>
   )
 }
 
+// Tab 1 — Chi phí QC
 function QcTab({ projects, total }: {
   projects: { project_id: string; name: string; cid: string; spend: number }[]
   total: number
 }) {
   if (projects.length === 0) {
-    return <div className="text-slate-500 text-sm py-12 text-center">Không có dữ liệu ad spend trong khoảng ngày này.</div>
+    return (
+      <div className="py-16 text-center text-sm text-slate-400">
+        Không có dữ liệu ad spend trong khoảng ngày này.
+      </div>
+    )
   }
   return (
-    <div className="overflow-auto rounded-lg border border-slate-700">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-slate-800 text-slate-400 text-xs uppercase tracking-wide">
-            <th className="text-left px-4 py-3">Dự án</th>
-            <th className="text-left px-4 py-3">CID</th>
-            <th className="text-right px-4 py-3">Chi phí QC</th>
+    <table className="w-full text-sm border-collapse">
+      <thead className="bg-slate-50">
+        <tr>
+          <th className="text-left px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide border-b border-slate-200">Dự án</th>
+          <th className="text-left px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide border-b border-slate-200">CID</th>
+          <th className="text-right px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide border-b border-slate-200">Chi phí QC</th>
+        </tr>
+      </thead>
+      <tbody>
+        {projects.map(p => (
+          <tr key={p.project_id} className="border-b border-slate-100 hover:bg-slate-50/60">
+            <td className="px-4 py-2.5 text-slate-700 font-medium text-xs">{p.name}</td>
+            <td className="px-4 py-2.5 text-slate-400 font-mono text-xs">{p.cid}</td>
+            <td className="px-4 py-2.5 text-right font-semibold text-xs text-slate-800">{formatVND(p.spend)}</td>
           </tr>
-        </thead>
-        <tbody>
-          {projects.map(p => (
-            <tr key={p.project_id} className="border-t border-slate-700/50 hover:bg-slate-800/30">
-              <td className="px-4 py-2.5 text-white">{p.name}</td>
-              <td className="px-4 py-2.5 text-slate-400 font-mono text-xs">{p.cid}</td>
-              <td className="px-4 py-2.5 text-right text-white font-medium">{fmt(p.spend)}</td>
-            </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr className="border-t border-slate-600 bg-slate-800/60">
-            <td colSpan={2} className="px-4 py-2.5 text-slate-400 text-xs font-semibold">TỔNG</td>
-            <td className="px-4 py-2.5 text-right text-white font-bold">{fmt(total)}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
+        ))}
+      </tbody>
+      <tfoot className="bg-slate-50 border-t-2 border-slate-200">
+        <tr>
+          <td colSpan={2} className="px-4 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide">TỔNG</td>
+          <td className="px-4 py-2.5 text-right font-bold text-sm text-green-700">{formatVND(total)}</td>
+        </tr>
+      </tfoot>
+    </table>
   )
 }
 
+// Tab 2 — Thuê tài khoản
 type RentalWithCost = AccountRentalRate & { cost: number }
 
 function RentalTab({ rates, total, projects, onAdd, onEdit, onDelete }: {
-  rates: RentalWithCost[]
-  total: number
-  projects: Project[]
-  onAdd: () => void
-  onEdit: (r: AccountRentalRate) => void
-  onDelete: (id: string) => void
+  rates: RentalWithCost[]; total: number; projects: Project[]
+  onAdd: () => void; onEdit: (r: AccountRentalRate) => void; onDelete: (id: string) => void
 }) {
   const projectMap = useMemo(() => new Map(projects.map(p => [p.project_id, p.name])), [projects])
   return (
-    <div className="space-y-3">
-      <div className="flex justify-between items-center">
-        <p className="text-slate-500 text-xs">Chi phí kỳ này tự tính theo khoảng ngày đã chọn.</p>
+    <>
+      {/* Toolbar */}
+      <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-white">
+        <span className="text-xs text-slate-400">Chi phí kỳ này tự tính theo khoảng ngày đã chọn.</span>
         <button onClick={onAdd}
-          className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-1.5 rounded-md font-medium transition-colors">
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-800 text-white rounded-md hover:bg-slate-700 transition-colors">
           + Thêm cấu hình
         </button>
       </div>
-      <div className="overflow-auto rounded-lg border border-slate-700">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-slate-800 text-slate-400 text-xs uppercase tracking-wide">
-              <th className="text-left px-4 py-3">CID / Tài khoản</th>
-              <th className="text-left px-4 py-3">Dự án</th>
-              <th className="text-left px-4 py-3">Dạng phí</th>
-              <th className="text-left px-4 py-3">Giá trị</th>
-              <th className="text-left px-4 py-3">Áp dụng từ</th>
-              <th className="text-right px-4 py-3">Chi phí kỳ này</th>
-              <th className="px-4 py-3 w-20"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rates.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
-                  Chưa có cấu hình. Nhấn "+ Thêm cấu hình" để bắt đầu.
-                </td>
-              </tr>
-            )}
-            {rates.map(r => (
-              <tr key={r.id} className="border-t border-slate-700/50 hover:bg-slate-800/30">
-                <td className="px-4 py-2.5">
-                  <div className="text-white font-medium">{r.account_label}</div>
-                  {r.cid && <div className="text-slate-500 font-mono text-xs mt-0.5">{r.cid}</div>}
-                </td>
-                <td className="px-4 py-2.5 text-slate-300 text-xs">
-                  {r.project_id ? (projectMap.get(r.project_id) ?? r.project_id) : <span className="text-slate-600">(chung)</span>}
-                </td>
-                <td className="px-4 py-2.5">
-                  <span className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded">{RATE_TYPE_LABELS[r.rate_type]}</span>
-                </td>
-                <td className="px-4 py-2.5 text-white font-mono text-xs">
-                  {r.rate_type === 'percentage' ? `${r.rate_value}%` : fmt(r.rate_value)}
-                </td>
-                <td className="px-4 py-2.5 text-slate-400 text-xs">
-                  {r.rate_type === 'one_time' ? (r.payment_date ?? '—') : (r.period_from ?? '—')}
-                </td>
-                <td className="px-4 py-2.5 text-right font-bold text-white">{fmt(r.cost)}</td>
-                <td className="px-4 py-2.5">
-                  <div className="flex gap-2 justify-end">
-                    <button onClick={() => onEdit(r)} className="text-slate-400 hover:text-white text-xs">Sửa</button>
-                    <button onClick={() => onDelete(r.id)} className="text-red-400 hover:text-red-300 text-xs">Xóa</button>
-                  </div>
-                </td>
-              </tr>
+
+      <table className="w-full text-sm border-collapse">
+        <thead className="bg-slate-50">
+          <tr>
+            {['CID / Tài khoản', 'Dự án', 'Dạng phí', 'Giá trị', 'Áp dụng từ', 'Chi phí kỳ này', ''].map((h, i) => (
+              <th key={i} className={cn('px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide border-b border-slate-200', i === 5 ? 'text-right' : 'text-left')}>{h}</th>
             ))}
-          </tbody>
-          {rates.length > 0 && (
-            <tfoot>
-              <tr className="border-t border-slate-600 bg-slate-800/60">
-                <td colSpan={5} className="px-4 py-2.5 text-slate-400 text-xs font-semibold">TỔNG</td>
-                <td className="px-4 py-2.5 text-right text-white font-bold">{fmt(total)}</td>
-                <td />
-              </tr>
-            </tfoot>
+          </tr>
+        </thead>
+        <tbody>
+          {rates.length === 0 && (
+            <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-slate-400">Chưa có cấu hình. Nhấn "+ Thêm cấu hình" để bắt đầu.</td></tr>
           )}
-        </table>
-      </div>
-    </div>
+          {rates.map(r => (
+            <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50/60">
+              <td className="px-4 py-2.5">
+                <div className="font-medium text-xs text-slate-700">{r.account_label}</div>
+                {r.cid && <div className="text-slate-400 font-mono text-[11px] mt-0.5">{r.cid}</div>}
+              </td>
+              <td className="px-4 py-2.5 text-slate-500 text-xs">
+                {r.project_id ? (projectMap.get(r.project_id) ?? r.project_id) : <span className="text-slate-300">(chung)</span>}
+              </td>
+              <td className="px-4 py-2.5">
+                <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-medium">{RATE_TYPE_LABELS[r.rate_type]}</span>
+              </td>
+              <td className="px-4 py-2.5 text-slate-700 font-mono text-xs">
+                {r.rate_type === 'percentage' ? `${r.rate_value}%` : formatVND(r.rate_value)}
+              </td>
+              <td className="px-4 py-2.5 text-slate-400 text-xs">
+                {r.rate_type === 'one_time' ? (r.payment_date ?? '—') : (r.period_from ?? '—')}
+              </td>
+              <td className="px-4 py-2.5 text-right font-bold text-sm text-green-700">{formatVND(r.cost)}</td>
+              <td className="px-4 py-2.5">
+                <div className="flex gap-3 justify-end">
+                  <button onClick={() => onEdit(r)} className="text-xs text-slate-400 hover:text-slate-700 transition-colors">Sửa</button>
+                  <button onClick={() => onDelete(r.id)} className="text-xs text-red-400 hover:text-red-600 transition-colors">Xóa</button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        {rates.length > 0 && (
+          <tfoot className="bg-slate-50 border-t-2 border-slate-200">
+            <tr>
+              <td colSpan={5} className="px-4 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide">TỔNG</td>
+              <td className="px-4 py-2.5 text-right font-bold text-sm text-green-700">{formatVND(total)}</td>
+              <td />
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </>
   )
 }
 
+// Tab 3 — Chi phí khác
 function OtherTab({ costs, total, categories, categoryMap, projects, onAdd, onEdit, onDelete, onManageCategories }: {
-  costs: OtherCost[]
-  total: number
-  categories: CostCategory[]
-  categoryMap: Map<string, CostCategory>
-  projects: Project[]
-  onAdd: () => void
-  onEdit: (c: OtherCost) => void
-  onDelete: (id: string) => void
+  costs: OtherCost[]; total: number; categories: CostCategory[]
+  categoryMap: Map<string, CostCategory>; projects: Project[]
+  onAdd: () => void; onEdit: (c: OtherCost) => void; onDelete: (id: string) => void
   onManageCategories: () => void
 }) {
   const projectMap = useMemo(() => new Map(projects.map(p => [p.project_id, p.name])), [projects])
   return (
-    <div className="space-y-3">
-      <div className="flex justify-between items-center">
+    <>
+      {/* Toolbar */}
+      <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-white">
         <button onClick={onManageCategories}
-          className="text-slate-400 hover:text-white text-xs transition-colors">
+          className="text-xs text-slate-500 hover:text-slate-700 transition-colors">
           ⚙ Quản lý danh mục
         </button>
         <button onClick={onAdd}
-          className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-1.5 rounded-md font-medium transition-colors">
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-800 text-white rounded-md hover:bg-slate-700 transition-colors">
           + Thêm chi phí
         </button>
       </div>
-      <div className="overflow-auto rounded-lg border border-slate-700">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-slate-800 text-slate-400 text-xs uppercase tracking-wide">
-              <th className="text-left px-4 py-3">Ngày</th>
-              <th className="text-left px-4 py-3">Danh mục</th>
-              <th className="text-right px-4 py-3">Số tiền</th>
-              <th className="text-left px-4 py-3">Mô tả</th>
-              <th className="text-left px-4 py-3">Dự án</th>
-              <th className="px-4 py-3 w-20"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {costs.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
-                  Chưa có chi phí nào trong khoảng ngày này.
+
+      <table className="w-full text-sm border-collapse">
+        <thead className="bg-slate-50">
+          <tr>
+            {['Ngày', 'Danh mục', 'Số tiền', 'Mô tả', 'Dự án', ''].map((h, i) => (
+              <th key={i} className={cn('px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide border-b border-slate-200', i === 2 ? 'text-right' : 'text-left')}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {costs.length === 0 && (
+            <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-slate-400">Chưa có chi phí nào trong khoảng ngày này.</td></tr>
+          )}
+          {costs.map(c => {
+            const cat = c.category_id ? categoryMap.get(c.category_id) : null
+            return (
+              <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50/60">
+                <td className="px-4 py-2.5 text-slate-500 font-mono text-xs">{c.date}</td>
+                <td className="px-4 py-2.5">
+                  {cat
+                    ? <span className={cn('text-[11px] px-2 py-0.5 rounded font-medium', COLOR_BADGE[cat.color] ?? COLOR_BADGE.slate)}>{cat.name}</span>
+                    : <span className="text-slate-300 text-xs">—</span>
+                  }
+                </td>
+                <td className="px-4 py-2.5 text-right font-semibold text-xs text-slate-800">{formatVND(c.amount)}</td>
+                <td className="px-4 py-2.5 text-slate-600 text-xs max-w-xs truncate">{c.description ?? <span className="text-slate-300">—</span>}</td>
+                <td className="px-4 py-2.5 text-slate-400 text-xs">
+                  {c.project_id ? (projectMap.get(c.project_id) ?? c.project_id) : <span className="text-slate-300">(chung)</span>}
+                </td>
+                <td className="px-4 py-2.5">
+                  <div className="flex gap-3 justify-end">
+                    <button onClick={() => onEdit(c)} className="text-xs text-slate-400 hover:text-slate-700 transition-colors">Sửa</button>
+                    <button onClick={() => onDelete(c.id)} className="text-xs text-red-400 hover:text-red-600 transition-colors">Xóa</button>
+                  </div>
                 </td>
               </tr>
-            )}
-            {costs.map(c => {
-              const cat = c.category_id ? categoryMap.get(c.category_id) : null
-              return (
-                <tr key={c.id} className="border-t border-slate-700/50 hover:bg-slate-800/30">
-                  <td className="px-4 py-2.5 text-slate-300 font-mono text-xs">{c.date}</td>
-                  <td className="px-4 py-2.5">
-                    {cat
-                      ? <span className={`text-xs px-2 py-0.5 rounded ${COLOR_CLASSES[cat.color] ?? COLOR_CLASSES.slate}`}>{cat.name}</span>
-                      : <span className="text-slate-600 text-xs">—</span>
-                    }
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-white font-medium">{fmt(c.amount)}</td>
-                  <td className="px-4 py-2.5 text-slate-300 max-w-xs truncate">{c.description ?? <span className="text-slate-600">—</span>}</td>
-                  <td className="px-4 py-2.5 text-slate-400 text-xs">
-                    {c.project_id ? (projectMap.get(c.project_id) ?? c.project_id) : <span className="text-slate-600">(chung)</span>}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex gap-2 justify-end">
-                      <button onClick={() => onEdit(c)} className="text-slate-400 hover:text-white text-xs">Sửa</button>
-                      <button onClick={() => onDelete(c.id)} className="text-red-400 hover:text-red-300 text-xs">Xóa</button>
-                    </div>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-          {costs.length > 0 && (
-            <tfoot>
-              <tr className="border-t border-slate-600 bg-slate-800/60">
-                <td colSpan={2} className="px-4 py-2.5 text-slate-400 text-xs font-semibold">TỔNG</td>
-                <td className="px-4 py-2.5 text-right text-white font-bold">{fmt(total)}</td>
-                <td colSpan={3} />
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
-    </div>
+            )
+          })}
+        </tbody>
+        {costs.length > 0 && (
+          <tfoot className="bg-slate-50 border-t-2 border-slate-200">
+            <tr>
+              <td colSpan={2} className="px-4 py-2.5 text-xs font-semibold text-slate-600 uppercase tracking-wide">TỔNG</td>
+              <td className="px-4 py-2.5 text-right font-bold text-sm text-green-700">{formatVND(total)}</td>
+              <td colSpan={3} />
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </>
   )
 }
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
 
+const INPUT = 'w-full border border-slate-200 text-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300 bg-white'
+const LABEL = 'text-xs text-slate-500 block mb-1'
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div><label className={LABEL}>{label}</label>{children}</div>
+}
+
 function RentalModal({ form, editing, projects, saving, onChange, onSave, onClose }: {
   form: RentalForm; editing: boolean; projects: Project[]
-  saving: boolean; onChange: (f: RentalForm) => void
-  onSave: () => void; onClose: () => void
+  saving: boolean; onChange: (f: RentalForm) => void; onSave: () => void; onClose: () => void
 }) {
   function set(patch: Partial<RentalForm>) { onChange({ ...form, ...patch }) }
   const isOneTime = form.rate_type === 'one_time'
-  const valueLabel = {
-    percentage: 'Tỷ lệ (%)', daily: 'Phí / ngày ($)',
-    weekly: 'Phí / tuần ($)', monthly: 'Phí / tháng ($)', one_time: 'Số tiền ($)',
-  }[form.rate_type]
-
+  const valueLabel = { percentage: 'Tỷ lệ (%)', daily: 'Phí / ngày ($)', weekly: 'Phí / tuần ($)', monthly: 'Phí / tháng ($)', one_time: 'Số tiền ($)' }[form.rate_type]
   const uniqueCids = [...new Set(projects.map(p => p.cid))]
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h2 className="text-white font-semibold mb-5">{editing ? 'Sửa cấu hình' : 'Thêm cấu hình thuê tài khoản'}</h2>
-        <div className="space-y-4">
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl p-5 w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <h3 className="font-semibold text-slate-800 mb-4">{editing ? 'Sửa cấu hình' : 'Thêm cấu hình thuê tài khoản'}</h3>
+        <div className="space-y-3">
           <Field label="CID / Tên tài khoản *">
             <input value={form.account_label} onChange={e => set({ account_label: e.target.value })}
               placeholder="VD: CID-1234 hoặc Account #45" className={INPUT} />
@@ -701,9 +664,8 @@ function RentalModal({ form, editing, projects, saving, onChange, onSave, onClos
             <div className="grid grid-cols-3 gap-2">
               {(['percentage', 'daily', 'weekly', 'monthly', 'one_time'] as RentalRateType[]).map(t => (
                 <button key={t} onClick={() => set({ rate_type: t })}
-                  className={`py-1.5 text-xs rounded border transition-colors ${
-                    form.rate_type === t ? 'border-blue-500 bg-blue-500/10 text-blue-300' : 'border-slate-600 text-slate-400 hover:border-slate-500'
-                  }`}>
+                  className={cn('py-1.5 text-xs rounded-md border transition-colors font-medium',
+                    form.rate_type === t ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-200 text-slate-600 hover:bg-slate-50')}>
                   {RATE_TYPE_LABELS[t]}
                 </button>
               ))}
@@ -732,10 +694,10 @@ function RentalModal({ form, editing, projects, saving, onChange, onSave, onClos
             <input value={form.note} onChange={e => set({ note: e.target.value })} className={INPUT} />
           </Field>
         </div>
-        <div className="flex justify-end gap-3 mt-6">
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-sm px-4 py-2 rounded">Hủy</button>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">Hủy</button>
           <button onClick={onSave} disabled={saving || !form.account_label.trim() || !form.rate_value}
-            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-5 py-2 rounded font-medium transition-colors">
+            className="px-4 py-1.5 text-xs bg-slate-800 text-white rounded-md hover:bg-slate-700 disabled:opacity-50 transition-colors font-medium">
             {saving ? 'Đang lưu...' : 'Lưu'}
           </button>
         </div>
@@ -751,10 +713,10 @@ function OtherModal({ form, editing, categories, projects, saving, onChange, onS
 }) {
   function set(patch: Partial<OtherForm>) { onChange({ ...form, ...patch }) }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h2 className="text-white font-semibold mb-5">{editing ? 'Sửa chi phí' : 'Thêm chi phí khác'}</h2>
-        <div className="space-y-4">
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl p-5 w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <h3 className="font-semibold text-slate-800 mb-4">{editing ? 'Sửa chi phí' : 'Thêm chi phí khác'}</h3>
+        <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Ngày *">
               <input type="date" value={form.date} onChange={e => set({ date: e.target.value })} className={INPUT} />
@@ -780,10 +742,10 @@ function OtherModal({ form, editing, categories, projects, saving, onChange, onS
             </select>
           </Field>
         </div>
-        <div className="flex justify-end gap-3 mt-6">
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-sm px-4 py-2 rounded">Hủy</button>
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">Hủy</button>
           <button onClick={onSave} disabled={saving || !form.date || !form.amount}
-            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm px-5 py-2 rounded font-medium transition-colors">
+            className="px-4 py-1.5 text-xs bg-slate-800 text-white rounded-md hover:bg-slate-700 disabled:opacity-50 transition-colors font-medium">
             {saving ? 'Đang lưu...' : 'Lưu'}
           </button>
         </div>
@@ -796,57 +758,57 @@ function CategoryPanel({ categories, editingCategory, form, saving, onFormChange
   categories: CostCategory[]; editingCategory: CostCategory | null
   form: CategoryForm; saving: boolean
   onFormChange: (f: CategoryForm) => void; onEdit: (c: CostCategory) => void
-  onSave: () => void; onDelete: (id: string) => void
-  onAddNew: () => void; onClose: () => void
+  onSave: () => void; onDelete: (id: string) => void; onAddNew: () => void; onClose: () => void
 }) {
   function set(patch: Partial<CategoryForm>) { onFormChange({ ...form, ...patch }) }
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/40" onClick={onClose}>
-      <div className="bg-slate-900 border-l border-slate-700 w-80 flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
-          <h2 className="text-white font-semibold">Danh mục chi phí</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">×</button>
+    <div className="fixed inset-0 bg-black/30 flex items-stretch justify-end z-50" onClick={onClose}>
+      <div className="bg-white border-l border-slate-200 w-72 flex flex-col shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+          <h3 className="font-semibold text-slate-800 text-sm">Danh mục chi phí</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none transition-colors">×</button>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
-          {categories.length === 0 && <p className="text-slate-500 text-sm">Chưa có danh mục.</p>}
+
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1.5">
+          {categories.length === 0 && <p className="text-slate-400 text-sm">Chưa có danh mục.</p>}
           {categories.map(c => (
-            <div key={c.id} className="flex items-center justify-between bg-slate-800 rounded-lg px-3 py-2.5">
-              <div className="flex items-center gap-2.5">
-                <div className={`w-3 h-3 rounded-full flex-shrink-0 ${COLOR_DOT[c.color] ?? 'bg-slate-500'}`} />
-                <span className="text-white text-sm">{c.name}</span>
+            <div key={c.id} className="flex items-center justify-between border border-slate-200 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-2">
+                <div className={cn('w-2.5 h-2.5 rounded-full shrink-0', COLOR_DOT[c.color] ?? 'bg-slate-400')} />
+                <span className="text-slate-700 text-sm">{c.name}</span>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => onEdit(c)} className="text-slate-400 hover:text-white text-xs">Sửa</button>
-                <button onClick={() => onDelete(c.id)} className="text-red-400 hover:text-red-300 text-xs">Xóa</button>
+                <button onClick={() => onEdit(c)} className="text-xs text-slate-400 hover:text-slate-700 transition-colors">Sửa</button>
+                <button onClick={() => onDelete(c.id)} className="text-xs text-red-400 hover:text-red-600 transition-colors">Xóa</button>
               </div>
             </div>
           ))}
         </div>
-        <div className="border-t border-slate-700 px-5 py-4 space-y-3">
-          <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+
+        <div className="border-t border-slate-200 px-4 py-4 space-y-3">
+          <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">
             {editingCategory ? 'Sửa danh mục' : 'Thêm danh mục mới'}
           </p>
           <input value={form.name} onChange={e => set({ name: e.target.value })}
             placeholder="Tên danh mục" className={INPUT} />
           <div>
-            <p className="text-slate-400 text-xs mb-1.5">Màu</p>
+            <p className={LABEL}>Màu</p>
             <div className="flex gap-2 flex-wrap">
               {COLORS.map(c => (
                 <button key={c} onClick={() => set({ color: c })}
-                  className={`w-6 h-6 rounded-full ${COLOR_DOT[c]} transition-all ${
-                    form.color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900 scale-110' : 'opacity-70 hover:opacity-100'
-                  }`} />
+                  className={cn('w-6 h-6 rounded-full transition-all', COLOR_DOT[c],
+                    form.color === c ? 'ring-2 ring-slate-800 ring-offset-2 scale-110' : 'opacity-60 hover:opacity-100')} />
               ))}
             </div>
           </div>
           <div className="flex gap-2">
             {editingCategory && (
-              <button onClick={onAddNew} className="text-slate-400 hover:text-white text-xs px-3 py-1.5 rounded border border-slate-600">
+              <button onClick={onAddNew} className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5 border border-slate-200 rounded-md transition-colors">
                 Hủy
               </button>
             )}
             <button onClick={onSave} disabled={saving || !form.name.trim()}
-              className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm py-1.5 rounded font-medium transition-colors">
+              className="flex-1 text-xs bg-slate-800 text-white py-1.5 rounded-md font-medium hover:bg-slate-700 disabled:opacity-50 transition-colors">
               {saving ? '...' : editingCategory ? 'Cập nhật' : 'Thêm'}
             </button>
           </div>
@@ -855,14 +817,3 @@ function CategoryPanel({ categories, editingCategory, form, saving, onFormChange
     </div>
   )
 }
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="text-slate-400 text-xs block mb-1">{label}</label>
-      {children}
-    </div>
-  )
-}
-
-const INPUT = 'w-full bg-slate-800 border border-slate-600 text-white rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500'
