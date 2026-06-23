@@ -18,7 +18,9 @@ import { cn, formatVND } from '@/lib/utils'
 function fmtShort(d: string) { return new Date(d + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) }
 function fmtMY(d: string)    { const [y,m] = d.split('-'); return `${m}/${y}` }
 function addDays(date: string, n: number): string {
-  const d = new Date(date + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().split('T')[0]
+  const d = new Date(date + 'T00:00:00')
+  d.setDate(d.getDate() + n)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 type NoteModal    = { projectId: string; date: string; current: string }

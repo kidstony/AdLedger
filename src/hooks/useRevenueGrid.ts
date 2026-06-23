@@ -9,18 +9,25 @@ export type RevenueTab = 'revenue' | 'screen'
 type HistoryChange = { key: string; tab: RevenueTab; old: number | undefined; val: number | undefined }
 type HistoryEntry  = { changes: HistoryChange[] }
 
-function todayStr(): string { return new Date().toISOString().split('T')[0] }
+function localDateStr(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function todayStr(): string { return localDateStr(new Date()) }
 
 function addDays(date: string, n: number): string {
   const d = new Date(date + 'T00:00:00')
   d.setDate(d.getDate() + n)
-  return d.toISOString().split('T')[0]
+  return localDateStr(d)
 }
 
 function addMonths(date: string, n: number): string {
   const d = new Date(date.slice(0, 7) + '-01T00:00:00')
   d.setMonth(d.getMonth() + n)
-  return d.toISOString().split('T')[0].slice(0, 7) + '-01'
+  return localDateStr(d).slice(0, 7) + '-01'
 }
 
 function getWeekDates(anchor: string): string[] {
