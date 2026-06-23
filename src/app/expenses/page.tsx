@@ -491,7 +491,7 @@ export default function ExpensesPage() {
       </div>
 
       {/* ── Summary cards ──────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         <SummaryCard label="Chi phí QC" value={totalQc} sub="Auto sync từ Google Ads"
           active={tab === 'qc'} onClick={() => setTab('qc')} />
         <SummaryCard label="Thuê tài khoản" value={totalRental} sub="Tự tính theo date range"
@@ -499,6 +499,9 @@ export default function ExpensesPage() {
         <SummaryCard label="Chi phí khác" value={totalOther}
           sub={otherCosts.length > 0 ? `${otherCosts.length} khoản trong kỳ` : 'Chưa có khoản nào'}
           active={tab === 'other'} onClick={() => setTab('other')} />
+        <SummaryCard label="Tổng chi phí" value={totalQc + totalRental + totalOther}
+          sub="QC + Thuê TK + Chi phí khác"
+          active={tab === 'summary'} onClick={() => setTab('summary')} highlight />
       </div>
 
       {/* ── Filter bar (for QC tab) ─────────────────────────────────────────── */}
@@ -545,6 +548,7 @@ export default function ExpensesPage() {
             otherByCid={otherByCid} otherByProject={otherByProject}
             projects={projects} adSpendRows={adSpendRows} otherCosts={otherCosts}
             projectByCampaignId={projectByCampaignId} projectById={projectById}
+            fromStr={fromStr} toStr={toStr}
           />
         )}
       </div>
@@ -579,16 +583,18 @@ export default function ExpensesPage() {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function SummaryCard({ label, value, sub, active, onClick }: {
-  label: string; value: number; sub: string; active: boolean; onClick: () => void
+function SummaryCard({ label, value, sub, active, onClick, highlight }: {
+  label: string; value: number; sub: string; active: boolean; onClick: () => void; highlight?: boolean
 }) {
   return (
     <button onClick={onClick}
-      className={cn('text-left rounded-lg border p-4 transition-all w-full bg-white',
-        active ? 'border-blue-300 shadow-sm ring-1 ring-blue-200' : 'border-slate-200 hover:border-slate-300')}>
-      <div className="text-slate-500 text-xs mb-1">{label}</div>
-      <div className={cn('text-2xl font-bold', active ? 'text-blue-700' : 'text-slate-800')}>{formatVND(value)}</div>
-      <div className="text-slate-400 text-xs mt-0.5">{sub}</div>
+      className={cn('text-left rounded-lg border p-4 transition-all w-full',
+        highlight
+          ? active ? 'bg-slate-800 border-slate-700 shadow-sm' : 'bg-slate-800 border-slate-700 hover:bg-slate-700'
+          : active ? 'bg-white border-blue-300 shadow-sm ring-1 ring-blue-200' : 'bg-white border-slate-200 hover:border-slate-300')}>
+      <div className={cn('text-xs mb-1', highlight ? 'text-slate-400' : 'text-slate-500')}>{label}</div>
+      <div className={cn('text-2xl font-bold', highlight ? 'text-white' : active ? 'text-blue-700' : 'text-slate-800')}>{formatVND(value)}</div>
+      <div className={cn('text-xs mt-0.5', highlight ? 'text-slate-500' : 'text-slate-400')}>{sub}</div>
     </button>
   )
 }
@@ -1125,6 +1131,10 @@ interface SummaryRowData {
   other: number
 }
 
+type SummarySortCol = 'qc' | 'rental' | 'other' | 'total'
+
+const PAGE_SIZE = 50
+
 function SummaryTab({
   groupBy, onGroupByChange, search, onSearchChange,
   expandedKey, onExpandKey,
@@ -1132,6 +1142,7 @@ function SummaryTab({
   rentalByCid, rentalByProject,
   otherByCid, otherByProject,
   projects, adSpendRows, otherCosts, projectByCampaignId, projectById,
+  fromStr, toStr,
 }: {
   groupBy: 'cid' | 'project'
   onGroupByChange: (v: 'cid' | 'project') => void
@@ -1150,7 +1161,28 @@ function SummaryTab({
   otherCosts: OtherCost[]
   projectByCampaignId: Map<string, Project>
   projectById: Map<string, Project>
+  fromStr: string
+  toStr: string
 }) {
+  const [sortCol, setSortCol] = useState<SummarySortCol>('total')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [page, setPage] = useState(0)
+  const [drillMode, setDrillMode] = useState<'daily' | 'monthly'>(() => {
+    const from = new Date(fromStr + 'T00:00:00')
+    const to = new Date(toStr + 'T00:00:00')
+    const days = Math.round((to.getTime() - from.getTime()) / MS_PER_DAY) + 1
+    return days > 31 ? 'monthly' : 'daily'
+  })
+
+  // Reset page when search/groupBy changes
+  const handleSearch = (v: string) => { onSearchChange(v); setPage(0) }
+
+  function handleSort(col: SummarySortCol) {
+    if (col === sortCol) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('desc') }
+    setPage(0)
+  }
+
   const rows: SummaryRowData[] = useMemo(() => {
     if (groupBy === 'cid') {
       const allCids = new Set<string>([...adSpendByCid.keys(), ...rentalByCid.keys(), ...otherByCid.keys()])
@@ -1166,7 +1198,6 @@ function SummaryTab({
           rental: rentalByCid.get(cid) ?? 0,
           other: otherByCid.get(cid) ?? 0,
         }))
-        .sort((a, b) => (b.qc + b.rental + b.other) - (a.qc + a.rental + a.other))
 
       const chungOther = otherByCid.get('') ?? 0
       if (chungOther > 0) normal.push({ key: '', label: 'Chung (không gán dự án)', qc: 0, rental: 0, other: chungOther })
@@ -1185,7 +1216,6 @@ function SummaryTab({
             other: otherByProject.get(id) ?? 0,
           }
         })
-        .sort((a, b) => (b.qc + b.rental + b.other) - (a.qc + a.rental + a.other))
 
       const chungRental = rentalByProject.get('') ?? 0
       const chungOther = otherByProject.get('') ?? 0
@@ -1195,10 +1225,19 @@ function SummaryTab({
   }, [groupBy, adSpendByCid, spendByProject, rentalByCid, rentalByProject, otherByCid, otherByProject, projects, projectById])
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return rows
-    const q = search.toLowerCase()
-    return rows.filter(r => r.label.toLowerCase().includes(q) || (r.subLabel?.toLowerCase().includes(q) ?? false))
-  }, [rows, search])
+    const base = search.trim()
+      ? rows.filter(r => r.label.toLowerCase().includes(search.toLowerCase()) || (r.subLabel?.toLowerCase().includes(search.toLowerCase()) ?? false))
+      : rows
+
+    return [...base].sort((a, b) => {
+      const av = sortCol === 'total' ? a.qc + a.rental + a.other : a[sortCol]
+      const bv = sortCol === 'total' ? b.qc + b.rental + b.other : b[sortCol]
+      return sortDir === 'desc' ? bv - av : av - bv
+    })
+  }, [rows, search, sortCol, sortDir])
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const pageRows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
 
   const totals = useMemo(() => {
     const qc = filtered.reduce((s, r) => s + r.qc, 0)
@@ -1207,46 +1246,69 @@ function SummaryTab({
     return { qc, rental, other, total: qc + rental + other }
   }, [filtered])
 
-  function buildDailyRows(key: string): { date: string; qc: number; other: number }[] {
+  function buildDetailRows(key: string): { label: string; qc: number; other: number }[] {
     const map = new Map<string, { qc: number; other: number }>()
-    const ensure = (d: string) => { if (!map.has(d)) map.set(d, { qc: 0, other: 0 }); return map.get(d)! }
+    const ensure = (k: string) => { if (!map.has(k)) map.set(k, { qc: 0, other: 0 }); return map.get(k)! }
 
     if (groupBy === 'cid') {
       adSpendRows.forEach(row => {
         const p = projectByCampaignId.get(row.campaign_id)
-        if ((p?.cid ?? '') === key) ensure(row.date).qc += row.spend
+        if ((p?.cid ?? '') !== key) return
+        const k = drillMode === 'monthly' ? row.date.slice(0, 7) : row.date
+        ensure(k).qc += row.spend
       })
       otherCosts.forEach(c => {
         const proj = c.project_id ? projectById.get(c.project_id) : null
-        if ((proj?.cid ?? '') === key) ensure(c.date).other += c.amount
+        if ((proj?.cid ?? '') !== key) return
+        const k = drillMode === 'monthly' ? c.date.slice(0, 7) : c.date
+        ensure(k).other += c.amount
       })
     } else {
       adSpendRows.forEach(row => {
         const p = projectByCampaignId.get(row.campaign_id)
-        if ((p?.project_id ?? '') === key) ensure(row.date).qc += row.spend
+        if ((p?.project_id ?? '') !== key) return
+        const k = drillMode === 'monthly' ? row.date.slice(0, 7) : row.date
+        ensure(k).qc += row.spend
       })
       otherCosts.forEach(c => {
-        if ((c.project_id ?? '') === key) ensure(c.date).other += c.amount
+        if ((c.project_id ?? '') !== key) return
+        const k = drillMode === 'monthly' ? c.date.slice(0, 7) : c.date
+        ensure(k).other += c.amount
       })
     }
 
-    return [...map.entries()].map(([date, v]) => ({ date, ...v })).sort((a, b) => b.date.localeCompare(a.date))
+    return [...map.entries()]
+      .map(([label, v]) => ({ label, ...v }))
+      .sort((a, b) => b.label.localeCompare(a.label))
+  }
+
+  function SortIcon({ col }: { col: SummarySortCol }) {
+    if (col !== sortCol) return <span className="text-slate-300 ml-1">↕</span>
+    return <span className="text-slate-600 ml-1">{sortDir === 'desc' ? '↓' : '↑'}</span>
   }
 
   return (
     <>
+      {/* Toolbar */}
       <div className="px-4 py-2.5 border-b border-slate-100 flex items-center gap-3 bg-white flex-wrap">
         <div className="relative">
-          <input value={search} onChange={e => onSearchChange(e.target.value)}
+          <input value={search} onChange={e => handleSearch(e.target.value)}
             placeholder="Tìm CID / dự án..."
-            className="pl-7 pr-3 py-1.5 text-xs border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-slate-200 w-52" />
+            className="pl-7 pr-7 py-1.5 text-xs border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-slate-200 w-56" />
           <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-[10px]">🔍</span>
+          {search && (
+            <button onClick={() => handleSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs">✕</button>
+          )}
         </div>
+        {filtered.length !== rows.length && (
+          <span className="text-xs text-slate-400">{filtered.length} / {rows.length} kết quả</span>
+        )}
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-slate-400">Nhóm theo:</span>
           <div className="flex items-center rounded-md border border-slate-200 overflow-hidden text-xs font-medium">
             {(['cid', 'project'] as const).map((v, i) => (
-              <button key={v} onClick={() => onGroupByChange(v)}
+              <button key={v} onClick={() => { onGroupByChange(v); setPage(0) }}
                 className={cn('px-3 py-1.5 transition-colors', i > 0 && 'border-l border-slate-200',
                   groupBy === v ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-50')}>
                 {v === 'cid' ? 'Theo CID' : 'Theo Dự án'}
@@ -1256,34 +1318,43 @@ function SummaryTab({
         </div>
       </div>
 
+      {/* Table */}
       <div className="overflow-auto">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
+          <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">
                 {groupBy === 'cid' ? 'CID' : 'Dự án'}
+                {filtered.length > 0 && <span className="ml-1.5 text-slate-300 font-normal normal-case">{filtered.length}</span>}
               </th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Chi phí QC</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Thuê TK</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Chi phí khác</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wide">Tổng</th>
+              {([
+                { col: 'qc' as const,     label: 'Chi phí QC' },
+                { col: 'rental' as const, label: 'Thuê TK' },
+                { col: 'other' as const,  label: 'Chi phí khác' },
+                { col: 'total' as const,  label: 'Tổng' },
+              ]).map(({ col, label }) => (
+                <th key={col} onClick={() => handleSort(col)}
+                  className="px-4 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wide cursor-pointer select-none hover:text-slate-700">
+                  {label}<SortIcon col={col} />
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
+            {pageRows.length === 0 && (
               <tr><td colSpan={5} className="py-10 text-center text-slate-400 text-sm">Không có dữ liệu</td></tr>
             )}
-            {filtered.map(row => {
+            {pageRows.map(row => {
               const total = row.qc + row.rental + row.other
               const isExpanded = expandedKey === row.key
-              const dailyRows = isExpanded ? buildDailyRows(row.key) : []
+              const detailRows = isExpanded ? buildDetailRows(row.key) : []
               return (
                 <>
                   <tr key={row.key} onClick={() => onExpandKey(isExpanded ? null : row.key)}
                     className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <span className={cn('text-slate-300 text-[10px] transition-transform duration-150 shrink-0', isExpanded && 'rotate-90')}>▶</span>
+                        <span className={cn('text-slate-300 text-[10px] shrink-0 transition-transform duration-150', isExpanded && 'rotate-90')}>▶</span>
                         <div>
                           <p className={cn('font-medium', groupBy === 'cid' ? 'font-mono text-slate-700' : 'text-slate-800')}>{row.label}</p>
                           {row.subLabel && <p className="text-[11px] text-slate-400">{row.subLabel}</p>}
@@ -1296,28 +1367,43 @@ function SummaryTab({
                     <td className="px-4 py-3 text-right font-mono text-sm font-semibold text-slate-800">{formatVND(total)}</td>
                   </tr>
                   {isExpanded && (
-                    <tr key={row.key + '-daily'}>
+                    <tr key={row.key + '-detail'}>
                       <td colSpan={5} className="p-0">
-                        <div className="bg-slate-50 border-b border-slate-200">
-                          {dailyRows.length === 0 ? (
-                            <p className="px-10 py-3 text-xs text-slate-400">Không có dữ liệu theo ngày</p>
+                        <div className="bg-slate-50/80 border-b border-slate-200">
+                          {/* Drilldown header with mode toggle */}
+                          <div className="flex items-center justify-between px-10 py-2 border-b border-slate-200">
+                            <span className="text-[11px] text-slate-400 font-medium uppercase tracking-wide">Chi tiết</span>
+                            <div className="flex items-center rounded border border-slate-200 overflow-hidden text-[11px] font-medium">
+                              {(['daily', 'monthly'] as const).map((m, i) => (
+                                <button key={m} onClick={e => { e.stopPropagation(); setDrillMode(m) }}
+                                  className={cn('px-2.5 py-1 transition-colors', i > 0 && 'border-l border-slate-200',
+                                    drillMode === m ? 'bg-slate-700 text-white' : 'text-slate-500 hover:bg-slate-100')}>
+                                  {m === 'daily' ? 'Theo ngày' : 'Theo tháng'}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          {detailRows.length === 0 ? (
+                            <p className="px-10 py-3 text-xs text-slate-400">Không có dữ liệu</p>
                           ) : (
                             <table className="w-full text-xs">
                               <thead>
-                                <tr className="border-b border-slate-200">
-                                  <th className="px-10 py-2 text-left font-medium text-slate-400 uppercase tracking-wide">Ngày</th>
+                                <tr className="border-b border-slate-200 bg-slate-100/60">
+                                  <th className="px-10 py-2 text-left font-medium text-slate-400 uppercase tracking-wide">
+                                    {drillMode === 'monthly' ? 'Tháng' : 'Ngày'}
+                                  </th>
                                   <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Chi phí QC</th>
                                   <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Chi phí khác</th>
-                                  <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Tổng ngày</th>
+                                  <th className="px-4 py-2 text-right font-medium text-slate-400 uppercase tracking-wide">Tổng</th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {dailyRows.map(d => (
-                                  <tr key={d.date} className="border-b border-slate-100 last:border-0">
-                                    <td className="px-10 py-2 font-mono text-slate-600">{d.date}</td>
-                                    <td className="px-4 py-2 text-right font-mono text-slate-500">{d.qc > 0 ? formatVND(d.qc) : <span className="text-slate-300">—</span>}</td>
-                                    <td className="px-4 py-2 text-right font-mono text-slate-500">{d.other > 0 ? formatVND(d.other) : <span className="text-slate-300">—</span>}</td>
-                                    <td className="px-4 py-2 text-right font-mono font-semibold text-slate-700">{formatVND(d.qc + d.other)}</td>
+                                {detailRows.map(d => (
+                                  <tr key={d.label} className="border-b border-slate-100 last:border-0 hover:bg-white/60">
+                                    <td className="px-10 py-1.5 font-mono text-slate-600">{d.label}</td>
+                                    <td className="px-4 py-1.5 text-right font-mono text-slate-500">{d.qc > 0 ? formatVND(d.qc) : <span className="text-slate-300">—</span>}</td>
+                                    <td className="px-4 py-1.5 text-right font-mono text-slate-500">{d.other > 0 ? formatVND(d.other) : <span className="text-slate-300">—</span>}</td>
+                                    <td className="px-4 py-1.5 text-right font-mono font-semibold text-slate-700">{formatVND(d.qc + d.other)}</td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -1344,6 +1430,26 @@ function SummaryTab({
           )}
         </table>
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-white">
+          <span className="text-xs text-slate-400">
+            Hiển thị {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} / {filtered.length}
+          </span>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+              className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">
+              ← Trước
+            </button>
+            <span className="px-3 py-1.5 text-xs text-slate-500">{page + 1} / {totalPages}</span>
+            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
+              className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">
+              Tiếp →
+            </button>
+          </div>
+        </div>
+      )}
     </>
   )
 }
