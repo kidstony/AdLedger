@@ -67,7 +67,7 @@ export default function RevenuePage() {
     switchMode,
     customFrom, customTo, setCustomRange, refreshRevenue,
     updateCell, clearCell, bulkUpdateCells,
-    saveNote, savePayout, confirmCell,
+    saveNote, savePayout, confirmCell, revertCells,
     statusMap, confirmedAtMap,
   } = useRevenueGrid()
 
@@ -190,31 +190,36 @@ export default function RevenuePage() {
     }
   }
 
+  function showPageToast(msg: string) {
+    setToast(msg)
+    setTimeout(() => setToast(null), 3000)
+  }
+
   async function handleUndo() {
     if (!undoToast) return
     clearInterval(undoIntervalRef.current!)
     const items = undoToast.items
     setUndoToast(null)
-    await fetch('/api/revenue/revert-batch', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items }),
-    })
-    refreshRevenue()
-    setToast('Đã hoàn tác xác nhận')
+    const ok = await revertCells(items)
+    if (ok) {
+      showPageToast('Đã hoàn tác xác nhận')
+    } else {
+      showPageToast('Lỗi: Không thể hoàn tác. Vui lòng thử lại.')
+    }
   }
 
   async function handleSingleRevert() {
     if (!revertModal) return
     setIsReverting(true)
     const { projectId, date, amount } = revertModal
-    await fetch('/api/revenue/revert-batch', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: [{ project_id: projectId, date }] }),
-    })
+    const ok = await revertCells([{ project_id: projectId, date }])
     setIsReverting(false)
     setRevertModal(null)
-    refreshRevenue()
-    setToast(`Đã hoàn tác khoản ${formatVND(amount)}`)
+    if (ok) {
+      showPageToast(`Đã hoàn tác ${formatVND(amount)}`)
+    } else {
+      showPageToast('Lỗi: Không thể hoàn tác. Vui lòng thử lại.')
+    }
   }
 
   // Data for filter dropdown: compute per-project totals in current period

@@ -460,6 +460,31 @@ export function useRevenueGrid() {
     saveTimerRef.current = setTimeout(executeSave, 600)
   }, [activeTab, executeSave])
 
+  const revertCells = useCallback(async (items: Array<{ project_id: string; date: string }>) => {
+    const res = await fetch('/api/revenue/revert-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      console.error('[revertCells] API error:', res.status, body)
+      return false
+    }
+    // Immediate local state update — no need to wait for refreshRevenue
+    setStatusMap(prev => {
+      const n = new Map(prev)
+      items.forEach(({ project_id, date }) => n.delete(`${project_id}__${date}`))
+      return n
+    })
+    setConfirmedAtMap(prev => {
+      const n = new Map(prev)
+      items.forEach(({ project_id, date }) => n.delete(`${project_id}__${date}`))
+      return n
+    })
+    return true
+  }, [])
+
   const confirmCell = useCallback(async (projectId: string, date: string) => {
     const res = await fetch('/api/revenue/confirm', {
       method: 'POST',
@@ -521,7 +546,7 @@ export function useRevenueGrid() {
     goBack, goForward, goToToday, switchMode,
     customFrom, customTo, setCustomRange, refreshRevenue,
     updateCell, clearCell, bulkUpdateCells,
-    saveNote, savePayout, confirmCell,
+    saveNote, savePayout, confirmCell, revertCells,
     statusMap, confirmedAtMap,
   }
 }

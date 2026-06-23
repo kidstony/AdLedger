@@ -163,10 +163,10 @@ export default function EditableCell({
       {onRevertClick && !editing && (
         <button
           onClick={e => { e.stopPropagation(); onRevertClick() }}
-          className="absolute bottom-0.5 right-1 p-0.5 rounded text-slate-300 hover:text-amber-500 transition-colors"
+          className="absolute bottom-0.5 right-0.5 p-0.5 rounded text-amber-400 hover:text-amber-600 transition-colors"
           title="Hoàn tác xác nhận"
         >
-          <RotateCcw size={9} />
+          <RotateCcw size={11} />
         </button>
       )}
     </div>

@@ -22,8 +22,10 @@ export async function POST(req: NextRequest) {
 
   const failed = results.filter(r => r.error)
   if (failed.length > 0) {
+    console.error('[revert-batch] Supabase errors:', failed.map(r => r.error))
     return NextResponse.json({ error: 'Some reverts failed', failed: failed.length }, { status: 500 })
   }
 
+  console.log(`[revert-batch] Reverted ${items.length} items:`, items)
   return NextResponse.json({ success: true, count: items.length })
 }
