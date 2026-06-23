@@ -85,3 +85,9 @@ export function getDefaultDateRange(): DateRange {
 export function formatDate(date: Date): string {
   return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
+
+export function formatCid(cid: string): string {
+  const digits = cid.replace(/\D/g, '')
+  if (digits.length !== 10) return cid
+  return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`
+}

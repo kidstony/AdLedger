@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { SlidersHorizontal } from 'lucide-react'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
-import { cn, formatVND } from '@/lib/utils'
+import { cn, formatVND, formatCid } from '@/lib/utils'
 import type { CostCategory, OtherCost, Project, RentalGroup, RentalRateType } from '@/lib/types'
 
 // ─── Date helpers ────────────────────────────────────────────────────────────
@@ -636,7 +636,7 @@ function RentalTab({ groups, total, from, to, adSpendByCid, onAddGroup, onEditGr
                             <span className="text-slate-300 text-xs">└</span>
                             <div>
                               <span className="text-xs text-slate-600 font-medium">{c.account_label}</span>
-                              <span className="ml-2 text-slate-400 font-mono text-[11px]">{c.cid}</span>
+                              <span className="ml-2 text-slate-400 font-mono text-[11px]">{formatCid(c.cid)}</span>
                             </div>
                           </div>
                         </td>
@@ -836,12 +836,66 @@ function GroupModal({ form, editing, saving, onChange, onSave, onClose }: {
   )
 }
 
+function CidCombobox({ value, projects, onChange }: {
+  value: string; projects: Project[]; onChange: (cid: string) => void
+}) {
+  const [search, setSearch] = useState('')
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const uniqueCids = useMemo(() => [...new Map(projects.map(p => [p.cid, p])).values()], [projects])
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    return uniqueCids.filter(p =>
+      formatCid(p.cid).includes(q) || p.name.toLowerCase().includes(q)
+    ).slice(0, 50)
+  }, [uniqueCids, search])
+
+  const selectedProject = uniqueCids.find(p => p.cid === value)
+  const displayValue = value ? `${formatCid(value)} — ${selectedProject?.name ?? ''}` : ''
+
+  return (
+    <div ref={ref} className="relative">
+      <input
+        className={INPUT}
+        placeholder="Tìm CID hoặc tên dự án..."
+        value={open ? search : displayValue}
+        onFocus={() => { setOpen(true); setSearch('') }}
+        onChange={e => setSearch(e.target.value)}
+      />
+      {open && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+          {filtered.length === 0
+            ? <div className="px-3 py-2 text-xs text-slate-400">Không tìm thấy CID nào</div>
+            : filtered.map(p => (
+              <button key={p.cid} type="button"
+                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2"
+                onMouseDown={() => { onChange(p.cid); setOpen(false) }}>
+                <span className="font-mono text-slate-700">{formatCid(p.cid)}</span>
+                <span className="text-slate-300">—</span>
+                <span className="text-slate-600">{p.name}</span>
+              </button>
+            ))
+          }
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CidModal({ form, projects, saving, onChange, onSave, onClose }: {
   form: CidForm; projects: Project[]
   saving: boolean; onChange: (f: CidForm) => void; onSave: () => void; onClose: () => void
 }) {
   function set(patch: Partial<CidForm>) { onChange({ ...form, ...patch }) }
-  const uniqueCids = [...new Map(projects.map(p => [p.cid, p])).values()]
 
   function handleCidSelect(cid: string) {
     const proj = projects.find(p => p.cid === cid)
@@ -854,10 +908,7 @@ function CidModal({ form, projects, saving, onChange, onSave, onClose }: {
         <h3 className="font-semibold text-slate-800 mb-4">Thêm CID vào nhóm</h3>
         <div className="space-y-3">
           <Field label="CID (Google Customer ID) *">
-            <select value={form.cid} onChange={e => handleCidSelect(e.target.value)} className={INPUT}>
-              <option value="">— Chọn CID —</option>
-              {uniqueCids.map(p => <option key={p.cid} value={p.cid}>{p.cid} — {p.name}</option>)}
-            </select>
+            <CidCombobox value={form.cid} projects={projects} onChange={handleCidSelect} />
           </Field>
           <Field label="Tên tài khoản (hiển thị)">
             <input value={form.account_label} onChange={e => set({ account_label: e.target.value })}
@@ -866,7 +917,7 @@ function CidModal({ form, projects, saving, onChange, onSave, onClose }: {
           <Field label="Dự án liên kết (tuỳ chọn)">
             <select value={form.project_id} onChange={e => set({ project_id: e.target.value })} className={INPUT}>
               <option value="">— Không gắn —</option>
-              {projects.map(p => <option key={p.project_id} value={p.project_id}>{p.name} ({p.cid})</option>)}
+              {projects.map(p => <option key={p.project_id} value={p.project_id}>{p.name} ({formatCid(p.cid)})</option>)}
             </select>
           </Field>
         </div>
