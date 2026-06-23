@@ -124,7 +124,7 @@ export default function ProjectsPage() {
   async function toggleAssignment(projectId: string, userId: string, currentlyAssigned: boolean) {
     if (currentlyAssigned) {
       await supabase.from('project_assignments').delete().eq('project_id', projectId).eq('user_id', userId)
-      setProjectAssignments(prev => ({ ...prev, [projectId]: prev[projectId].filter(uid => uid !== userId) }))
+      setProjectAssignments(prev => ({ ...prev, [projectId]: (prev[projectId] ?? []).filter(uid => uid !== userId) }))
     } else {
       await supabase.from('project_assignments').insert({ project_id: projectId, user_id: userId })
       setProjectAssignments(prev => ({ ...prev, [projectId]: [...(prev[projectId] ?? []), userId] }))
