@@ -78,9 +78,8 @@ export function aggregatePnl(daily: PnlDaily[], dateRange: DateRange): PnlSummar
 }
 
 export function getDefaultDateRange(): DateRange {
-  const to = new Date('2026-06-21')
-  const from = new Date('2026-06-21')
-  from.setDate(from.getDate() - 29)
+  const to = new Date()
+  const from = new Date('2020-01-01')
   return { from, to }
 }
 
