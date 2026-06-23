@@ -105,8 +105,21 @@ export default function RevenuePage() {
   const rangeFrom = isReadOnlyGlobal ? '' : (dates[0] ?? '')
   const rangeTo   = isReadOnlyGlobal ? '' : (dates[dates.length - 1] ?? '')
 
-  function handleRangeChange(from: string, to: string) {
-    if (from && to && from <= to) setCustomRange(from, to)
+  // Bind inputs to customFrom/customTo when in custom mode so the value
+  // is always accurate (dates[] can be [] if from > to, hiding both inputs).
+  const displayFrom = viewMode === 'custom' ? customFrom : rangeFrom
+  const displayTo   = viewMode === 'custom' ? customTo   : rangeTo
+
+  function handleFromChange(v: string) {
+    if (!v) return
+    const to = customTo || v
+    setCustomRange(v, v > to ? v : to) // auto-clamp: if new from > to, collapse to = from
+  }
+
+  function handleToChange(v: string) {
+    if (!v) return
+    const from = customFrom || v
+    setCustomRange(from > v ? v : from, v) // auto-clamp: if new to < from, collapse from = to
   }
 
   // Projects with ≥1 pending cell in current range (screen tab, non-all)
@@ -439,17 +452,17 @@ export default function RevenuePage() {
         <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
           <span className="text-[11px] text-slate-400 whitespace-nowrap">Từ ngày</span>
           <input
-            type="date" value={rangeFrom} max={today}
+            type="date" value={displayFrom} max={today}
             disabled={viewMode === 'all'}
-            onChange={e => handleRangeChange(e.target.value, rangeTo)}
+            onChange={e => handleFromChange(e.target.value)}
             className="text-xs text-slate-700 outline-none bg-transparent disabled:opacity-40 disabled:cursor-not-allowed w-32"
           />
           <span className="text-slate-300 text-sm">—</span>
           <span className="text-[11px] text-slate-400 whitespace-nowrap">Đến ngày</span>
           <input
-            type="date" value={rangeTo} max={today}
+            type="date" value={displayTo} min={displayFrom} max={today}
             disabled={viewMode === 'all'}
-            onChange={e => handleRangeChange(rangeFrom, e.target.value)}
+            onChange={e => handleToChange(e.target.value)}
             className="text-xs text-slate-700 outline-none bg-transparent disabled:opacity-40 disabled:cursor-not-allowed w-32"
           />
         </div>
