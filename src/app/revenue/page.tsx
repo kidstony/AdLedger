@@ -517,7 +517,16 @@ export default function RevenuePage() {
         <DateRangePicker
           from={viewMode === 'all' ? '2020-01-01' : (displayFrom || today)}
           to={viewMode === 'all' ? today : (displayTo || today)}
-          onApply={(f, t) => setCustomRange(f, t)}
+          onApply={(f, t) => {
+            const diffDays = Math.round(
+              (new Date(t + 'T00:00:00Z').getTime() - new Date(f + 'T00:00:00Z').getTime()) / 86400000
+            )
+            if (diffDays > 62) {
+              switchMode('all')
+            } else {
+              setCustomRange(f, t)
+            }
+          }}
         />
 
         {/* Toàn thời gian toggle */}

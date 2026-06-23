@@ -60,7 +60,7 @@ export default function DashboardPage() {
         <DateRangePicker
           from={dateRange.from.toISOString().split('T')[0]}
           to={dateRange.to.toISOString().split('T')[0]}
-          onApply={(f, t) => setDateRange({ from: new Date(f + 'T00:00:00'), to: new Date(t + 'T00:00:00') })}
+          onApply={(f, t) => setDateRange({ from: new Date(f + 'T00:00:00Z'), to: new Date(t + 'T00:00:00Z') })}
         />
 
         <div className="relative">
