@@ -75,6 +75,7 @@ function BankList({ projects, onEnter }: { projects: Project[]; onEnter: (b: Ban
   const [dialog, setDialog] = useState<{ mode: 'add' | 'edit'; data?: Bank } | null>(null)
   const [form, setForm] = useState({ name: '', type: 'international' as 'local' | 'international', bank_category: '' as '' | 'traditional' | 'crypto' })
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState<Bank | null>(null)
   const [deleteError, setDeleteError] = useState('')
 
@@ -89,21 +90,24 @@ function BankList({ projects, onEnter }: { projects: Project[]; onEnter: (b: Ban
     return map
   }, [projects])
 
-  function openAdd() { setForm({ name: '', type: 'international', bank_category: '' }); setDialog({ mode: 'add' }) }
-  function openEdit(b: Bank) { setForm({ name: b.name, type: b.type, bank_category: b.bank_category }); setDialog({ mode: 'edit', data: b }) }
+  function openAdd() { setForm({ name: '', type: 'international', bank_category: '' }); setSaveError(''); setDialog({ mode: 'add' }) }
+  function openEdit(b: Bank) { setForm({ name: b.name, type: b.type, bank_category: b.bank_category }); setSaveError(''); setDialog({ mode: 'edit', data: b }) }
 
   async function handleSave() {
     if (!form.name.trim() || !form.bank_category) return
     setSaving(true)
+    setSaveError('')
     try {
       if (dialog?.mode === 'add') {
         const res = await fetch('/api/banks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
         const created = await res.json()
-        if (created.id) setBanks(prev => [...prev, { ...created, bank_accounts: [{ count: 0 }] }])
+        if (!res.ok) { setSaveError(created.error ?? 'Lỗi lưu bank'); return }
+        setBanks(prev => [...prev, { ...created, bank_accounts: [{ count: 0 }] }])
       } else if (dialog?.data) {
         const res = await fetch('/api/banks', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: dialog.data.id, ...form }) })
         const updated = await res.json()
-        if (updated.id) setBanks(prev => prev.map(b => b.id === updated.id ? { ...b, ...updated } : b))
+        if (!res.ok) { setSaveError(updated.error ?? 'Lỗi cập nhật bank'); return }
+        setBanks(prev => prev.map(b => b.id === updated.id ? { ...b, ...updated } : b))
       }
       setDialog(null)
     } finally { setSaving(false) }
@@ -216,7 +220,8 @@ function BankList({ projects, onEnter }: { projects: Project[]; onEnter: (b: Ban
                 </>
               )}
             </div>
-            <div className="flex justify-end gap-2 mt-5">
+            {saveError && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded mt-3">{saveError}</p>}
+            <div className="flex justify-end gap-2 mt-4">
               <Button variant="outline" onClick={() => setDialog(null)}>Hủy</Button>
               <Button onClick={handleSave} disabled={saving || (!form.bank_category && dialog.mode === 'add')}>{saving ? 'Đang lưu...' : 'Lưu'}</Button>
             </div>
@@ -249,6 +254,7 @@ function AccountList({ bank, projects, onBack }: { bank: Bank; projects: Project
   const [dialog, setDialog] = useState<{ mode: 'add' | 'edit'; data?: BankAccount } | null>(null)
   const [form, setForm] = useState({ account_identifier: '', owner_name: '', note: '', coin_type: 'USDT', network: 'TRC20', wallet_address: '' })
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState<BankAccount | null>(null)
   const [deleteError, setDeleteError] = useState('')
   const [usagePopup, setUsagePopup] = useState<{ account: BankAccount; list: Project[] } | null>(null)
@@ -266,10 +272,12 @@ function AccountList({ bank, projects, onBack }: { bank: Bank; projects: Project
 
   function openAdd() {
     setForm({ account_identifier: '', owner_name: '', note: '', coin_type: 'USDT', network: 'TRC20', wallet_address: '' })
+    setSaveError('')
     setDialog({ mode: 'add' })
   }
   function openEdit(acc: BankAccount) {
     setForm({ account_identifier: acc.account_identifier ?? '', owner_name: acc.owner_name, note: acc.note ?? '', coin_type: acc.coin_type ?? 'USDT', network: acc.network ?? 'TRC20', wallet_address: acc.wallet_address ?? '' })
+    setSaveError('')
     setDialog({ mode: 'edit', data: acc })
   }
 
@@ -278,6 +286,7 @@ function AccountList({ bank, projects, onBack }: { bank: Bank; projects: Project
     if (isCrypto && !form.wallet_address.trim()) return
     if (!isCrypto && !form.account_identifier.trim()) return
     setSaving(true)
+    setSaveError('')
     try {
       const payload = isCrypto
         ? { bank_id: bank.id, owner_name: form.owner_name, note: form.note || null, coin_type: form.coin_type, network: form.network, wallet_address: form.wallet_address, account_identifier: null }
@@ -285,11 +294,13 @@ function AccountList({ bank, projects, onBack }: { bank: Bank; projects: Project
       if (dialog?.mode === 'add') {
         const res = await fetch('/api/bank-accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         const created = await res.json()
-        if (created.id) setAccounts(prev => [...prev, created])
+        if (!res.ok) { setSaveError(created.error ?? 'Lỗi lưu tài khoản'); return }
+        setAccounts(prev => [...prev, created])
       } else if (dialog?.data) {
         const res = await fetch('/api/bank-accounts', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: dialog.data.id, ...payload }) })
         const updated = await res.json()
-        if (updated.id) setAccounts(prev => prev.map(a => a.id === updated.id ? updated : a))
+        if (!res.ok) { setSaveError(updated.error ?? 'Lỗi cập nhật tài khoản'); return }
+        setAccounts(prev => prev.map(a => a.id === updated.id ? updated : a))
       }
       setDialog(null)
     } finally { setSaving(false) }
@@ -451,7 +462,8 @@ function AccountList({ bank, projects, onBack }: { bank: Bank; projects: Project
               </div>
             )}
 
-            <div className="flex justify-end gap-2 mt-5">
+            {saveError && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded mt-3">{saveError}</p>}
+            <div className="flex justify-end gap-2 mt-4">
               <Button variant="outline" onClick={() => setDialog(null)}>Hủy</Button>
               <Button onClick={handleSave} disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu'}</Button>
             </div>
