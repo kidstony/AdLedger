@@ -79,7 +79,7 @@ export function aggregatePnl(daily: PnlDaily[], dateRange: DateRange): PnlSummar
 
 export function getDefaultDateRange(): DateRange {
   const to = new Date()
-  const from = new Date('2020-01-01')
+  const from = new Date(to.getFullYear(), to.getMonth(), 1)
   return { from, to }
 }
 
