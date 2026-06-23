@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from('affiliate_revenue')
-    .select('project_id, date, revenue, screen_revenue, note, payout_start_date, payout_end_date')
+    .select('project_id, date, revenue, screen_revenue, note, payout_start_date, payout_end_date, status, confirmed_at')
     .gte('date', from)
     .lte('date', to)
 

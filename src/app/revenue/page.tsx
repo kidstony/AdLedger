@@ -3,7 +3,7 @@
 import { useRef, useMemo, useState, useEffect, useCallback } from 'react'
 import {
   ChevronLeft, ChevronRight, Loader2, Banknote, Monitor,
-  Search, Keyboard, CheckCircle2, Cloud, SlidersHorizontal,
+  Search, Keyboard, CheckCircle2, Cloud, SlidersHorizontal, CircleCheck,
 } from 'lucide-react'
 import { useRevenueGrid } from '@/hooks/useRevenueGrid'
 import { useProjectsContext } from '@/context/ProjectsContext'
@@ -19,8 +19,9 @@ function addDays(date: string, n: number): string {
   const d = new Date(date + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().split('T')[0]
 }
 
-type NoteModal   = { projectId: string; date: string; current: string }
-type PayoutModal = { projectId: string; date: string; start: string; end: string }
+type NoteModal    = { projectId: string; date: string; current: string }
+type PayoutModal  = { projectId: string; date: string; start: string; end: string }
+type ConfirmModal = { projectId: string; date: string; screenAmount: number; projectName: string }
 
 // ── keyboard shortcut list ───────────────────────────────────────────────────
 const SHORTCUTS = [
@@ -46,7 +47,8 @@ export default function RevenuePage() {
     undo, redo,
     goBack, goForward, goToToday, switchMode,
     updateCell, clearCell, bulkUpdateCells,
-    saveNote, savePayout,
+    saveNote, savePayout, confirmCell,
+    statusMap, confirmedAtMap,
   } = useRevenueGrid()
 
   const { updateProject } = useProjectsContext()
@@ -54,10 +56,11 @@ export default function RevenuePage() {
   const focusedCellRef  = useRef<{ pi: number; di: number } | null>(null)
   const searchRef       = useRef<HTMLInputElement>(null)
 
-  const [searchQuery,  setSearchQuery]  = useState('')
-  const [filterIds,    setFilterIds]    = useState<Set<string>>(new Set())
-  const [noteModal,    setNoteModal]    = useState<NoteModal | null>(null)
-  const [payoutModal,  setPayoutModal]  = useState<PayoutModal | null>(null)
+  const [searchQuery,   setSearchQuery]   = useState('')
+  const [filterIds,     setFilterIds]     = useState<Set<string>>(new Set())
+  const [noteModal,     setNoteModal]     = useState<NoteModal | null>(null)
+  const [payoutModal,   setPayoutModal]   = useState<PayoutModal | null>(null)
+  const [confirmModal,  setConfirmModal]  = useState<ConfirmModal | null>(null)
   const [showShortcuts, setShowShortcuts] = useState(false)
 
   // Projects filtered by dropdown selection + inline search
@@ -96,6 +99,31 @@ export default function RevenuePage() {
     }),
     [filteredProjects, dates, gridData, screenGrid, prevScreenMap, activeTab, viewMode]
   )
+
+  // Pending / confirmed split for summary cards (screen tab only)
+  const { pendingTotal, confirmedTotal } = useMemo(() => {
+    if (activeTab !== 'screen') return { pendingTotal: undefined, confirmedTotal: undefined }
+    let pending = 0, confirmed = 0
+    filteredProjects.forEach(p => {
+      dates.forEach((d, di) => {
+        const key = `${p.project_id}__${d}`
+        const isConfirmed = statusMap.get(key) === 'confirmed'
+        let amount = 0
+        if (p.screen_revenue_type === 'cumulative' && viewMode !== 'all') {
+          const curr     = screenGrid.get(key) ?? 0
+          const prevDate = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
+          const prevKey  = `${p.project_id}__${prevDate}`
+          const prev     = di === 0 ? (prevScreenMap.get(prevKey) ?? 0) : (screenGrid.get(prevKey) ?? 0)
+          amount = Math.max(0, curr - prev)
+        } else {
+          amount = screenGrid.get(key) ?? 0
+        }
+        if (isConfirmed) confirmed += amount
+        else pending += amount
+      })
+    })
+    return { pendingTotal: pending, confirmedTotal: confirmed }
+  }, [activeTab, filteredProjects, dates, screenGrid, prevScreenMap, statusMap, viewMode])
 
   // ── keyboard shortcuts (global) ─────────────────────────────────────────────
   useEffect(() => {
@@ -355,6 +383,8 @@ export default function RevenuePage() {
         dates={dates}
         viewMode={viewMode}
         anchorDate={anchorDate}
+        pendingTotal={pendingTotal}
+        confirmedTotal={confirmedTotal}
       />
 
       {/* ── Search + Table ─────────────────────────────────────────────────── */}
@@ -431,15 +461,39 @@ export default function RevenuePage() {
                       </div>
                     </td>
                     {dates.map((date, di) => {
-                      const key      = `${project.project_id}__${date}`
-                      const hasPayout = activeTab === 'revenue' && payoutMap.has(key)
-                      const hasNote   = noteMap.has(key)
+                      const key         = `${project.project_id}__${date}`
+                      const hasPayout   = activeTab === 'revenue' && payoutMap.has(key)
+                      const hasNote     = noteMap.has(key)
+                      const isConfirmed = statusMap.get(key) === 'confirmed'
+                      const confirmedAt = confirmedAtMap.get(key)
+                      const tdCls       = cn('p-0 border-r border-slate-100', date === today && 'bg-blue-50/30')
 
+                      // ── Screen tab: confirmed cell → static indicator ────────
+                      if (activeTab === 'screen' && !isReadOnly && isConfirmed) {
+                        const rawForDisplay = isCumulative
+                          ? getCumulativeDelta(project.project_id, date, di).delta
+                          : (screenGrid.get(key) ?? 0)
+                        return (
+                          <td key={date} className={tdCls}>
+                            <div data-cell={key} className="h-9 px-2 flex flex-col items-end justify-center">
+                              <div className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600">
+                                <CircleCheck size={9} /> Đã nhận
+                              </div>
+                              {rawForDisplay > 0 && (
+                                <span className="font-mono text-[11px] text-slate-400">{formatVND(Math.abs(rawForDisplay))}</span>
+                              )}
+                            </div>
+                          </td>
+                        )
+                      }
+
+                      // ── Cumulative screen tab (pending) ──────────────────────
                       if (isCumulative && !isReadOnly) {
                         const { delta, cumulative } = getCumulativeDelta(project.project_id, date, di)
                         const rawValue = screenGrid.get(key)
+                        const hasDelta = rawValue !== undefined
                         return (
-                          <td key={date} className={cn('p-0 border-r border-slate-100', date === today && 'bg-blue-50/30')}>
+                          <td key={date} className={tdCls}>
                             <div data-cell={key} className="h-11">
                               <EditableCell
                                 value={rawValue}
@@ -448,23 +502,35 @@ export default function RevenuePage() {
                                 onNavigate={dir => navigate(pi, di, dir)}
                                 onFocus={() => { focusedCellRef.current = { pi, di } }}
                                 onPaste={handlePaste}
-                                displayValue={rawValue !== undefined ? delta : undefined}
-                                valueSubtitle={rawValue !== undefined ? `Tổng: ${formatVND(cumulative)}` : undefined}
+                                displayValue={hasDelta ? delta : undefined}
+                                valueSubtitle={hasDelta ? `Tổng: ${formatVND(cumulative)}` : undefined}
                                 valueColorClass={delta < 0 ? 'text-red-600' : 'text-slate-700'}
                                 hasNote={hasNote}
                                 onNoteClick={() => setNoteModal({ projectId: project.project_id, date, current: noteMap.get(key) ?? '' })}
+                                onConfirmClick={(hasDelta && cumulative > 0)
+                                  ? () => setConfirmModal({ projectId: project.project_id, date, screenAmount: cumulative, projectName: project.name })
+                                  : undefined}
                               />
                             </div>
                           </td>
                         )
                       }
 
-                      const cellValue = gridData.get(key)
+                      // ── Revenue tab + regular screen + read-only ─────────────
+                      const isRevTab = activeTab === 'revenue'
+                      // Revenue tab: only show value for confirmed rows; screen tab: show all pending
+                      const cellValue = isRevTab
+                        ? (isConfirmed ? gridData.get(key) : undefined)
+                        : gridData.get(key)
+
+                      const confirmedSub = isRevTab && isConfirmed && confirmedAt
+                        ? `✓ ${new Date(confirmedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}`
+                        : undefined
+
                       return (
-                        <td key={date} className={cn('p-0 border-r border-slate-100', date === today && 'bg-blue-50/30')}>
-                          <div data-cell={key} className="h-9">
+                        <td key={date} className={tdCls}>
+                          <div data-cell={key} className={confirmedSub ? 'h-11' : 'h-9'}>
                             {isReadOnly ? (
-                              // All-time view: read-only display
                               <div className="w-full h-full px-2 py-1.5 text-right font-mono text-xs font-medium text-slate-700">
                                 {cellValue ? formatVND(cellValue) : <span className="opacity-30">$0.00</span>}
                               </div>
@@ -476,11 +542,15 @@ export default function RevenuePage() {
                                 onNavigate={dir => navigate(pi, di, dir)}
                                 onFocus={() => { focusedCellRef.current = { pi, di } }}
                                 onPaste={handlePaste}
+                                valueSubtitle={confirmedSub}
                                 hasPayout={hasPayout}
-                                onDoubleClick={activeTab === 'revenue' ? () => {
+                                onDoubleClick={isRevTab ? () => {
                                   const ex = payoutMap.get(key)
                                   setPayoutModal({ projectId: project.project_id, date, start: ex?.start ?? '', end: ex?.end ?? date })
                                 } : undefined}
+                                onConfirmClick={(!isRevTab && !isConfirmed && (cellValue ?? 0) > 0)
+                                  ? () => setConfirmModal({ projectId: project.project_id, date, screenAmount: cellValue ?? 0, projectName: project.name })
+                                  : undefined}
                               />
                             )}
                           </div>
@@ -507,6 +577,33 @@ export default function RevenuePage() {
           </table>
         </div>
       </div>
+
+      {/* ── Confirm payment modal ──────────────────────────────────────────── */}
+      {confirmModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-5 w-80">
+            <h3 className="font-semibold text-slate-800 text-sm mb-2">Xác nhận thanh toán</h3>
+            <p className="text-sm text-slate-600 mb-1">
+              Xác nhận đã nhận{' '}
+              <span className="font-semibold text-emerald-700">{formatVND(confirmModal.screenAmount)}</span>{' '}
+              từ <span className="font-semibold">{confirmModal.projectName}</span>?
+            </p>
+            <p className="text-xs text-slate-400 mb-4">
+              Doanh thu sẽ được chuyển sang tab &quot;Doanh thu thực&quot;.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmModal(null)} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">Hủy</button>
+              <button
+                onClick={async () => {
+                  await confirmCell(confirmModal.projectId, confirmModal.date)
+                  setConfirmModal(null)
+                }}
+                className="px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-md hover:bg-emerald-700"
+              >✓ Xác nhận đã nhận</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Note modal ─────────────────────────────────────────────────────── */}
       {noteModal && (

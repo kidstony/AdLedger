@@ -41,6 +41,8 @@ type RevenueRow = {
   note?: string | null
   payout_start_date?: string | null
   payout_end_date?: string | null
+  status?: string | null
+  confirmed_at?: string | null
 }
 
 export function useRevenueGrid() {
@@ -67,8 +69,10 @@ export function useRevenueGrid() {
   useEffect(() => { screenGridRef.current  = screenGrid  }, [screenGrid])
 
   const [prevScreenMap, setPrevScreenMap] = useState<Map<string, number>>(new Map())
-  const [noteMap,   setNoteMap]   = useState<Map<string, string>>(new Map())
-  const [payoutMap, setPayoutMap] = useState<Map<string, { start: string; end: string }>>(new Map())
+  const [noteMap,        setNoteMap]       = useState<Map<string, string>>(new Map())
+  const [payoutMap,      setPayoutMap]     = useState<Map<string, { start: string; end: string }>>(new Map())
+  const [statusMap,      setStatusMap]     = useState<Map<string, 'pending' | 'confirmed'>>(new Map())
+  const [confirmedAtMap, setConfirmedAtMap] = useState<Map<string, string>>(new Map())
 
   // Undo / Redo
   const historyRef  = useRef<HistoryEntry[]>([])
@@ -250,16 +254,23 @@ export function useRevenueGrid() {
         savedScreenRef.current.set(`${r.project_id}__${r.date}`, r.screen_revenue ?? 0)
       })
 
-      const nextNotes   = new Map<string, string>()
-      const nextPayouts = new Map<string, { start: string; end: string }>()
+      const nextNotes       = new Map<string, string>()
+      const nextPayouts     = new Map<string, { start: string; end: string }>()
+      const nextStatus      = new Map<string, 'pending' | 'confirmed'>()
+      const nextConfirmedAt = new Map<string, string>()
       rows.forEach(r => {
-        if (r.note) nextNotes.set(`${r.project_id}__${r.date}`, r.note)
+        const k = `${r.project_id}__${r.date}`
+        if (r.note) nextNotes.set(k, r.note)
         if (r.payout_start_date && r.payout_end_date) {
-          nextPayouts.set(`${r.project_id}__${r.date}`, { start: r.payout_start_date, end: r.payout_end_date })
+          nextPayouts.set(k, { start: r.payout_start_date, end: r.payout_end_date })
         }
+        if (r.status === 'confirmed') nextStatus.set(k, 'confirmed')
+        if (r.confirmed_at) nextConfirmedAt.set(k, r.confirmed_at)
       })
       setNoteMap(nextNotes)
       setPayoutMap(nextPayouts)
+      setStatusMap(nextStatus)
+      setConfirmedAtMap(nextConfirmedAt)
 
       if (viewMode !== 'all') {
         const prevDate = addDays(dateList[0], -1)
@@ -426,6 +437,31 @@ export function useRevenueGrid() {
     saveTimerRef.current = setTimeout(executeSave, 600)
   }, [activeTab, executeSave])
 
+  const confirmCell = useCallback(async (projectId: string, date: string) => {
+    const res = await fetch('/api/revenue/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId, date }),
+    })
+    if (!res.ok) return
+    const { confirmed_at, revenue: confirmedRevenue } = await res.json()
+    const key = `${projectId}__${date}`
+    const ts  = confirmed_at || new Date().toISOString()
+
+    setStatusMap(prev => { const n = new Map(prev); n.set(key, 'confirmed'); return n })
+    setConfirmedAtMap(prev => { const n = new Map(prev); n.set(key, ts); return n })
+
+    // Reflect confirmed revenue in local state so revenue tab shows it immediately
+    if ((confirmedRevenue ?? 0) > 0) {
+      setRevenueGrid(prev => {
+        const n = new Map(prev)
+        if (!n.has(key) || (n.get(key) ?? 0) === 0) n.set(key, confirmedRevenue)
+        return n
+      })
+      savedRevenueRef.current.set(key, confirmedRevenue)
+    }
+  }, [])
+
   const saveNote = useCallback(async (projectId: string, date: string, note: string) => {
     const key = `${projectId}__${date}`
     setNoteMap(prev => { const n = new Map(prev); if (note) n.set(key, note); else n.delete(key); return n })
@@ -461,6 +497,7 @@ export function useRevenueGrid() {
     undo, redo,
     goBack, goForward, goToToday, switchMode,
     updateCell, clearCell, bulkUpdateCells,
-    saveNote, savePayout,
+    saveNote, savePayout, confirmCell,
+    statusMap, confirmedAtMap,
   }
 }

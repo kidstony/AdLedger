@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, KeyboardEvent, ClipboardEvent } from 'react'
-import { Pencil } from 'lucide-react'
+import { Pencil, CheckCircle2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -22,6 +22,8 @@ interface Props {
   // Billing period indicator (double-click to tag)
   hasPayout?: boolean
   onDoubleClick?: () => void
+  // Payment confirmation
+  onConfirmClick?: () => void
 }
 
 export default function EditableCell({
@@ -29,6 +31,7 @@ export default function EditableCell({
   displayValue, valueSubtitle, valueColorClass,
   hasNote, onNoteClick,
   hasPayout, onDoubleClick,
+  onConfirmClick,
 }: Props) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -141,6 +144,17 @@ export default function EditableCell({
           title={hasNote ? 'Xem/sửa ghi chú' : 'Thêm ghi chú'}
         >
           <Pencil size={9} />
+        </button>
+      )}
+
+      {/* Confirm payment button */}
+      {onConfirmClick && !editing && (mainValue ?? 0) > 0 && (
+        <button
+          onClick={e => { e.stopPropagation(); onConfirmClick() }}
+          className="absolute bottom-0.5 right-1 p-0.5 rounded text-emerald-400 hover:text-emerald-600 transition-colors"
+          title="Xác nhận đã nhận thanh toán"
+        >
+          <CheckCircle2 size={9} />
         </button>
       )}
     </div>

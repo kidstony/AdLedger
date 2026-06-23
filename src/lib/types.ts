@@ -40,6 +40,8 @@ export interface AffiliateRevenue {
   note?: string | null
   payout_start_date?: string | null
   payout_end_date?: string | null
+  status?: 'pending' | 'confirmed'
+  confirmed_at?: string | null
 }
 
 export interface PnlDaily {
