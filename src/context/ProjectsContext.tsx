@@ -36,14 +36,31 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
 
     if (error) { console.error('Lỗi tải dự án:', error); setIsLoading(false); return }
 
-    if (data.length === 0) {
+    let projectList = data as Project[]
+
+    if (projectList.length === 0) {
       const { data: seeded, error: seedError } = await supabase
         .from('projects').insert(MOCK_PROJECTS).select('*, bank_accounts(*, banks(*))')
       if (seedError) console.error('Lỗi seed data:', seedError)
-      else setProjects(seeded ?? [])
-    } else {
-      setProjects(data as Project[])
+      else projectList = seeded as Project[] ?? []
     }
+
+    // Enrich cid from campaign_discoveries so stale '0000000000' is overridden
+    const cidRes = await fetch('/api/integrations/campaigns').catch(() => null)
+    if (cidRes?.ok) {
+      const campaigns: Array<{ project_id: string | null; customer_id: string }> = await cidRes.json().catch(() => [])
+      if (Array.isArray(campaigns)) {
+        const cidByProjectId = new Map(
+          campaigns.filter(c => c.project_id && c.customer_id).map(c => [c.project_id!, c.customer_id])
+        )
+        projectList = projectList.map(p => {
+          const realCid = cidByProjectId.get(p.project_id)
+          return realCid ? { ...p, cid: realCid } : p
+        })
+      }
+    }
+
+    setProjects(projectList)
     setIsLoading(false)
   }
 
