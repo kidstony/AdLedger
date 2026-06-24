@@ -87,8 +87,9 @@ function buildBackfillScript(secret: string, webhookUrl: string) {
   var start = new Date(end);
   start.setFullYear(start.getFullYear() - 1); // 1 năm trước
 
-  var startStr = Utilities.formatDate(start, 'UTC', 'yyyyMMdd');
-  var endStr   = Utilities.formatDate(end,   'UTC', 'yyyyMMdd');
+  var tz       = AdsApp.currentAccount().getTimeZone();
+  var startStr = Utilities.formatDate(start, tz, 'yyyyMMdd');
+  var endStr   = Utilities.formatDate(end,   tz, 'yyyyMMdd');
 
   var records = [];
 
@@ -144,10 +145,12 @@ function buildSpendScript(secret: string, webhookUrl: string) {
   var SECRET  = '${secret}';
   var WEBHOOK = '${webhookUrl}';
 
+  var tz = AdsApp.currentAccount().getTimeZone();
+
   var yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  var dateForAds = Utilities.formatDate(yesterday, 'UTC', 'yyyyMMdd');  // YYYYMMDD cho getStatsFor
-  var dateStr    = Utilities.formatDate(yesterday, 'UTC', 'yyyy-MM-dd'); // YYYY-MM-DD cho webhook
+  var dateForAds = Utilities.formatDate(yesterday, tz, 'yyyyMMdd');  // YYYYMMDD cho getStatsFor
+  var dateStr    = Utilities.formatDate(yesterday, tz, 'yyyy-MM-dd'); // YYYY-MM-DD cho webhook
 
   var mccName = AdsApp.currentAccount().getName();
   var mccId   = AdsApp.currentAccount().getCustomerId().replace(/-/g, '');
