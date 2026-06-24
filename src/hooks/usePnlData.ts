@@ -7,6 +7,7 @@ import { DateRange, PnlSummary, RentalGroup, OtherCost } from '@/lib/types'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
 import { computeCidCost } from '@/lib/costs'
+import { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
 
 interface AdSpendRow {
   campaign_id: string
@@ -33,6 +34,7 @@ export function usePnlData() {
   const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange())
   const [isLoading, setIsLoading] = useState(false)
   const [search, setSearch] = useState('')
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set())
   const [adSpendRows, setAdSpendRows] = useState<AdSpendRow[] | null>(null)
   const [revenueRows, setRevenueRows] = useState<RevenueRow[]>([])
   const [rentalGroups, setRentalGroups] = useState<RentalGroup[]>([])
@@ -224,13 +226,24 @@ export function usePnlData() {
     return summaries
   }, [dataSource, adSpendRows, revenueRows, rentalGroups, otherCosts, projectByCampaignId, projectByCid, projectNameMap, activeProjectIds, dateRange, campaignInfoByProjectId])
 
+  const filterProjectData = useMemo<FilterProject[]>(() =>
+    allSummaries.map(s => ({
+      project_id: s.project_id,
+      name: s.name,
+      isActive: s.total_spend > 0 || s.total_revenue > 0,
+      monthlyRevenue: s.total_revenue,
+    })),
+    [allSummaries]
+  )
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return allSummaries
+    let result = allSummaries
+    if (selectedProjectIds.size > 0)
+      result = result.filter(s => selectedProjectIds.has(s.project_id))
+    if (!search.trim()) return result
     const q = search.toLowerCase()
-    return allSummaries.filter(
-      s => s.name.toLowerCase().includes(q) || s.project_id.includes(q)
-    )
-  }, [allSummaries, search])
+    return result.filter(s => s.name.toLowerCase().includes(q) || s.project_id.includes(q))
+  }, [allSummaries, search, selectedProjectIds])
 
   const totals = useMemo(() => {
     return filtered.reduce(
@@ -264,6 +277,9 @@ export function usePnlData() {
     setDateRange,
     search,
     setSearch,
+    selectedProjectIds,
+    setSelectedProjectIds,
+    filterProjectData,
     refresh,
     dataSource,
     lastSyncedAt,

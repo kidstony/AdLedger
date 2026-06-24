@@ -5,10 +5,11 @@ import { usePnlData } from '@/hooks/usePnlData'
 import SummaryCards from '@/components/dashboard/SummaryCards'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import PnlTable from '@/components/dashboard/PnlTable'
+import ProjectFilterDropdown from '@/components/revenue/ProjectFilterDropdown'
 import { cn } from '@/lib/utils'
 
 export default function DashboardPage() {
-  const { data, totals, isLoading, dateRange, setDateRange, search, setSearch, refresh, dataSource, lastSyncedAt } = usePnlData()
+  const { data, totals, isLoading, dateRange, setDateRange, search, setSearch, selectedProjectIds, setSelectedProjectIds, filterProjectData, refresh, dataSource, lastSyncedAt } = usePnlData()
 
   function formatSyncTime(iso: string) {
     const d = new Date(iso)
@@ -61,6 +62,12 @@ export default function DashboardPage() {
           from={dateRange.from.toISOString().split('T')[0]}
           to={dateRange.to.toISOString().split('T')[0]}
           onApply={(f, t) => setDateRange({ from: new Date(f + 'T00:00:00Z'), to: new Date(t + 'T00:00:00Z') })}
+        />
+
+        <ProjectFilterDropdown
+          projects={filterProjectData}
+          selectedIds={selectedProjectIds}
+          onApply={setSelectedProjectIds}
         />
 
         <div className="relative">

@@ -8,6 +8,7 @@ import { cn, formatVND, formatCid } from '@/lib/utils'
 import type { CostCategory, OtherCost, Project, RentalGroup, RentalRateType } from '@/lib/types'
 import { MS_PER_DAY, computeCidCost, computeGroupCost } from '@/lib/costs'
 import DateRangePicker from '@/components/ui/DateRangePicker'
+import ProjectFilterDropdown, { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
 
 // ─── Date helpers ────────────────────────────────────────────────────────────
 
@@ -129,6 +130,7 @@ export default function ExpensesPage() {
   const [groupBy, setGroupBy] = useState<'cid' | 'project'>('cid')
   const [summarySearch, setSummarySearch] = useState('')
   const [expandedSummaryKey, setExpandedSummaryKey] = useState<string | null>(null)
+  const [expenseFilterIds, setExpenseFilterIds] = useState<Set<string>>(new Set())
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
@@ -219,6 +221,17 @@ export default function ExpensesPage() {
     })
     return map
   }, [otherCosts])
+
+  const expenseFilterProjectData = useMemo<FilterProject[]>(() =>
+    projects.map(p => {
+      const spend = adSpendByCid.get(p.cid) ?? 0
+      const rental = rentalByCid.get(p.cid) ?? 0
+      const other = otherByCid.get(p.cid) ?? 0
+      const total = spend + rental + other
+      return { project_id: p.project_id, name: p.name, isActive: total > 0, monthlyRevenue: total }
+    }),
+    [projects, adSpendByCid, rentalByCid, otherByCid]
+  )
 
   // ── Fetchers ──────────────────────────────────────────────────────────────
 
@@ -385,6 +398,12 @@ export default function ExpensesPage() {
           onApply={(f, t) => { setFromStr(f); setToStr(t) }}
         />
 
+        <ProjectFilterDropdown
+          projects={expenseFilterProjectData}
+          selectedIds={expenseFilterIds}
+          onApply={setExpenseFilterIds}
+        />
+
         {/* Tab switcher */}
         <div className="ml-auto flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
           {([
@@ -461,6 +480,7 @@ export default function ExpensesPage() {
             projects={projects} adSpendRows={adSpendRows} otherCosts={otherCosts}
             projectByCampaignId={projectByCampaignId} projectById={projectById}
             fromStr={fromStr} toStr={toStr}
+            filterIds={expenseFilterIds}
           />
         )}
       </div>
@@ -1109,7 +1129,7 @@ function SummaryTab({
   rentalByCid, rentalByProject,
   otherByCid, otherByProject,
   projects, adSpendRows, otherCosts, projectByCampaignId, projectById,
-  fromStr, toStr,
+  fromStr, toStr, filterIds,
 }: {
   groupBy: 'cid' | 'project'
   onGroupByChange: (v: 'cid' | 'project') => void
@@ -1130,6 +1150,7 @@ function SummaryTab({
   projectById: Map<string, Project>
   fromStr: string
   toStr: string
+  filterIds: Set<string>
 }) {
   const [sortCol, setSortCol] = useState<SummarySortCol>('total')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -1157,6 +1178,11 @@ function SummaryTab({
 
       const normal: SummaryRowData[] = [...allCids]
         .filter(c => c !== '')
+        .filter(cid => {
+          if (filterIds.size === 0) return true
+          const projs = projectsByCid.get(cid) ?? []
+          return projs.some(p => filterIds.has(p.project_id))
+        })
         .map(cid => {
           const projs = projectsByCid.get(cid) ?? []
           return {
@@ -1170,12 +1196,13 @@ function SummaryTab({
         })
 
       const chungOther = otherByCid.get('') ?? 0
-      if (chungOther > 0) normal.push({ key: '', label: 'Chung (không gán dự án)', qc: 0, rental: 0, other: chungOther })
+      if (chungOther > 0 && filterIds.size === 0) normal.push({ key: '', label: 'Chung (không gán dự án)', qc: 0, rental: 0, other: chungOther })
       return normal
     } else {
       const allIds = new Set<string>([...spendByProject.keys(), ...rentalByProject.keys(), ...otherByProject.keys()])
       const normal: SummaryRowData[] = [...allIds]
         .filter(id => id !== '')
+        .filter(id => filterIds.size === 0 || filterIds.has(id))
         .map(id => {
           const p = projectById.get(id)
           return {
@@ -1189,10 +1216,10 @@ function SummaryTab({
 
       const chungRental = rentalByProject.get('') ?? 0
       const chungOther = otherByProject.get('') ?? 0
-      if (chungRental + chungOther > 0) normal.push({ key: '', label: 'Chung (không gán dự án)', qc: 0, rental: chungRental, other: chungOther })
+      if (chungRental + chungOther > 0 && filterIds.size === 0) normal.push({ key: '', label: 'Chung (không gán dự án)', qc: 0, rental: chungRental, other: chungOther })
       return normal
     }
-  }, [groupBy, adSpendByCid, spendByProject, rentalByCid, rentalByProject, otherByCid, otherByProject, projects, projectById])
+  }, [groupBy, adSpendByCid, spendByProject, rentalByCid, rentalByProject, otherByCid, otherByProject, projects, projectById, filterIds])
 
   const filtered = useMemo(() => {
     const base = search.trim()
