@@ -903,6 +903,62 @@ function CidCombobox({ value, projects, onChange }: {
   )
 }
 
+function ProjectCombobox({ value, projects, onChange }: {
+  value: string; projects: Project[]; onChange: (id: string) => void
+}) {
+  const [search, setSearch] = useState('')
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    return projects.filter(p =>
+      p.name.toLowerCase().includes(q) || p.project_id.toLowerCase().includes(q)
+    ).slice(0, 50)
+  }, [projects, search])
+
+  const selected = projects.find(p => p.project_id === value)
+
+  return (
+    <div ref={ref} className="relative">
+      <input
+        className={INPUT}
+        placeholder="Tìm tên dự án..."
+        value={open ? search : (selected?.name ?? '')}
+        onFocus={() => { setOpen(true); setSearch('') }}
+        onChange={e => setSearch(e.target.value)}
+      />
+      {open && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+          <button type="button"
+            className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-400 italic"
+            onMouseDown={() => { onChange(''); setOpen(false) }}>
+            — Tất cả / chung —
+          </button>
+          {filtered.length === 0
+            ? <div className="px-3 py-2 text-xs text-slate-400">Không tìm thấy dự án</div>
+            : filtered.map(p => (
+              <button key={p.project_id} type="button"
+                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700"
+                onMouseDown={() => { onChange(p.project_id); setOpen(false) }}>
+                {p.name}
+              </button>
+            ))
+          }
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CidModal({ form, projects, saving, onChange, onSave, onClose }: {
   form: CidForm; projects: Project[]
   saving: boolean; onChange: (f: CidForm) => void; onSave: () => void; onClose: () => void
@@ -1034,10 +1090,11 @@ function OtherModal({ form, editing, categories, projects, saving, onChange, onS
             <input value={form.description} onChange={e => set({ description: e.target.value })} className={INPUT} />
           </Field>
           <Field label="Dự án (tuỳ chọn)">
-            <select value={form.project_id} onChange={e => set({ project_id: e.target.value })} className={INPUT}>
-              <option value="">— Tất cả / chung —</option>
-              {projects.map(p => <option key={p.project_id} value={p.project_id}>{p.name}</option>)}
-            </select>
+            <ProjectCombobox
+              value={form.project_id}
+              projects={projects}
+              onChange={id => set({ project_id: id })}
+            />
           </Field>
         </div>
         <div className="flex justify-end gap-2 mt-5">
