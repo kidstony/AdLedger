@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Pencil, Trash2, Search, UserCheck, Link2, Copy, Check } from 'lucide-react'
+import { Plus, Pencil, Trash2, Search, UserCheck, Link2, Mail, Copy, Check } from 'lucide-react'
 import { useProjects } from '@/hooks/useProjects'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
 import { Project, CampaignDiscovery } from '@/lib/types'
@@ -29,6 +29,7 @@ export default function ProjectsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const headerCheckboxRef = useRef<HTMLInputElement>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  const [copiedEmail, setCopiedEmail] = useState<string | null>(null)
   const [copiedWallet, setCopiedWallet] = useState<string | null>(null)
 
   // campaign info from Google Ads: project_id → {customer_id, campaign_id, mcc_name, mcc_id}
@@ -137,6 +138,12 @@ export default function ProjectsPage() {
     setTimeout(() => setCopied(null), 1500)
   }
 
+  function copyEmail(email: string, id: string) {
+    navigator.clipboard.writeText(email)
+    setCopiedEmail(id)
+    setTimeout(() => setCopiedEmail(null), 1500)
+  }
+
   function copyWallet(addr: string, key: string) {
     navigator.clipboard.writeText(addr)
     setCopiedWallet(key)
@@ -223,7 +230,7 @@ export default function ProjectsPage() {
                           title="Chọn tất cả"
                         />
                       </th>
-                      {['Project ID', 'Tên dự án', 'CID', 'ID Campaign', 'MCC', 'ID MCC', 'Tổng Dự Án', 'Link Ref', 'Bank Nhận', ''].map(h => (
+                      {['Project ID', 'Tên dự án', 'CID', 'ID Campaign', 'MCC', 'ID MCC', 'Tổng Dự Án', 'Link Ref', 'Email Ref', 'Bank Nhận', ''].map(h => (
                         <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -279,6 +286,24 @@ export default function ProjectsPage() {
                                   title="Copy link"
                                 >
                                   {copied === p.project_id ? <Check size={11} className="text-green-500" /> : <Copy size={11} />}
+                                </button>
+                              </div>
+                            ) : <span className="text-slate-300 text-xs">—</span>}
+                          </td>
+                          {/* Email Ref */}
+                          <td className="px-4 py-3 max-w-[180px]">
+                            {p.email_ref ? (
+                              <div className="flex items-center gap-1.5 group">
+                                <Mail size={11} className="text-slate-400 shrink-0" />
+                                <span className="text-xs text-slate-600 truncate" title={p.email_ref}>
+                                  {p.email_ref.length > 28 ? p.email_ref.slice(0, 28) + '…' : p.email_ref}
+                                </span>
+                                <button
+                                  onClick={() => copyEmail(p.email_ref!, p.project_id)}
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 shrink-0"
+                                  title="Copy email"
+                                >
+                                  {copiedEmail === p.project_id ? <Check size={11} className="text-green-500" /> : <Copy size={11} />}
                                 </button>
                               </div>
                             ) : <span className="text-slate-300 text-xs">—</span>}

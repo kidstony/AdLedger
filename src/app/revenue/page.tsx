@@ -389,12 +389,14 @@ export default function RevenuePage() {
 
   // ── navigation ──────────────────────────────────────────────────────────────
   function navigate(pi: number, di: number, dir: 'right' | 'left' | 'down' | 'up') {
+    if (!filteredProjects.length) return
     let npi = pi, ndi = di
     if (dir === 'right')     { ndi++; if (ndi >= dates.length) { ndi = 0; npi = (pi + 1) % filteredProjects.length } }
     else if (dir === 'left') { ndi--; if (ndi < 0) { ndi = dates.length - 1; npi = (pi - 1 + filteredProjects.length) % filteredProjects.length } }
     else if (dir === 'down') npi = (pi + 1) % filteredProjects.length
     else                     npi = (pi - 1 + filteredProjects.length) % filteredProjects.length
     ndi = Math.max(0, Math.min(ndi, dates.length - 1))
+    if (npi < 0 || npi >= filteredProjects.length) return
     focusedCellRef.current = { pi: npi, di: ndi }
     const key = `${filteredProjects[npi].project_id}__${dates[ndi]}`
     // Click the inner display div (cursor-text), not the wrapper — events don't bubble down
@@ -568,7 +570,10 @@ export default function RevenuePage() {
         <ProjectFilterDropdown
           projects={filterProjectData}
           selectedIds={filterIds}
-          onApply={ids => { setFilterIds(ids) }}
+          onApply={ids => {
+            setFilterIds(ids)
+            if (viewMode === 'all') switchMode('week')
+          }}
         />
         <div className="w-px h-5 bg-slate-200 mx-1" />
         <span className="text-xs text-slate-400">

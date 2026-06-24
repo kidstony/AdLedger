@@ -35,6 +35,7 @@ export interface Project {
   google_campaign_id?: string | null
   screen_revenue_type?: 'daily' | 'cumulative'
   ref_link?: string | null
+  email_ref?: string | null
   bank_account_id?: string | null
   bank_accounts?: (BankAccount & { banks?: Bank | null }) | null
 }

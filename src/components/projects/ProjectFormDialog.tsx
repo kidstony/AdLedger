@@ -244,6 +244,17 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
             />
           </div>
 
+          {/* Email Ref */}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-slate-600">Email Ref (tuỳ chọn)</label>
+            <Input
+              type="email"
+              value={form.email_ref ?? ''}
+              placeholder="partner@example.com"
+              onChange={e => setForm(f => ({ ...f, email_ref: e.target.value || null }))}
+            />
+          </div>
+
           {/* Bank cascading */}
           <div className="space-y-3 pt-1 border-t border-slate-100">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Bank nhận (tuỳ chọn)</p>

@@ -93,6 +93,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       master_project_id: p.master_project_id ?? null,
       screen_revenue_type: p.screen_revenue_type ?? 'daily',
       ref_link: p.ref_link ?? null,
+      email_ref: p.email_ref ?? null,
       bank_account_id: p.bank_account_id ?? null,
     })
     if (error) {
@@ -114,6 +115,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
         master_project_id: updated.master_project_id ?? null,
         screen_revenue_type: updated.screen_revenue_type ?? 'daily',
         ref_link: updated.ref_link ?? null,
+        email_ref: updated.email_ref ?? null,
         bank_account_id: updated.bank_account_id ?? null,
       })
       .eq('project_id', updated.project_id)
