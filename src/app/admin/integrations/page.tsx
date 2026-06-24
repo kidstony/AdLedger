@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Copy, Eye, EyeOff, CheckCircle, XCircle, Loader2, RefreshCw, Zap, X } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { Copy, Eye, EyeOff, CheckCircle, XCircle, Loader2, RefreshCw, Zap, X, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { CampaignDiscovery } from '@/lib/types'
@@ -194,6 +194,67 @@ function buildSpendScript(secret: string, webhookUrl: string) {
 }`
 }
 
+function CampaignProjectSelect({ campaignId, currentProjectId, projects, inProgress, onSelect }: {
+  campaignId: string
+  currentProjectId: string | null
+  projects: import('@/lib/types').Project[]
+  inProgress: boolean
+  onSelect: (campaignId: string, projectId: string | null) => void
+}) {
+  const [search, setSearch] = useState('')
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    return projects.filter(p =>
+      p.name.toLowerCase().includes(q) || p.project_id.toLowerCase().includes(q)
+    ).slice(0, 50)
+  }, [projects, search])
+
+  const selected = projects.find(p => p.project_id === currentProjectId)
+
+  return (
+    <div ref={ref} className="relative">
+      <input
+        className="text-xs border border-slate-200 rounded-md px-2 py-1.5 bg-white text-slate-700 outline-none focus:ring-2 focus:ring-slate-300 w-[200px]"
+        placeholder="Tìm dự án..."
+        value={open ? search : (selected?.name ?? '')}
+        onFocus={() => { setOpen(true); setSearch('') }}
+        onChange={e => setSearch(e.target.value)}
+        disabled={inProgress}
+      />
+      {open && (
+        <div className="absolute z-50 right-0 mt-1 w-56 bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+          <button type="button"
+            className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-400 italic"
+            onMouseDown={() => { onSelect(campaignId, null); setOpen(false) }}>
+            — Chọn dự án —
+          </button>
+          {filtered.length === 0
+            ? <div className="px-3 py-2 text-xs text-slate-400">Không tìm thấy</div>
+            : filtered.map(p => (
+              <button key={p.project_id} type="button"
+                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 text-slate-700"
+                onMouseDown={() => { onSelect(campaignId, p.project_id); setOpen(false) }}>
+                {p.name}
+              </button>
+            ))
+          }
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function IntegrationsPage() {
   const { projects } = useProjectsContext()
   const [secret, setSecret] = useState('')
@@ -206,6 +267,9 @@ export default function IntegrationsPage() {
   const [campaignsLoading, setCampaignsLoading] = useState(true)
   const [mappingInProgress, setMappingInProgress] = useState<Set<string>>(new Set())
   const [activeTab, setActiveTab] = useState<'unmapped' | 'mapped'>('unmapped')
+  const [campaignSearch, setCampaignSearch] = useState('')
+  const [syncPage, setSyncPage] = useState(0)
+  const [hasMoreSync, setHasMoreSync] = useState(false)
   const [backfillStatus, setBackfillStatus] = useState<'idle' | 'loading' | 'done'>('idle')
 
   const webhookUrl = typeof window !== 'undefined'
@@ -218,11 +282,13 @@ export default function IntegrationsPage() {
       .then(d => { setSecret(d.full ?? ''); setSecretPreview(d.preview ?? '') })
   }, [])
 
-  const loadLog = useCallback(async () => {
+  const loadLog = useCallback(async (page = 0, append = false) => {
     setLogLoading(true)
-    const res = await fetch('/api/integrations/sync-log')
+    const res = await fetch(`/api/integrations/sync-log?page=${page}`)
     const data = await res.json()
-    setSyncLog(Array.isArray(data) ? data : [])
+    const entries = Array.isArray(data) ? data : []
+    setSyncLog(prev => append ? [...prev, ...entries] : entries)
+    setHasMoreSync(entries.length === 10)
     setLogLoading(false)
   }, [])
 
@@ -277,6 +343,14 @@ export default function IntegrationsPage() {
   const unmapped = campaigns.filter(c => !c.project_id)
   const mapped = campaigns.filter(c => c.project_id)
   const displayList = activeTab === 'unmapped' ? unmapped : mapped
+
+  const filteredList = useMemo(() => {
+    if (!campaignSearch.trim()) return displayList
+    const q = campaignSearch.toLowerCase()
+    return displayList.filter(c =>
+      c.campaign_name.toLowerCase().includes(q) || c.campaign_id.includes(q)
+    )
+  }, [displayList, campaignSearch])
 
   return (
     <div className="p-6 max-w-3xl space-y-6">
@@ -401,13 +475,13 @@ export default function IntegrationsPage() {
           {/* Tabs */}
           <div className="flex gap-1 mb-4 bg-slate-100 p-0.5 rounded-md w-fit">
             <button
-              onClick={() => setActiveTab('unmapped')}
+              onClick={() => { setActiveTab('unmapped'); setCampaignSearch('') }}
               className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${activeTab === 'unmapped' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               Chưa gán {unmapped.length > 0 && <span className="ml-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-full text-[10px]">{unmapped.length}</span>}
             </button>
             <button
-              onClick={() => setActiveTab('mapped')}
+              onClick={() => { setActiveTab('mapped'); setCampaignSearch('') }}
               className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${activeTab === 'mapped' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
               Đã gán {mapped.length > 0 && <span className="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 rounded-full text-[10px]">{mapped.length}</span>}
@@ -428,7 +502,20 @@ export default function IntegrationsPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {displayList.map(c => (
+              <div className="relative">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Tìm campaign theo tên hoặc ID..."
+                  value={campaignSearch}
+                  onChange={e => setCampaignSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-2 text-xs border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-slate-300"
+                />
+              </div>
+              {filteredList.length === 0 && (
+                <div className="py-4 text-center text-xs text-slate-400">Không tìm thấy campaign nào.</div>
+              )}
+              {filteredList.map(c => (
                 <div key={c.campaign_id}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-sm ${c.project_id ? 'border-green-100 bg-green-50/50' : 'border-slate-100 bg-white'}`}
                 >
@@ -451,22 +538,13 @@ export default function IntegrationsPage() {
                     </div>
                   ) : (
                     <div className="shrink-0">
-                      {mappingInProgress.has(c.campaign_id) ? (
-                        <Loader2 size={14} className="animate-spin text-slate-400" />
-                      ) : (
-                        <select
-                          defaultValue=""
-                          onChange={e => e.target.value && handleMapping(c.campaign_id, e.target.value)}
-                          className="text-xs border border-slate-200 rounded-md px-2 py-1.5 bg-white text-slate-700 outline-none focus:ring-2 focus:ring-slate-300 max-w-[200px]"
-                        >
-                          <option value="">— Chọn dự án —</option>
-                          {projects.map(p => (
-                            <option key={p.project_id} value={p.project_id}>
-                              {p.name} ({p.project_id})
-                            </option>
-                          ))}
-                        </select>
-                      )}
+                      <CampaignProjectSelect
+                        campaignId={c.campaign_id}
+                        currentProjectId={c.project_id ?? null}
+                        projects={projects}
+                        inProgress={mappingInProgress.has(c.campaign_id)}
+                        onSelect={handleMapping}
+                      />
                     </div>
                   )}
                 </div>
@@ -480,7 +558,7 @@ export default function IntegrationsPage() {
       <div className="border border-slate-200 rounded-lg overflow-hidden">
         <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex items-center justify-between">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Lịch sử đồng bộ</p>
-          <button onClick={loadLog} className="p-1 rounded hover:bg-slate-200 text-slate-400 transition-colors">
+          <button onClick={() => { setSyncPage(0); loadLog(0, false) }} className="p-1 rounded hover:bg-slate-200 text-slate-400 transition-colors">
             <RefreshCw size={12} />
           </button>
         </div>
@@ -494,35 +572,43 @@ export default function IntegrationsPage() {
             {pingStatus === 'error' && <span className="text-red-600 font-medium">· Thất bại</span>}
           </Button>
 
-          {logLoading ? (
-            <div className="py-4 text-center text-sm text-slate-400">Đang tải...</div>
-          ) : syncLog.length === 0 ? (
+          {!logLoading && syncLog.length === 0 ? (
             <div className="py-4 text-center text-sm text-slate-400">Chưa có lịch sử đồng bộ.</div>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left">
-                  <th className="pb-2 text-xs font-medium text-slate-500 uppercase tracking-wide">Thời gian</th>
-                  <th className="pb-2 text-xs font-medium text-slate-500 uppercase tracking-wide">Records</th>
-                  <th className="pb-2 text-xs font-medium text-slate-500 uppercase tracking-wide">Trạng thái</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {syncLog.map(entry => (
-                  <tr key={entry.id}>
-                    <td className="py-2.5 text-slate-600 font-mono text-xs">{formatTime(entry.synced_at)}</td>
-                    <td className="py-2.5 text-slate-500">{entry.records > 0 ? entry.records : '—'}</td>
-                    <td className="py-2.5">
-                      {entry.status === 'success' ? (
-                        <span className="flex items-center gap-1 text-green-600 text-xs font-medium"><CheckCircle size={12} /> Thành công</span>
-                      ) : (
-                        <span className="flex items-center gap-1 text-red-600 text-xs font-medium" title={entry.message ?? ''}><XCircle size={12} /> Lỗi</span>
-                      )}
-                    </td>
+            <>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left">
+                    <th className="pb-2 text-xs font-medium text-slate-500 uppercase tracking-wide">Thời gian</th>
+                    <th className="pb-2 text-xs font-medium text-slate-500 uppercase tracking-wide">Records</th>
+                    <th className="pb-2 text-xs font-medium text-slate-500 uppercase tracking-wide">Trạng thái</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {syncLog.map(entry => (
+                    <tr key={entry.id}>
+                      <td className="py-2.5 text-slate-600 font-mono text-xs">{formatTime(entry.synced_at)}</td>
+                      <td className="py-2.5 text-slate-500">{entry.records > 0 ? entry.records : '—'}</td>
+                      <td className="py-2.5">
+                        {entry.status === 'success' ? (
+                          <span className="flex items-center gap-1 text-green-600 text-xs font-medium"><CheckCircle size={12} /> Thành công</span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-red-600 text-xs font-medium" title={entry.message ?? ''}><XCircle size={12} /> Lỗi: {entry.message}</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {hasMoreSync && (
+                <button
+                  onClick={() => { const next = syncPage + 1; setSyncPage(next); loadLog(next, true) }}
+                  disabled={logLoading}
+                  className="mt-3 text-xs text-slate-500 hover:text-slate-700 underline disabled:opacity-50">
+                  {logLoading ? 'Đang tải...' : 'Tải thêm...'}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
