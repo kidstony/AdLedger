@@ -54,7 +54,7 @@ export default function MasterProjectsPage() {
       const total_revenue        = children.reduce((s, c) => s + c.total_revenue, 0)
       const total_profit         = children.reduce((s, c) => s + c.total_profit, 0)
       const total_screen         = children.reduce((s, c) => s + (c.total_screen_revenue ?? 0), 0)
-      const total_pending        = total_screen - total_revenue
+      const total_pending        = children.reduce((s, c) => s + (c.total_pending ?? 0), 0)
       const avg_roi              = total_cost > 0 ? (total_profit / total_cost) * 100 : 0
       return { ...mp, children, total_spend, total_rental, total_other, total_cost, total_revenue, total_profit, avg_roi, total_screen, total_pending }
     })
