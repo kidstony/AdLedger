@@ -1,6 +1,6 @@
 'use client'
 
-import { RefreshCw, Search, Zap, Database } from 'lucide-react'
+import { RefreshCw, Search, Zap, Database, AlertTriangle } from 'lucide-react'
 import { usePnlData } from '@/hooks/usePnlData'
 import SummaryCards from '@/components/dashboard/SummaryCards'
 import DateRangePicker from '@/components/ui/DateRangePicker'
@@ -9,7 +9,7 @@ import ProjectFilterDropdown from '@/components/revenue/ProjectFilterDropdown'
 import { cn } from '@/lib/utils'
 
 export default function DashboardPage() {
-  const { data, totals, isLoading, dateRange, setDateRange, search, setSearch, selectedProjectIds, setSelectedProjectIds, filterProjectData, refresh, dataSource, lastSyncedAt } = usePnlData()
+  const { data, allSummaries, totals, isLoading, dateRange, setDateRange, search, setSearch, selectedProjectIds, setSelectedProjectIds, filterProjectData, refresh, dataSource, lastSyncedAt } = usePnlData()
 
   function formatSyncTime(iso: string) {
     const d = new Date(iso)
@@ -93,6 +93,16 @@ export default function DashboardPage() {
           Làm mới
         </button>
       </div>
+
+      {dataSource === 'real' && allSummaries.length === 0 && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+          <AlertTriangle size={15} className="shrink-0" />
+          <span>
+            Dữ liệu đã đồng bộ từ Google Ads nhưng chưa có campaign nào được gán vào dự án.{' '}
+            <a href="/admin/integrations" className="underline font-medium">Cài đặt mapping →</a>
+          </span>
+        </div>
+      )}
 
       <PnlTable data={data} isLoading={isLoading} />
     </div>
