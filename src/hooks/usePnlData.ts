@@ -65,11 +65,12 @@ export function usePnlData() {
   async function fetchAdSpend(range: DateRange) {
     const from = range.from.toISOString().split('T')[0]
     const to = range.to.toISOString().split('T')[0]
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('ad_spend')
       .select('campaign_id, date, spend')
       .gte('date', from)
       .lte('date', to)
+    console.log('[usePnlData] fetchAdSpend', { from, to, rows: data?.length, error: error?.message })
     setAdSpendRows(data ?? [])
   }
 

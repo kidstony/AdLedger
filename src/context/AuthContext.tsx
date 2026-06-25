@@ -22,11 +22,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
 
   async function fetchProfile(userId: string) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('user_profiles')
       .select('role, team_id')
       .eq('user_id', userId)
       .single()
+    console.log('[AuthContext] fetchProfile', { userId, role: data?.role, error: error?.message })
     setRole((data?.role as UserRole) ?? null)
     setTeamId(data?.team_id ?? null)
   }
