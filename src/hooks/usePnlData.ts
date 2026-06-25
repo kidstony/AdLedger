@@ -45,15 +45,11 @@ export function usePnlData() {
 
   // Map google_campaign_id → project
   const projectByCampaignId = useMemo(
-    () => {
-      const map = new Map(
-        projects
-          .filter(p => p.google_campaign_id)
-          .map(p => [p.google_campaign_id!, p])
-      )
-      console.log('[usePnlData] projectByCampaignId rebuilt', { projectsLen: projects.length, mapSize: map.size })
-      return map
-    },
+    () => new Map(
+      projects
+        .filter(p => p.google_campaign_id)
+        .map(p => [p.google_campaign_id!, p])
+    ),
     [projects]
   )
 
@@ -74,7 +70,6 @@ export function usePnlData() {
       .select('campaign_id, date, spend')
       .gte('date', from)
       .lte('date', to)
-    console.log('[usePnlData] fetchAdSpend', { from, to, rows: data?.length, error: error?.message })
     setAdSpendRows(data ?? [])
   }
 
@@ -168,15 +163,6 @@ export function usePnlData() {
     })
 
     if (dataSource === 'real' && adSpendRows && adSpendRows.length > 0) {
-      const sampleIds = adSpendRows.slice(0, 3).map(r => r.campaign_id)
-      const sampleMatch = sampleIds.map(id => ({ id, found: projectByCampaignId.has(id) }))
-      console.log('[allSummaries] computing', {
-        adSpendRows: adSpendRows.length,
-        projectByCampaignIdSize: projectByCampaignId.size,
-        sampleMatch,
-        projectKeys: [...projectByCampaignId.keys()],
-      })
-
       // Aggregate revenue from affiliate_revenue by project_id
       const revenueByProject = new Map<string, number>()
       const screenByProject = new Map<string, number>()

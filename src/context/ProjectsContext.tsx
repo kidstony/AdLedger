@@ -34,7 +34,6 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     const { data, error } = await supabase
       .from('projects').select('*, bank_accounts(*, banks(*))').order('project_id')
 
-    console.log('[ProjectsContext] loadAllProjects', { count: data?.length, hasCampaignId: data?.filter(p => p.google_campaign_id).length, error: error?.message })
     if (error) { console.error('Lỗi tải dự án:', error); setIsLoading(false); return }
 
     let projectList = data as Project[]
@@ -67,7 +66,6 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       }
     } catch { /* timeout or network error — setProjects still runs below */ }
 
-    console.log('[ProjectsContext] setProjects', { count: projectList.length, hasCampaignId: projectList.filter(p => p.google_campaign_id).length })
     setProjects(projectList)
     setIsLoading(false)
   }
