@@ -164,6 +164,15 @@ export function usePnlData() {
     })
 
     if (dataSource === 'real' && adSpendRows && adSpendRows.length > 0) {
+      const sampleIds = adSpendRows.slice(0, 3).map(r => r.campaign_id)
+      const sampleMatch = sampleIds.map(id => ({ id, found: projectByCampaignId.has(id) }))
+      console.log('[allSummaries] computing', {
+        adSpendRows: adSpendRows.length,
+        projectByCampaignIdSize: projectByCampaignId.size,
+        sampleMatch,
+        projectKeys: [...projectByCampaignId.keys()],
+      })
+
       // Aggregate revenue from affiliate_revenue by project_id
       const revenueByProject = new Map<string, number>()
       const screenByProject = new Map<string, number>()
