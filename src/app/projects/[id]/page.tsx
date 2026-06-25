@@ -13,6 +13,7 @@ import { PnlDaily, RentalGroup, OtherCost } from '@/lib/types'
 import { computeCidCost } from '@/lib/costs'
 import { useAuth } from '@/context/AuthContext'
 import ShareTab from '@/components/project/ShareTab'
+import { useSharePermissions } from '@/hooks/useSharePermissions'
 
 function localStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -28,6 +29,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params)
   const { projects } = useProjectsContext()
   const { role, teamId: userTeamId } = useAuth()
+  const sharePerms = useSharePermissions(id)
   const project = projects.find(p => p.project_id === id)
   const [activeTab, setActiveTab] = useState<'info' | 'share'>('info')
 
@@ -142,6 +144,11 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const estimatedProfit = totalRevenue + totalScreen - totalSpend
   const estimatedRoi    = totalSpend > 0 ? (estimatedProfit / totalSpend) * 100 : 0
   const canShare        = role === 'super_admin' || (role === 'manager' && project?.team_id === userTeamId)
+  // Permission masking: non-members always see everything; members use resolved sharePerms
+  const isMember        = role === 'member'
+  const canViewRevenue  = !isMember || (sharePerms?.view_revenue  ?? false)
+  const canViewProfit   = !isMember || (sharePerms?.view_profit   ?? false)
+  const canViewAdspend  = !isMember || (sharePerms?.view_adspend  ?? false)
 
   if (!project && !isLoading && projects.length > 0) {
     return (
@@ -226,8 +233,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           {/* Tổng Chi phí — with breakdown if rental or other > 0 */}
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Tổng Chi phí</p>
-            <p className="text-lg font-semibold text-slate-700">{formatVNDFull(totalSpend)}</p>
-            {(rentalCost > 0 || otherCost > 0) && (
+            <p className="text-lg font-semibold text-slate-700">{canViewAdspend ? formatVNDFull(totalSpend) : '****'}</p>
+            {canViewAdspend && (rentalCost > 0 || otherCost > 0) && (
               <div className="mt-2.5 space-y-1 border-t border-slate-100 pt-2">
                 <div className="flex justify-between text-[11px] text-slate-400">
                   <span>Chi phí QC</span><span className="font-mono">{formatVND(qcSpend)}</span>
@@ -248,8 +255,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Tổng Doanh thu</p>
-            <p className="text-lg font-semibold text-blue-600">{formatVNDFull(totalRevenue)}</p>
-            {hasScreen && (
+            <p className="text-lg font-semibold text-blue-600">{canViewRevenue ? formatVNDFull(totalRevenue) : '****'}</p>
+            {canViewRevenue && hasScreen && (
               <div className="mt-1.5 flex items-center justify-between text-xs">
                 <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Chờ về</span>
                 <span className="text-amber-500 font-medium">+{formatVNDFull(totalScreen)}</span>
@@ -259,8 +266,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Lợi nhuận</p>
-            <p className={`text-lg font-semibold ${getProfitTextClass(totalProfit)}`}>{formatVNDFull(totalProfit)}</p>
-            {hasScreen && (
+            <p className={`text-lg font-semibold ${canViewProfit ? getProfitTextClass(totalProfit) : 'text-slate-400'}`}>
+              {canViewProfit ? formatVNDFull(totalProfit) : '****'}
+            </p>
+            {canViewProfit && hasScreen && (
               <div className="mt-1.5 flex items-center justify-between text-xs">
                 <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Ước tính</span>
                 <span className={`font-medium ${estimatedProfit >= 0 ? 'text-amber-500' : 'text-red-400'}`}>
@@ -272,12 +281,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">ROI</p>
-            <p className={`text-lg font-semibold ${getRoiTextClass(roi)}`}>{formatROI(roi)}</p>
+            <p className={`text-lg font-semibold ${canViewProfit ? getRoiTextClass(roi) : 'text-slate-400'}`}>
+              {canViewProfit ? formatROI(roi) : '****'}
+            </p>
             {hasScreen && (
               <div className="mt-1.5 flex items-center justify-between text-xs">
                 <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Ước tính</span>
                 <span className={`font-medium ${estimatedRoi >= 0 ? 'text-amber-500' : 'text-red-400'}`}>
-                  {formatROI(estimatedRoi)}
+                  {canViewProfit ? formatROI(estimatedRoi) : '****'}
                 </span>
               </div>
             )}
@@ -313,19 +324,26 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 {[...daily].reverse().map(row => (
                   <tr key={row.date} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-2.5 text-xs text-slate-600 font-mono">{row.date}</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-600">{formatVND(row.spend)}</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-600">{formatVND(row.revenue)}</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs text-amber-500">
-                      {(screenByDate.get(row.date) ?? 0) > 0
-                        ? formatVND(screenByDate.get(row.date)!)
-                        : <span className="text-slate-300">—</span>}
+                    <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-600">
+                      {canViewAdspend ? formatVND(row.spend) : '****'}
                     </td>
-                    <td className={`px-4 py-2.5 text-right font-mono text-xs font-medium ${getProfitTextClass(row.profit)}`}>
-                      {row.profit >= 0 ? '+' : ''}{formatVND(row.profit)}
+                    <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-600">
+                      {canViewRevenue ? formatVND(row.revenue) : '****'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-mono text-xs text-amber-500">
+                      {canViewRevenue
+                        ? (screenByDate.get(row.date) ?? 0) > 0
+                          ? formatVND(screenByDate.get(row.date)!)
+                          : <span className="text-slate-300">—</span>
+                        : '****'}
+                    </td>
+                    <td className={`px-4 py-2.5 text-right font-mono text-xs font-medium ${canViewProfit ? getProfitTextClass(row.profit) : 'text-slate-400'}`}>
+                      {canViewProfit ? (row.profit >= 0 ? '+' : '') + formatVND(row.profit) : '****'}
                     </td>
                     {(() => {
                       const screen = screenByDate.get(row.date) ?? 0
                       const est = row.revenue + screen - row.spend
+                      if (!canViewProfit) return <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-400">****</td>
                       return screen > 0 ? (
                         <td className={`px-4 py-2.5 text-right font-mono text-xs font-medium ${est >= 0 ? 'text-amber-500' : 'text-red-500'}`}>
                           {est >= 0 ? '+' : ''}{formatVND(est)}
@@ -334,8 +352,8 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                         <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-300">—</td>
                       )
                     })()}
-                    <td className={`px-4 py-2.5 text-right font-mono text-xs ${getRoiTextClass(row.roi)}`}>
-                      {formatROI(row.roi)}
+                    <td className={`px-4 py-2.5 text-right font-mono text-xs ${canViewProfit ? getRoiTextClass(row.roi) : 'text-slate-400'}`}>
+                      {canViewProfit ? formatROI(row.roi) : '****'}
                     </td>
                   </tr>
                 ))}

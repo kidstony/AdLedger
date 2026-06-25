@@ -194,6 +194,7 @@ export function usePnlData() {
             avg_roi: 0,
             total_screen_revenue: 0,
             total_pending: 0,
+            share_access_level: project.share_access_level ?? null,
           })
         } else {
           existing.total_spend += row.spend
@@ -216,13 +217,15 @@ export function usePnlData() {
     }
 
     // Fallback: mock data (rental/other = 0)
+    const projectByIdMap = new Map(projects.map(p => [p.project_id, p]))
     const filteredDaily = MOCK_PNL_DAILY.filter(row => activeProjectIds.has(row.project_id))
     const summaries = aggregatePnl(filteredDaily, dateRange)
     summaries.forEach(s => {
-      const name = projectNameMap.get(s.project_id)
-      if (name) s.name = name
+      const p = projectByIdMap.get(s.project_id)
+      if (p?.name) s.name = p.name
       s.total_screen_revenue = 0
       s.total_pending = 0
+      s.share_access_level = p?.share_access_level ?? null
     })
     return summaries
   }, [dataSource, adSpendRows, revenueRows, rentalGroups, otherCosts, projectByCampaignId, projectByCid, projectNameMap, activeProjectIds, dateRange, campaignInfoByProjectId])

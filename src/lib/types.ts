@@ -66,6 +66,7 @@ export interface Project {
   bank_account_id?: string | null
   team_id?: string | null
   bank_accounts?: (BankAccount & { banks?: Bank | null }) | null
+  share_access_level?: ShareAccessLevel | null  // only set for member role (from project_shares)
 }
 
 export interface CampaignDiscovery {
@@ -121,6 +122,7 @@ export interface PnlSummary {
   avg_roi: number              // profit / total_cost * 100
   total_screen_revenue: number
   total_pending: number
+  share_access_level?: ShareAccessLevel | null  // set for member role
 }
 
 export interface DateRange {

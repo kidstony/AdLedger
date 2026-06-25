@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowUp, ArrowDown, ArrowUpDown, Monitor } from 'lucide-react'
 import { PnlSummary, SortColumn, SortDirection } from '@/lib/types'
-import { formatVND, formatROI, getPerformanceRowClass, getProfitTextClass, getRoiTextClass, formatMoneyByRole, cn, formatCid } from '@/lib/utils'
+import { formatVND, formatROI, getPerformanceRowClass, getProfitTextClass, getRoiTextClass, cn, formatCid } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import TableSkeleton from '@/components/ui/TableSkeleton'
 import EmptyState from '@/components/ui/EmptyState'
@@ -57,8 +57,18 @@ const nonSortable = new Set(['cid', 'total_screen_revenue', 'est_profit'])
 export default function PnlTable({ data, isLoading }: Props) {
   const router = useRouter()
   const { role } = useAuth()
-  const fmt = (v: number) => formatMoneyByRole(v, role, formatVND)
-  const fmtRoi = (v: number) => role === 'member' ? '****' : formatROI(v)
+
+  // Per-row money visibility: reporter/editor → see money; viewer → mask
+  function canSee(row: (typeof data)[0]): boolean {
+    if (role !== 'member') return true
+    return row.share_access_level === 'reporter' || row.share_access_level === 'editor'
+  }
+  function rowFmt(row: (typeof data)[0], v: number): string {
+    return canSee(row) ? formatVND(v) : '****'
+  }
+  function rowFmtRoi(row: (typeof data)[0], v: number): string {
+    return canSee(row) ? formatROI(v) : '****'
+  }
   const [sortCol, setSortCol] = useState<SortColumn>('avg_roi')
   const [sortDir, setSortDir] = useState<SortDirection>('desc')
   const [filter, setFilter] = useState<FilterKey>('all')
@@ -177,31 +187,32 @@ export default function PnlTable({ data, isLoading }: Props) {
                   </Tooltip>
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-slate-400">{formatCid(row.cid)}</td>
-                <td className="px-4 py-3 text-right font-mono text-slate-700">{fmt(row.total_spend)}</td>
+                <td className="px-4 py-3 text-right font-mono text-slate-700">{rowFmt(row, row.total_spend)}</td>
                 <td className="px-4 py-3 text-right font-mono text-slate-500">
-                  {row.total_rental > 0 ? fmt(row.total_rental) : <span className="text-slate-300">—</span>}
+                  {row.total_rental > 0 ? rowFmt(row, row.total_rental) : <span className="text-slate-300">—</span>}
                 </td>
                 <td className="px-4 py-3 text-right font-mono text-slate-500">
-                  {row.total_other > 0 ? fmt(row.total_other) : <span className="text-slate-300">—</span>}
+                  {row.total_other > 0 ? rowFmt(row, row.total_other) : <span className="text-slate-300">—</span>}
                 </td>
-                <td className="px-4 py-3 text-right font-mono text-slate-700">{fmt(row.total_revenue)}</td>
+                <td className="px-4 py-3 text-right font-mono text-slate-700">{rowFmt(row, row.total_revenue)}</td>
                 <td className="px-4 py-3 text-right font-mono text-amber-500">
-                  {row.total_screen_revenue > 0 ? fmt(row.total_screen_revenue) : <span className="text-slate-300">—</span>}
+                  {row.total_screen_revenue > 0 ? rowFmt(row, row.total_screen_revenue) : <span className="text-slate-300">—</span>}
                 </td>
-                <td className={cn('px-4 py-3 text-right font-mono font-medium', role === 'member' ? 'text-slate-400' : getProfitTextClass(row.total_profit))}>
-                  {role === 'member' ? '****' : (row.total_profit >= 0 ? '+' : '') + formatVND(row.total_profit)}
+                <td className={cn('px-4 py-3 text-right font-mono font-medium', !canSee(row) ? 'text-slate-400' : getProfitTextClass(row.total_profit))}>
+                  {canSee(row) ? (row.total_profit >= 0 ? '+' : '') + formatVND(row.total_profit) : '****'}
                 </td>
                 {(() => {
                   const totalCost = row.total_spend + row.total_rental + row.total_other
                   const est = row.total_revenue + row.total_screen_revenue - totalCost
+                  const visible = canSee(row)
                   return (
-                    <td className={cn('px-4 py-3 text-right font-mono font-medium', role === 'member' ? 'text-slate-400' : row.total_screen_revenue > 0 ? (est >= 0 ? 'text-amber-500' : 'text-red-500') : 'text-slate-300')}>
-                      {role === 'member' ? '****' : row.total_screen_revenue > 0 ? (est >= 0 ? '+' : '') + formatVND(est) : '—'}
+                    <td className={cn('px-4 py-3 text-right font-mono font-medium', !visible ? 'text-slate-400' : row.total_screen_revenue > 0 ? (est >= 0 ? 'text-amber-500' : 'text-red-500') : 'text-slate-300')}>
+                      {!visible ? '****' : row.total_screen_revenue > 0 ? (est >= 0 ? '+' : '') + formatVND(est) : '—'}
                     </td>
                   )
                 })()}
-                <td className={cn('px-4 py-3 text-right font-mono text-xs', role === 'member' ? 'text-slate-400' : getRoiTextClass(row.avg_roi))}>
-                  {fmtRoi(row.avg_roi)}
+                <td className={cn('px-4 py-3 text-right font-mono text-xs', !canSee(row) ? 'text-slate-400' : getRoiTextClass(row.avg_roi))}>
+                  {rowFmtRoi(row, row.avg_roi)}
                 </td>
               </tr>
             ))}

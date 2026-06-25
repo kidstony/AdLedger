@@ -4,7 +4,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import { MOCK_PROJECTS } from '@/lib/mock-data'
-import { Project } from '@/lib/types'
+import { Project, ShareAccessLevel } from '@/lib/types'
 
 interface ProjectsContextValue {
   projects: Project[]
@@ -74,10 +74,13 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     setIsLoading(true)
     const { data: assignments } = await supabase
       .from('project_shares')
-      .select('project_id')
+      .select('project_id, access_level')
       .eq('user_id', userId)
 
-    const ids = (assignments ?? []).map((a: { project_id: string }) => a.project_id)
+    type Assignment = { project_id: string; access_level: string }
+    const rows = (assignments ?? []) as Assignment[]
+    const ids = rows.map(a => a.project_id)
+    const accessMap = new Map(rows.map(a => [a.project_id, a.access_level as ShareAccessLevel]))
 
     if (ids.length === 0) { setProjects([]); setIsLoading(false); return }
 
@@ -85,7 +88,10 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       .from('projects').select('*, bank_accounts(*, banks(*))').in('project_id', ids).order('project_id')
 
     if (error) console.error('Lỗi tải dự án được phân công:', error)
-    else setProjects(data as Project[])
+    else setProjects((data as Project[]).map(p => ({
+      ...p,
+      share_access_level: accessMap.get(p.project_id) ?? null,
+    })))
     setIsLoading(false)
   }
 
