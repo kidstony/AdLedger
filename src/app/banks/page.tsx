@@ -1,10 +1,21 @@
 'use client'
 
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { useProjectsContext } from '@/context/ProjectsContext'
+import { useAuth } from '@/context/AuthContext'
 import BankTab from '@/components/projects/BankTab'
 
 export default function BanksPage() {
   const { projects } = useProjectsContext()
+  const { role } = useAuth()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (role === 'member') router.replace('/dashboard')
+  }, [role, router])
+
+  if (role === 'member') return null
 
   return (
     <div className="p-6 space-y-5">

@@ -1,11 +1,14 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Pencil, Trash2, Search, UserCheck, Link2, Mail, Copy, Check } from 'lucide-react'
+import { Plus, Pencil, Trash2, Search, UserCheck, Link2, Mail, Copy, Check, RefreshCw, Loader2, ArrowUp, ArrowDown, ArrowUpDown, Download } from 'lucide-react'
 import { useProjects } from '@/hooks/useProjects'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
 import { Project, CampaignDiscovery } from '@/lib/types'
 import { Button } from '@/components/ui/button'
+import TableSkeleton from '@/components/ui/TableSkeleton'
+import { toast } from 'sonner'
+import { exportToCsv } from '@/lib/utils'
 import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { useMasterProjectsContext } from '@/context/MasterProjectsContext'
@@ -31,6 +34,9 @@ export default function ProjectsPage() {
   const [copied, setCopied] = useState<string | null>(null)
   const [copiedEmail, setCopiedEmail] = useState<string | null>(null)
   const [copiedWallet, setCopiedWallet] = useState<string | null>(null)
+  const [syncingMcc, setSyncingMcc] = useState(false)
+  const [sortKey, setSortKey] = useState<'project_id' | 'name' | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
   // campaign info from Google Ads: project_id → {customer_id, campaign_id, mcc_name, mcc_id}
   const [campaignInfoMap, setCampaignInfoMap] = useState<Map<string, {
@@ -60,6 +66,30 @@ export default function ProjectsPage() {
       .catch(e => console.error('[campaigns] fetch failed:', e))
   }, [])
 
+  async function refreshMccInfo() {
+    setSyncingMcc(true)
+    try {
+      await fetch('/api/integrations/campaigns', { method: 'POST' })
+      const list = await fetch('/api/integrations/campaigns').then(r => r.json())
+      if (Array.isArray(list)) {
+        const map = new Map<string, { customer_id: string; campaign_id: string; mcc_name: string | null; mcc_id: string | null }>()
+        ;(list as CampaignDiscovery[]).forEach(c => {
+          if (c.project_id) map.set(c.project_id, {
+            customer_id: c.customer_id,
+            campaign_id: c.campaign_id,
+            mcc_name: c.mcc_name ?? null,
+            mcc_id: c.mcc_id ?? null,
+          })
+        })
+        setCampaignInfoMap(map)
+        toast.success('Đã cập nhật thông tin MCC')
+      }
+    } catch {
+      toast.error('Không thể cập nhật MCC')
+    }
+    setSyncingMcc(false)
+  }
+
   const [employees, setEmployees] = useState<UserRow[]>([])
   const [employeesLoaded, setEmployeesLoaded] = useState(false)
   const [assigningProjectId, setAssigningProjectId] = useState<string | null>(null)
@@ -71,6 +101,33 @@ export default function ProjectsPage() {
     p.project_id.includes(search) ||
     p.cid.includes(search)
   )
+
+  const sorted = sortKey
+    ? [...filtered].sort((a, b) => {
+        const av = a[sortKey], bv = b[sortKey]
+        return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av)
+      })
+    : filtered
+
+  function handleSort(key: 'project_id' | 'name') {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('asc') }
+  }
+
+  function handleExport() {
+    exportToCsv(
+      sorted.map(p => ({
+        'Project ID': p.project_id,
+        'Tên dự án': p.name,
+        'CID': p.cid,
+        'Tổng Dự Án': masterProjects.find(m => m.id === p.master_project_id)?.name ?? '',
+        'Link Ref': p.ref_link ?? '',
+        'Email Ref': p.email_ref ?? '',
+        'Bank': p.bank_accounts?.banks?.name ?? '',
+      })),
+      `projects-${new Date().toISOString().slice(0, 10)}.csv`
+    )
+  }
 
   useEffect(() => { setSelectedIds(new Set()) }, [search])
 
@@ -97,9 +154,11 @@ export default function ProjectsPage() {
   }
 
   function handleBulkDelete() {
+    const count = selectedIds.size
     deleteProjects([...selectedIds])
     setSelectedIds(new Set())
     setConfirmBulkDelete(false)
+    toast.success(`Đã xóa ${count} dự án`)
   }
 
   async function loadEmployees() {
@@ -172,9 +231,14 @@ export default function ProjectsPage() {
           <h2 className="text-xl font-semibold text-slate-800">Quản lý dự án</h2>
           <p className="text-sm text-slate-500 mt-0.5">{projects.length} dự án · Thêm/sửa/xóa mapping CID</p>
         </div>
-        <Button onClick={() => setDialog({ mode: 'add' })} className="gap-1.5">
-          <Plus size={14} /> Thêm dự án
-        </Button>
+        <div className="flex items-center gap-2">
+          <button onClick={handleExport} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors">
+            <Download size={14} /> Export CSV
+          </button>
+          <Button onClick={() => setDialog({ mode: 'add' })} className="gap-1.5">
+            <Plus size={14} /> Thêm dự án
+          </Button>
+        </div>
       </div>
 
       <>
@@ -203,18 +267,7 @@ export default function ProjectsPage() {
             </div>
           )}
 
-          {isLoading ? (
-            <div className="border border-slate-200 rounded-lg">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-4 px-4 py-3 border-b border-slate-100">
-                  <div className="w-4 h-4 rounded bg-slate-200 animate-pulse" />
-                  <div className="w-20 h-3 rounded bg-slate-200 animate-pulse" />
-                  <div className="w-40 h-3 rounded bg-slate-200 animate-pulse" />
-                  <div className="w-28 h-3 rounded bg-slate-200 animate-pulse" />
-                </div>
-              ))}
-            </div>
-          ) : (
+          {isLoading ? <TableSkeleton rows={8} cols={9} /> : (
             <div className="border border-slate-200 rounded-lg overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -230,13 +283,19 @@ export default function ProjectsPage() {
                           title="Chọn tất cả"
                         />
                       </th>
-                      {['Project ID', 'Tên dự án', 'CID', 'ID Campaign', 'MCC', 'ID MCC', 'Tổng Dự Án', 'Link Ref', 'Email Ref', 'Bank Nhận', ''].map(h => (
+                      <th onClick={() => handleSort('project_id')} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:text-slate-700">
+                        <span className="inline-flex items-center gap-1">Project ID {sortKey === 'project_id' ? (sortDir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : <ArrowUpDown size={11} className="text-slate-400" />}</span>
+                      </th>
+                      <th onClick={() => handleSort('name')} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:text-slate-700">
+                        <span className="inline-flex items-center gap-1">Tên dự án {sortKey === 'name' ? (sortDir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : <ArrowUpDown size={11} className="text-slate-400" />}</span>
+                      </th>
+                      {['CID', 'ID Campaign', 'MCC', 'ID MCC', 'Tổng Dự Án', 'Link Ref', 'Email Ref', 'Bank Nhận', ''].map(h => (
                         <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map(p => {
+                    {sorted.map(p => {
                       const isSelected = selectedIds.has(p.project_id)
                       return (
                         <tr key={p.project_id} className={`border-b border-slate-100 transition-colors ${isSelected ? 'bg-slate-50' : 'hover:bg-slate-50'}`}>
@@ -253,7 +312,16 @@ export default function ProjectsPage() {
                             {campaignInfoMap.get(p.project_id)?.campaign_id ?? <span className="text-slate-300">—</span>}
                           </td>
                           <td className="px-4 py-3 text-xs text-slate-500">
-                            {campaignInfoMap.get(p.project_id)?.mcc_name || <span className="text-slate-300">—</span>}
+                            {campaignInfoMap.get(p.project_id)?.mcc_name
+                              ? campaignInfoMap.get(p.project_id)!.mcc_name
+                              : campaignInfoMap.has(p.project_id)
+                                ? <button onClick={refreshMccInfo} disabled={syncingMcc} title="Cập nhật MCC"
+                                    className="flex items-center gap-1 text-slate-400 hover:text-blue-500 transition-colors disabled:opacity-50">
+                                    {syncingMcc ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                                    <span>Cập nhật</span>
+                                  </button>
+                                : <span className="text-slate-300">—</span>
+                            }
                           </td>
                           <td className="px-4 py-3 font-mono text-xs text-slate-400">
                             {(() => {
@@ -362,10 +430,10 @@ export default function ProjectsPage() {
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1 justify-end">
-                              {role === 'admin' && projectAssignments[p.project_id] !== undefined && (
+                              {role === 'super_admin' && projectAssignments[p.project_id] !== undefined && (
                                 <span className="text-xs text-slate-400 mr-1">{projectAssignments[p.project_id].length} NV</span>
                               )}
-                              {role === 'admin' && (
+                              {role === 'super_admin' && (
                                 <button onClick={() => openAssignPanel(p.project_id)}
                                   className={`p-1.5 rounded transition-colors ${assigningProjectId === p.project_id ? 'bg-blue-100 text-blue-600' : 'hover:bg-slate-200 text-slate-500'}`}
                                   title="Phân công nhân viên">
@@ -387,7 +455,7 @@ export default function ProjectsPage() {
                     })}
                   </tbody>
                 </table>
-                {filtered.length === 0 && (
+                {sorted.length === 0 && (
                   <div className="py-10 text-center text-sm text-slate-500">Không tìm thấy dự án.</div>
                 )}
               </div>
@@ -438,7 +506,12 @@ export default function ProjectsPage() {
           initialData={dialog.data}
           existingIds={projects.map(p => p.project_id)}
           masterProjects={masterProjects}
-          onSave={dialog.mode === 'add' ? addProject : updateProject}
+          onSave={async (p) => {
+            const err = await (dialog.mode === 'add' ? addProject : updateProject)(p)
+            if (err) { toast.error(err); return err }
+            toast.success(dialog.mode === 'add' ? 'Đã tạo dự án' : 'Đã cập nhật dự án')
+            return null
+          }}
           onClose={() => setDialog(null)}
         />
       )}
@@ -452,7 +525,7 @@ export default function ProjectsPage() {
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setConfirmDelete(null)}>Hủy</Button>
-              <Button variant="destructive" onClick={() => { deleteProject(confirmDelete.project_id); setConfirmDelete(null) }}>Xóa</Button>
+              <Button variant="destructive" onClick={() => { deleteProject(confirmDelete.project_id); setConfirmDelete(null); toast.success('Đã xóa dự án') }}>Xóa</Button>
             </div>
           </div>
         </div>

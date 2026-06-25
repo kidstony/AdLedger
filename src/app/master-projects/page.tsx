@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { Plus, ChevronDown, ChevronRight, Pencil, Trash2 } from 'lucide-react'
+import TableSkeleton from '@/components/ui/TableSkeleton'
 import { useMasterProjectsContext } from '@/context/MasterProjectsContext'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { usePnlData } from '@/hooks/usePnlData'
@@ -158,16 +159,7 @@ export default function MasterProjectsPage() {
       )}
 
       {/* Main table */}
-      {isLoading ? (
-        <div className="border border-slate-200 rounded-lg">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="flex items-center gap-4 px-4 py-4 border-b border-slate-100">
-              <div className="w-32 h-3 rounded bg-slate-200 animate-pulse" />
-              <div className="w-20 h-3 rounded bg-slate-200 animate-pulse" />
-            </div>
-          ))}
-        </div>
-      ) : (
+      {isLoading ? <TableSkeleton rows={3} cols={10} /> : (
         <div className="border border-slate-200 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
@@ -207,7 +199,7 @@ export default function MasterProjectsPage() {
                       <td className="px-4 py-3 text-slate-500">{row.total_rental > 0 ? formatVND(row.total_rental) : <span className="text-slate-300">—</span>}</td>
                       <td className="px-4 py-3 text-slate-500">{row.total_other > 0 ? formatVND(row.total_other) : <span className="text-slate-300">—</span>}</td>
                       <td className="px-4 py-3 text-slate-700">{formatVND(row.total_revenue)}</td>
-                      <td className="px-4 py-3 text-blue-600">{row.total_screen > 0 ? formatVND(row.total_screen) : <span className="text-slate-300">—</span>}</td>
+                      <td className="px-4 py-3 text-amber-500">{row.total_screen > 0 ? formatVND(row.total_screen) : <span className="text-slate-300">—</span>}</td>
                       <td className={`px-4 py-3 ${row.total_pending > 0 ? 'text-amber-600' : 'text-slate-300'}`}>
                         {row.total_pending > 0 ? formatVND(row.total_pending) : '—'}
                       </td>
@@ -240,7 +232,7 @@ export default function MasterProjectsPage() {
                             {(child.total_other ?? 0) > 0 ? formatVND(child.total_other) : <span className="text-slate-300">—</span>}
                           </td>
                           <td className="px-4 py-2.5 text-slate-500">{formatVND(child.total_revenue)}</td>
-                          <td className="px-4 py-2.5 text-blue-500">
+                          <td className="px-4 py-2.5 text-amber-500">
                             {(child.total_screen_revenue ?? 0) > 0 ? formatVND(child.total_screen_revenue) : <span className="text-slate-300">—</span>}
                           </td>
                           <td className={`px-4 py-2.5 ${(child.total_pending ?? 0) > 0 ? 'text-amber-500' : 'text-slate-300'}`}>

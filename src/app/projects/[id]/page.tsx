@@ -2,7 +2,7 @@
 
 import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Zap, Database } from 'lucide-react'
+import { ArrowLeft, Zap, Database, Monitor } from 'lucide-react'
 import { MOCK_PNL_DAILY } from '@/lib/mock-data'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
@@ -129,10 +129,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     })
   }, [projects, project, id, fromStr, toStr])
 
-  const totalSpend   = qcSpend + rentalCost + otherCost
-  const totalRevenue = daily.reduce((s, d) => s + d.revenue, 0)
-  const totalProfit  = totalRevenue - totalSpend
-  const roi          = totalSpend > 0 ? (totalProfit / totalSpend) * 100 : 0
+  const totalSpend      = qcSpend + rentalCost + otherCost
+  const totalRevenue    = daily.reduce((s, d) => s + d.revenue, 0)
+  const totalScreen     = [...screenByDate.values()].reduce((s, v) => s + v, 0)
+  const totalProfit     = totalRevenue - totalSpend
+  const roi             = totalSpend > 0 ? (totalProfit / totalSpend) * 100 : 0
+  const hasScreen       = totalScreen > 0
+  const estimatedProfit = totalRevenue + totalScreen - totalSpend
+  const estimatedRoi    = totalSpend > 0 ? (estimatedProfit / totalSpend) * 100 : 0
 
   if (!project && !isLoading && projects.length > 0) {
     return (
@@ -220,16 +224,38 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Tổng Doanh thu</p>
             <p className="text-lg font-semibold text-blue-600">{formatVNDFull(totalRevenue)}</p>
+            {hasScreen && (
+              <div className="mt-1.5 flex items-center justify-between text-xs">
+                <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Chờ về</span>
+                <span className="text-amber-500 font-medium">+{formatVNDFull(totalScreen)}</span>
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Lợi nhuận</p>
             <p className={`text-lg font-semibold ${getProfitTextClass(totalProfit)}`}>{formatVNDFull(totalProfit)}</p>
+            {hasScreen && (
+              <div className="mt-1.5 flex items-center justify-between text-xs">
+                <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Ước tính</span>
+                <span className={`font-medium ${estimatedProfit >= 0 ? 'text-amber-500' : 'text-red-400'}`}>
+                  {estimatedProfit >= 0 ? '+' : ''}{formatVNDFull(estimatedProfit)}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">ROI</p>
             <p className={`text-lg font-semibold ${getRoiTextClass(roi)}`}>{formatROI(roi)}</p>
+            {hasScreen && (
+              <div className="mt-1.5 flex items-center justify-between text-xs">
+                <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Ước tính</span>
+                <span className={`font-medium ${estimatedRoi >= 0 ? 'text-amber-500' : 'text-red-400'}`}>
+                  {formatROI(estimatedRoi)}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -264,7 +290,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                     <td className="px-4 py-2.5 text-xs text-slate-600 font-mono">{row.date}</td>
                     <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-600">{formatVND(row.spend)}</td>
                     <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-600">{formatVND(row.revenue)}</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs text-blue-500">
+                    <td className="px-4 py-2.5 text-right font-mono text-xs text-amber-500">
                       {(screenByDate.get(row.date) ?? 0) > 0
                         ? formatVND(screenByDate.get(row.date)!)
                         : <span className="text-slate-300">—</span>}
@@ -276,7 +302,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                       const screen = screenByDate.get(row.date) ?? 0
                       const est = row.revenue + screen - row.spend
                       return screen > 0 ? (
-                        <td className={`px-4 py-2.5 text-right font-mono text-xs font-medium ${getProfitTextClass(est)}`}>
+                        <td className={`px-4 py-2.5 text-right font-mono text-xs font-medium ${est >= 0 ? 'text-amber-500' : 'text-red-500'}`}>
                           {est >= 0 ? '+' : ''}{formatVND(est)}
                         </td>
                       ) : (

@@ -1,15 +1,16 @@
 'use client'
 
-import { RefreshCw, Search, Zap, Database, AlertTriangle } from 'lucide-react'
+import { RefreshCw, Search, Zap, Database, AlertTriangle, Download } from 'lucide-react'
 import { usePnlData } from '@/hooks/usePnlData'
 import SummaryCards from '@/components/dashboard/SummaryCards'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import PnlTable from '@/components/dashboard/PnlTable'
+import DailyPnlChart from '@/components/dashboard/DailyPnlChart'
 import ProjectFilterDropdown from '@/components/revenue/ProjectFilterDropdown'
-import { cn } from '@/lib/utils'
+import { cn, exportToCsv } from '@/lib/utils'
 
 export default function DashboardPage() {
-  const { data, allSummaries, totals, isLoading, dateRange, setDateRange, search, setSearch, selectedProjectIds, setSelectedProjectIds, filterProjectData, refresh, dataSource, lastSyncedAt } = usePnlData()
+  const { data, allSummaries, totals, isLoading, dateRange, setDateRange, search, setSearch, selectedProjectIds, setSelectedProjectIds, filterProjectData, refresh, dataSource, lastSyncedAt, dailyChartData } = usePnlData()
 
   function formatSyncTime(iso: string) {
     const d = new Date(iso)
@@ -57,6 +58,8 @@ export default function DashboardPage() {
           : 0}
       />
 
+      <DailyPnlChart data={dailyChartData} />
+
       <div className="flex items-center gap-3">
         <DateRangePicker
           from={dateRange.from.toISOString().split('T')[0]}
@@ -91,6 +94,27 @@ export default function DashboardPage() {
         >
           <RefreshCw size={14} className={cn(isLoading && 'animate-spin')} />
           Làm mới
+        </button>
+
+        <button
+          onClick={() => exportToCsv(
+            data.map(s => ({
+              'Project ID': s.project_id,
+              'Tên dự án': s.name,
+              'CID': s.cid,
+              'Chi phí QC': s.total_spend,
+              'Thuê TK': s.total_rental,
+              'CP Khác': s.total_other,
+              'Doanh thu': s.total_revenue,
+              'DT Màn hình': s.total_screen_revenue,
+              'Lợi nhuận': s.total_profit,
+              'ROI%': s.avg_roi.toFixed(1) + '%',
+            })),
+            `pnl-${dateRange.from.toISOString().slice(0,10)}-${dateRange.to.toISOString().slice(0,10)}.csv`
+          )}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors"
+        >
+          <Download size={14} /> Export CSV
         </button>
       </div>
 

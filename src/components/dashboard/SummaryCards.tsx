@@ -15,6 +15,10 @@ export default function SummaryCards({ totalSpend, totalRevenue, totalProfit, av
   const estimatedProfit = totalRevenue + totalScreen - totalSpend
   const pending = Math.max(totalPending, 0)
   const hasScreen = totalScreen > 0
+  // % of total expected revenue still pending: pending / (confirmed + pending)
+  const pendingPct = hasScreen && pending > 0 && (totalRevenue + pending) > 0
+    ? (pending / (totalRevenue + pending)) * 100
+    : 0
 
   return (
     <div className="grid grid-cols-4 gap-4">
@@ -27,11 +31,7 @@ export default function SummaryCards({ totalSpend, totalRevenue, totalProfit, av
           </div>
         </div>
         <p className="text-xl font-semibold text-slate-700">{formatVNDFull(totalSpend)}</p>
-        {hasScreen && pending > 0 && (
-          <p className="text-xs text-amber-600 mt-1.5 flex items-center gap-1">
-            <Monitor size={10} /> {formatVNDFull(pending)} chờ về
-          </p>
-        )}
+        <p className="text-xs text-slate-300 mt-1.5">QC + Thuê TK + CP khác</p>
       </div>
 
       {/* Doanh thu */}
@@ -46,14 +46,14 @@ export default function SummaryCards({ totalSpend, totalRevenue, totalProfit, av
         {hasScreen ? (
           <div className="mt-1.5 space-y-1">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Màn hình</span>
-              <span className="text-blue-400 font-medium">{formatVNDFull(totalScreen)}</span>
+              <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Chờ về</span>
+              <span className="text-amber-500 font-medium">+{formatVNDFull(pending)}</span>
             </div>
-            {totalScreen > 0 && (
-              <div className="h-1 rounded-full bg-blue-100 overflow-hidden">
+            {pending > 0 && (
+              <div className="h-1 rounded-full bg-amber-100 overflow-hidden" title={`${pendingPct.toFixed(1)}% tổng DT dự kiến còn chờ`}>
                 <div
-                  className="h-full bg-blue-500 rounded-full"
-                  style={{ width: `${Math.min((totalRevenue / totalScreen) * 100, 100)}%` }}
+                  className="h-full bg-amber-400 rounded-full"
+                  style={{ width: `${Math.min(pendingPct, 100)}%` }}
                 />
               </div>
             )}
@@ -79,12 +79,11 @@ export default function SummaryCards({ totalSpend, totalRevenue, totalProfit, av
         {hasScreen && (
           <div className="mt-1.5 flex items-center justify-between text-xs">
             <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Ước tính</span>
-            <span className={cn('font-medium', estimatedProfit >= 0 ? 'text-emerald-500' : 'text-red-400')}>
+            <span className={cn('font-medium', estimatedProfit >= 0 ? 'text-amber-500' : 'text-red-400')}>
               {estimatedProfit >= 0 ? '+' : ''}{formatVNDFull(estimatedProfit)}
             </span>
           </div>
         )}
-        {hasScreen && <p className="text-[10px] text-slate-300 mt-0.5">(thực + màn hình) − chi phí</p>}
       </div>
 
       {/* ROI */}
@@ -101,7 +100,7 @@ export default function SummaryCards({ totalSpend, totalRevenue, totalProfit, av
         {hasScreen && (
           <div className="mt-1.5 flex items-center justify-between text-xs">
             <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Ước tính</span>
-            <span className={cn('font-medium', estimatedRoi >= 0 ? 'text-emerald-500' : 'text-red-400')}>
+            <span className={cn('font-medium', estimatedRoi >= 0 ? 'text-amber-500' : 'text-red-400')}>
               {formatROI(estimatedRoi)}
             </span>
           </div>

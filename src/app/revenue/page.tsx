@@ -6,8 +6,10 @@ import {
   Search, Keyboard, CheckCircle2, Cloud, SlidersHorizontal, CircleCheck,
   RotateCcw, X,
 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import { useRevenueGrid } from '@/hooks/useRevenueGrid'
 import { useProjectsContext } from '@/context/ProjectsContext'
+import { useAuth } from '@/context/AuthContext'
 import EditableCell from '@/components/revenue/EditableCell'
 import ProjectFilterDropdown, { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
 import RevenueSummaryCards from '@/components/revenue/RevenueSummaryCards'
@@ -59,6 +61,10 @@ const SHORTCUTS = [
 ]
 
 export default function RevenuePage() {
+  const { role } = useAuth()
+  const router = useRouter()
+  useEffect(() => { if (role === 'member') router.replace('/dashboard') }, [role, router])
+
   const {
     projects, today, viewMode, anchorDate, selectedDate,
     activeTab, setActiveTab,

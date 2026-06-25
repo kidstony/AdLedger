@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Copy, Eye, EyeOff, CheckCircle, XCircle, Loader2, RefreshCw, Zap, X, Search } from 'lucide-react'
+import { Copy, Eye, EyeOff, CheckCircle, XCircle, Loader2, RefreshCw, Zap, X, Search, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { CampaignDiscovery } from '@/lib/types'
@@ -271,6 +271,9 @@ export default function IntegrationsPage() {
   const [syncPage, setSyncPage] = useState(0)
   const [hasMoreSync, setHasMoreSync] = useState(false)
   const [backfillStatus, setBackfillStatus] = useState<'idle' | 'loading' | 'done'>('idle')
+  const [step1Open, setStep1Open] = useState(false)
+  const [step2Open, setStep2Open] = useState(false)
+  const [scriptTab, setScriptTab] = useState<'discover' | 'spend' | 'backfill'>('spend')
 
   const webhookUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/api/sync/ads-script`
@@ -364,84 +367,123 @@ export default function IntegrationsPage() {
 
       {/* Step 1 */}
       <div className="border border-slate-200 rounded-lg overflow-hidden">
-        <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Bước 1 — Thông tin kết nối</p>
-        </div>
-        <div className="p-4 space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1.5">Webhook URL</label>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-slate-700 font-mono truncate">{webhookUrl}</code>
-              <CopyButton text={webhookUrl} label="Copy URL" />
+        <button
+          onClick={() => setStep1Open(v => !v)}
+          className={`w-full bg-slate-50 px-4 py-3 flex items-center justify-between text-left hover:bg-slate-100 transition-colors ${step1Open ? 'border-b border-slate-200' : ''}`}
+        >
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Bước 1 — Thông tin kết nối</p>
+            {!step1Open && (
+              <p className="text-xs text-slate-400 mt-0.5 font-mono truncate">{webhookUrl}</p>
+            )}
+          </div>
+          <ChevronDown size={15} className={`text-slate-400 transition-transform ml-3 shrink-0 ${step1Open ? '' : '-rotate-90'}`} />
+        </button>
+        {step1Open && (
+          <div className="p-4 space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">Webhook URL</label>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-slate-700 font-mono truncate">{webhookUrl}</code>
+                <CopyButton text={webhookUrl} label="Copy URL" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">Secret Token</label>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-slate-700 font-mono">
+                  {showSecret ? secret : secretPreview}
+                </code>
+                <button onClick={() => setShowSecret(v => !v)}
+                  className="p-2 rounded-md border border-slate-200 hover:bg-slate-50 text-slate-500 transition-colors">
+                  {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+                <CopyButton text={secret} label="Copy" />
+              </div>
             </div>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1.5">Secret Token</label>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-slate-700 font-mono">
-                {showSecret ? secret : secretPreview}
-              </code>
-              <button onClick={() => setShowSecret(v => !v)}
-                className="p-2 rounded-md border border-slate-200 hover:bg-slate-50 text-slate-500 transition-colors">
-                {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-              <CopyButton text={secret} label="Copy" />
-            </div>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Step 2 */}
       <div className="border border-slate-200 rounded-lg overflow-hidden">
-        <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Bước 2 — Script Google Ads MCC</p>
-        </div>
-        <div className="p-4 space-y-4">
+        <button
+          onClick={() => setStep2Open(v => !v)}
+          className={`w-full bg-slate-50 px-4 py-3 flex items-center justify-between text-left hover:bg-slate-100 transition-colors ${step2Open ? 'border-b border-slate-200' : ''}`}
+        >
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                <p className="text-sm font-medium text-slate-700">Script quét chiến dịch</p>
-                <p className="text-xs text-slate-400">Chạy 1 lần để hệ thống nhận danh sách campaign</p>
-              </div>
-              <CopyButton text={buildDiscoverScript(secret, webhookUrl)} label="Copy code" />
-            </div>
-            <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto leading-relaxed font-mono">
-              {buildDiscoverScript(secret, webhookUrl)}
-            </pre>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Bước 2 — Script Google Ads MCC</p>
+            {!step2Open && (
+              <p className="text-xs text-slate-400 mt-0.5">3 scripts · Click để xem và copy</p>
+            )}
           </div>
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                <p className="text-sm font-medium text-slate-700">Script đồng bộ chi phí hàng ngày</p>
-                <p className="text-xs text-slate-400">Đặt lịch: Daily 8:00 AM trong Google Ads Scripts</p>
-              </div>
-              <CopyButton text={buildSpendScript(secret, webhookUrl)} label="Copy code" />
+          <ChevronDown size={15} className={`text-slate-400 transition-transform ml-3 shrink-0 ${step2Open ? '' : '-rotate-90'}`} />
+        </button>
+        {step2Open && (
+          <div className="p-4 space-y-4">
+            {/* Script tabs */}
+            <div className="flex gap-1 bg-slate-100 p-0.5 rounded-md w-fit">
+              {([
+                { key: 'discover' as const, label: 'Quét chiến dịch', sub: 'Chạy 1 lần' },
+                { key: 'spend'    as const, label: 'Hàng ngày',       sub: 'Cài lịch Daily' },
+                { key: 'backfill' as const, label: 'Lịch sử',         sub: 'Chạy 1 lần' },
+              ]).map(t => (
+                <button
+                  key={t.key}
+                  onClick={() => setScriptTab(t.key)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${scriptTab === t.key ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  {t.label}
+                  <span className="ml-1 text-[10px] text-slate-400">{t.sub}</span>
+                </button>
+              ))}
             </div>
-            <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto leading-relaxed font-mono">
-              {buildSpendScript(secret, webhookUrl)}
-            </pre>
-          </div>
-          <div className="border border-dashed border-slate-200 rounded-lg p-4 space-y-3 bg-slate-50/50">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-700">Script đồng bộ lịch sử <span className="ml-1 text-xs font-normal text-slate-400">(chạy 1 lần)</span></p>
-                <p className="text-xs text-slate-400 mt-0.5">Đổ toàn bộ dữ liệu chi phí từ <code className="bg-slate-100 px-1 rounded">START_DATE</code> đến hôm qua. Nhớ đổi biến trước khi chạy.</p>
-              </div>
-              <CopyButton text={buildBackfillScript(secret, webhookUrl)} label="Copy code" />
-            </div>
-            <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto leading-relaxed font-mono">
-              {buildBackfillScript(secret, webhookUrl)}
-            </pre>
-          </div>
 
-          <div className="text-sm text-slate-600 bg-amber-50 border border-amber-100 rounded-md p-3 space-y-1">
-            <p className="font-medium text-amber-800">Cách cài đặt trong Google Ads MCC:</p>
-            <p>1. Vào <strong>Tools &amp; Settings → Scripts → + Create</strong></p>
-            <p>2. Dán script quét, click <strong>Run</strong> → sau đó dán script hàng ngày</p>
-            <p>3. Đặt lịch script hàng ngày: <strong>Daily — 8:00 AM</strong> → Save</p>
-            <p>4. <strong>Lần đầu:</strong> chạy script lịch sử 1 lần (đổi <code>START_DATE</code>) để backfill dữ liệu quá khứ</p>
+            {scriptTab === 'discover' && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-slate-400">Chạy 1 lần để hệ thống nhận danh sách campaign</p>
+                  <CopyButton text={buildDiscoverScript(secret, webhookUrl)} label="Copy code" />
+                </div>
+                <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto overflow-y-auto leading-relaxed font-mono max-h-[400px]">
+                  {buildDiscoverScript(secret, webhookUrl)}
+                </pre>
+              </div>
+            )}
+
+            {scriptTab === 'spend' && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-slate-400">Đặt lịch: Daily 8:00 AM trong Google Ads Scripts</p>
+                  <CopyButton text={buildSpendScript(secret, webhookUrl)} label="Copy code" />
+                </div>
+                <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto overflow-y-auto leading-relaxed font-mono max-h-[400px]">
+                  {buildSpendScript(secret, webhookUrl)}
+                </pre>
+              </div>
+            )}
+
+            {scriptTab === 'backfill' && (
+              <div className="border border-dashed border-slate-200 rounded-lg p-4 space-y-3 bg-slate-50/50">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-slate-400">Đổ toàn bộ dữ liệu từ <code className="bg-slate-100 px-1 rounded">START_DATE</code> đến hôm qua. Nhớ đổi biến trước khi chạy.</p>
+                  <CopyButton text={buildBackfillScript(secret, webhookUrl)} label="Copy code" />
+                </div>
+                <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto overflow-y-auto leading-relaxed font-mono max-h-[400px]">
+                  {buildBackfillScript(secret, webhookUrl)}
+                </pre>
+              </div>
+            )}
+
+            <div className="text-sm text-slate-600 bg-amber-50 border border-amber-100 rounded-md p-3 space-y-1">
+              <p className="font-medium text-amber-800">Cách cài đặt trong Google Ads MCC:</p>
+              <p>1. Vào <strong>Tools &amp; Settings → Scripts → + Create</strong></p>
+              <p>2. Dán script quét, click <strong>Run</strong> → sau đó dán script hàng ngày</p>
+              <p>3. Đặt lịch script hàng ngày: <strong>Daily — 8:00 AM</strong> → Save</p>
+              <p>4. <strong>Lần đầu:</strong> chạy script lịch sử 1 lần (đổi <code>START_DATE</code>) để backfill dữ liệu quá khứ</p>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Step 3 — Campaign mapping */}
@@ -512,43 +554,45 @@ export default function IntegrationsPage() {
                   className="w-full pl-8 pr-3 py-2 text-xs border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-slate-300"
                 />
               </div>
-              {filteredList.length === 0 && (
-                <div className="py-4 text-center text-xs text-slate-400">Không tìm thấy campaign nào.</div>
-              )}
-              {filteredList.map(c => (
-                <div key={c.campaign_id}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-sm ${c.project_id ? 'border-green-100 bg-green-50/50' : 'border-slate-100 bg-white'}`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-slate-800 truncate">{c.campaign_name}</p>
-                    <p className="text-xs text-slate-400 font-mono mt-0.5">{c.customer_id} · ID: {c.campaign_id}</p>
-                  </div>
+              <div className="max-h-[480px] overflow-y-auto space-y-2 pr-1">
+                {filteredList.length === 0 && (
+                  <div className="py-4 text-center text-xs text-slate-400">Không tìm thấy campaign nào.</div>
+                )}
+                {filteredList.map(c => (
+                  <div key={c.campaign_id}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-sm ${c.project_id ? 'border-green-100 bg-green-50/50' : 'border-slate-100 bg-white'}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-slate-800 truncate">{c.campaign_name}</p>
+                      <p className="text-xs text-slate-400 font-mono mt-0.5">{c.customer_id} · ID: {c.campaign_id}</p>
+                    </div>
 
-                  {c.project_id ? (
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-md font-medium">{c.project_name}</span>
-                      <button
-                        onClick={() => handleMapping(c.campaign_id, null)}
-                        disabled={mappingInProgress.has(c.campaign_id)}
-                        className="p-1 rounded hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors"
-                        title="Bỏ gán"
-                      >
-                        {mappingInProgress.has(c.campaign_id) ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="shrink-0">
-                      <CampaignProjectSelect
-                        campaignId={c.campaign_id}
-                        currentProjectId={c.project_id ?? null}
-                        projects={projects}
-                        inProgress={mappingInProgress.has(c.campaign_id)}
-                        onSelect={handleMapping}
-                      />
-                    </div>
-                  )}
-                </div>
-              ))}
+                    {c.project_id ? (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-md font-medium">{c.project_name}</span>
+                        <button
+                          onClick={() => handleMapping(c.campaign_id, null)}
+                          disabled={mappingInProgress.has(c.campaign_id)}
+                          className="p-1 rounded hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors"
+                          title="Bỏ gán"
+                        >
+                          {mappingInProgress.has(c.campaign_id) ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="shrink-0">
+                        <CampaignProjectSelect
+                          campaignId={c.campaign_id}
+                          currentProjectId={c.project_id ?? null}
+                          projects={projects}
+                          inProgress={mappingInProgress.has(c.campaign_id)}
+                          onSelect={handleMapping}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

@@ -2,8 +2,12 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { SlidersHorizontal } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import { useProjectsContext } from '@/context/ProjectsContext'
+import { useDateRange } from '@/context/DateRangeContext'
+import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
+import { toast } from 'sonner'
 import { cn, formatVND, formatCid } from '@/lib/utils'
 import type { CostCategory, OtherCost, Project, RentalGroup, RentalRateType } from '@/lib/types'
 import { MS_PER_DAY, computeCidCost, computeGroupCost } from '@/lib/costs'
@@ -90,10 +94,13 @@ type Tab = 'qc' | 'rental' | 'other' | 'summary'
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function ExpensesPage() {
+  const { role } = useAuth()
+  const router = useRouter()
+  useEffect(() => { if (role === 'member') router.replace('/dashboard') }, [role, router])
+
   const { projects } = useProjectsContext()
+  const { fromStr, toStr, setDateRange } = useDateRange()
   const [tab, setTab] = useState<Tab>('qc')
-  const [fromStr, setFromStr] = useState(firstOfMonthStr)
-  const [toStr, setToStr] = useState(todayStr)
 
   // Tab 1
   const [adSpendRows, setAdSpendRows] = useState<{ campaign_id: string; date: string; spend: number }[]>([])
@@ -289,13 +296,15 @@ export default function ExpensesPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    if (res.ok) { await fetchRentalGroups(); setShowGroupModal(false) }
+    if (res.ok) { await fetchRentalGroups(); setShowGroupModal(false); toast.success(editingGroup ? 'Đã cập nhật nhóm' : 'Đã thêm nhóm') }
+    else toast.error('Không thể lưu nhóm')
     setGroupSaving(false)
   }
   async function deleteGroup(id: string) {
     if (!confirm('Xóa danh mục này và tất cả CID trong đó?')) return
     await fetch('/api/expenses/rental-groups', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
     await fetchRentalGroups()
+    toast.success('Đã xóa nhóm')
   }
 
   // ── CID CRUD ──────────────────────────────────────────────────────────────
@@ -319,13 +328,15 @@ export default function ExpensesPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
-    if (res.ok) { await fetchRentalGroups(); setShowCidModal(false) }
+    if (res.ok) { await fetchRentalGroups(); setShowCidModal(false); toast.success('Đã thêm CID') }
+    else toast.error('Không thể thêm CID')
     setCidSaving(false)
   }
   async function deleteCid(id: string) {
     if (!confirm('Xóa CID này khỏi nhóm?')) return
     await fetch('/api/expenses/rental-group-cids', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
     await fetchRentalGroups()
+    toast.success('Đã xóa CID')
   }
 
   // ── Other CRUD ────────────────────────────────────────────────────────────
@@ -344,13 +355,15 @@ export default function ExpensesPage() {
     setOtherSaving(true)
     const payload = { ...(editingOther ? { id: editingOther.id } : {}), date: otherForm.date, category_id: otherForm.category_id || null, amount: parseFloat(otherForm.amount) || 0, description: otherForm.description.trim() || null, project_id: otherForm.project_id || null }
     const res = await fetch('/api/expenses/other', { method: editingOther ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-    if (res.ok) { await fetchOtherCosts(); setShowOtherModal(false) }
+    if (res.ok) { await fetchOtherCosts(); setShowOtherModal(false); toast.success(editingOther ? 'Đã cập nhật chi phí' : 'Đã thêm chi phí') }
+    else toast.error('Không thể lưu chi phí')
     setOtherSaving(false)
   }
   async function deleteOther(id: string) {
     if (!confirm('Xóa khoản chi phí này?')) return
     await fetch('/api/expenses/other', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
     await fetchOtherCosts()
+    toast.success('Đã xóa chi phí')
   }
 
   // ── Category CRUD ─────────────────────────────────────────────────────────
@@ -395,7 +408,7 @@ export default function ExpensesPage() {
         <DateRangePicker
           from={fromStr}
           to={toStr}
-          onApply={(f, t) => { setFromStr(f); setToStr(t) }}
+          onApply={(f, t) => setDateRange({ from: new Date(f + 'T00:00:00Z'), to: new Date(t + 'T00:00:00Z') })}
         />
 
         <ProjectFilterDropdown

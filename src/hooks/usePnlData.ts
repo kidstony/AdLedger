@@ -2,9 +2,10 @@
 
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { MOCK_PNL_DAILY } from '@/lib/mock-data'
-import { aggregatePnl, getDefaultDateRange } from '@/lib/utils'
+import { aggregatePnl } from '@/lib/utils'
 import { DateRange, PnlSummary, RentalGroup, OtherCost } from '@/lib/types'
 import { useProjectsContext } from '@/context/ProjectsContext'
+import { useDateRange } from '@/context/DateRangeContext'
 import { supabase } from '@/lib/supabase'
 import { computeCidCost } from '@/lib/costs'
 import { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
@@ -31,7 +32,7 @@ interface RevenueRow {
 
 export function usePnlData() {
   const { projects } = useProjectsContext()
-  const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange())
+  const { dateRange, setDateRange } = useDateRange()
   const [isLoading, setIsLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set())
@@ -268,6 +269,30 @@ export function usePnlData() {
     setIsLoading(false)
   }, [dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const dailyChartData = useMemo(() => {
+    if (dataSource !== 'real' || !adSpendRows?.length) return []
+    const projectIds = selectedProjectIds.size > 0 ? selectedProjectIds : null
+    const byDate = new Map<string, { date: string; spend: number; revenue: number }>()
+    adSpendRows.forEach(row => {
+      const project = projectByCampaignId.get(row.campaign_id)
+      if (!project) return
+      if (projectIds && !projectIds.has(project.project_id)) return
+      const e = byDate.get(row.date) ?? { date: row.date, spend: 0, revenue: 0 }
+      e.spend += row.spend
+      byDate.set(row.date, e)
+    })
+    revenueRows.forEach(r => {
+      if (r.type !== 'confirmed') return
+      if (projectIds && !projectIds.has(r.project_id)) return
+      const e = byDate.get(r.date) ?? { date: r.date, spend: 0, revenue: 0 }
+      e.revenue += r.amount
+      byDate.set(r.date, e)
+    })
+    return Array.from(byDate.values())
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(d => ({ date: d.date, spend: d.spend, revenue: d.revenue, profit: d.revenue - d.spend }))
+  }, [dataSource, adSpendRows, revenueRows, selectedProjectIds, projectByCampaignId])
+
   return {
     data: filtered as PnlSummary[],
     allSummaries,
@@ -283,5 +308,6 @@ export function usePnlData() {
     refresh,
     dataSource,
     lastSyncedAt,
+    dailyChartData,
   }
 }

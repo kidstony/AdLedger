@@ -1,3 +1,30 @@
+export type UserRole = 'super_admin' | 'manager' | 'member'
+
+export interface Team {
+  id: string
+  name: string
+  color: string
+  created_at: string
+}
+
+export interface UserProfile {
+  user_id: string
+  full_name: string
+  email: string
+  role: UserRole
+  team_id: string | null
+  email_confirmed: boolean
+  project_count: number
+  team?: Pick<Team, 'id' | 'name' | 'color'>
+}
+
+export interface ProjectMember {
+  id: string
+  project_id: string
+  user_id: string
+  created_at: string
+}
+
 export interface MasterProject {
   id: string
   name: string
@@ -37,6 +64,7 @@ export interface Project {
   ref_link?: string | null
   email_ref?: string | null
   bank_account_id?: string | null
+  team_id?: string | null
   bank_accounts?: (BankAccount & { banks?: Bank | null }) | null
 }
 

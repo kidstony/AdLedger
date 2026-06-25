@@ -3,12 +3,12 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
-
-type Role = 'admin' | 'manager' | 'employee' | null
+import { UserRole } from '@/lib/types'
 
 interface AuthContextValue {
   user: User | null
-  role: Role
+  role: UserRole | null
+  teamId: string | null
   isLoading: boolean
   signOut: () => Promise<void>
 }
@@ -17,31 +17,33 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [role, setRole] = useState<Role>(null)
+  const [role, setRole] = useState<UserRole | null>(null)
+  const [teamId, setTeamId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  async function fetchRole(userId: string) {
+  async function fetchProfile(userId: string) {
     const { data } = await supabase
       .from('user_profiles')
-      .select('role')
+      .select('role, team_id')
       .eq('user_id', userId)
       .single()
-    setRole((data?.role as Role) ?? null)
+    setRole((data?.role as UserRole) ?? null)
+    setTeamId(data?.team_id ?? null)
   }
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       const currentUser = session?.user ?? null
       setUser(currentUser)
-      if (currentUser) await fetchRole(currentUser.id)
+      if (currentUser) await fetchProfile(currentUser.id)
       setIsLoading(false)
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const currentUser = session?.user ?? null
       setUser(currentUser)
-      if (currentUser) await fetchRole(currentUser.id)
-      else setRole(null)
+      if (currentUser) await fetchProfile(currentUser.id)
+      else { setRole(null); setTeamId(null) }
       setIsLoading(false)
     })
 
@@ -53,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, role, isLoading, signOut }}>
+    <AuthContext.Provider value={{ user, role, teamId, isLoading, signOut }}>
       {children}
     </AuthContext.Provider>
   )

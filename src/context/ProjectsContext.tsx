@@ -25,8 +25,8 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) { setProjects([]); setIsLoading(false); return }
 
-    if (role === 'admin' || role === 'manager') loadAllProjects()
-    else if (role === 'employee') loadAssignedProjects(user.id)
+    if (role === 'super_admin' || role === 'manager') loadAllProjects()
+    else if (role === 'member') loadAssignedProjects(user.id)
   }, [user, role])
 
   async function loadAllProjects() {
@@ -67,7 +67,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   async function loadAssignedProjects(userId: string) {
     setIsLoading(true)
     const { data: assignments } = await supabase
-      .from('project_assignments')
+      .from('project_members')
       .select('project_id')
       .eq('user_id', userId)
 
