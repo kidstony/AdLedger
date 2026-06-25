@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCallerProfile } from '@/lib/require-role'
 
+// POST — giao dự án cho member (access_level = 'editor')
 export async function POST(req: Request) {
   const caller = await getCallerProfile(req)
   if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -22,14 +23,19 @@ export async function POST(req: Request) {
     }
   }
 
+  // Upsert vào project_shares với editor level (thay thế project_members)
   const { error } = await supabaseAdmin
-    .from('project_members')
-    .insert({ project_id, user_id })
+    .from('project_shares')
+    .upsert(
+      { project_id, user_id, shared_by: caller.user_id, access_level: 'editor' },
+      { onConflict: 'project_id,user_id' }
+    )
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
   return NextResponse.json({ success: true })
 }
 
+// DELETE — thu hồi quyền truy cập của member
 export async function DELETE(req: Request) {
   const caller = await getCallerProfile(req)
   if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -51,7 +57,7 @@ export async function DELETE(req: Request) {
   }
 
   const { error } = await supabaseAdmin
-    .from('project_members')
+    .from('project_shares')
     .delete()
     .eq('project_id', project_id)
     .eq('user_id', user_id)

@@ -186,3 +186,46 @@ export interface RentalGroup {
   created_at: string
   rental_group_cids?: RentalGroupCid[]
 }
+
+// ─── Project Sharing ───────────────────────────────────────────────────────
+
+export type ShareAccessLevel = 'viewer' | 'reporter' | 'editor'
+
+export type SharePermissionId =
+  | 'view_revenue' | 'view_profit' | 'view_adspend'
+  | 'input_revenue' | 'input_expense' | 'confirm_payment'
+
+export interface SharePermissions {
+  view_revenue:    boolean
+  view_profit:     boolean
+  view_adspend:    boolean
+  input_revenue:   boolean
+  input_expense:   boolean
+  confirm_payment: boolean
+}
+
+export const ACCESS_LEVEL_DEFAULTS: Record<ShareAccessLevel, SharePermissions> = {
+  viewer: {
+    view_revenue: false, view_profit: false, view_adspend: false,
+    input_revenue: false, input_expense: false, confirm_payment: false,
+  },
+  reporter: {
+    view_revenue: true, view_profit: true, view_adspend: true,
+    input_revenue: false, input_expense: false, confirm_payment: false,
+  },
+  editor: {
+    view_revenue: true, view_profit: true, view_adspend: true,
+    input_revenue: true, input_expense: true, confirm_payment: true,
+  },
+}
+
+export interface ProjectShare {
+  id:           string
+  project_id:   string
+  user_id:      string
+  shared_by:    string | null
+  access_level: ShareAccessLevel
+  created_at:   string
+  user_profile?: Pick<UserProfile, 'full_name' | 'email' | 'role'>
+  custom_permissions?: Array<{ permission_id: SharePermissionId; granted: boolean }>
+}

@@ -73,7 +73,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   async function loadAssignedProjects(userId: string) {
     setIsLoading(true)
     const { data: assignments } = await supabase
-      .from('project_members')
+      .from('project_shares')
       .select('project_id')
       .eq('user_id', userId)
 
