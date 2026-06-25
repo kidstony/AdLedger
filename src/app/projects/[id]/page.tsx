@@ -11,6 +11,8 @@ import DateRangePicker from '@/components/ui/DateRangePicker'
 import { formatVNDFull, formatROI, formatVND, getProfitTextClass, getRoiTextClass, formatCid } from '@/lib/utils'
 import { PnlDaily, RentalGroup, OtherCost } from '@/lib/types'
 import { computeCidCost } from '@/lib/costs'
+import { useAuth } from '@/context/AuthContext'
+import ShareTab from '@/components/project/ShareTab'
 
 function localStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -25,7 +27,9 @@ function defaultFrom(): string {
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const { projects } = useProjectsContext()
+  const { role, teamId: userTeamId } = useAuth()
   const project = projects.find(p => p.project_id === id)
+  const [activeTab, setActiveTab] = useState<'info' | 'share'>('info')
 
   const [fromStr, setFromStr] = useState(defaultFrom)
   const [toStr, setToStr]     = useState(() => localStr(new Date()))
@@ -137,6 +141,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const hasScreen       = totalScreen > 0
   const estimatedProfit = totalRevenue + totalScreen - totalSpend
   const estimatedRoi    = totalSpend > 0 ? (estimatedProfit / totalSpend) * 100 : 0
+  const canShare        = role === 'super_admin' || (role === 'manager' && project?.team_id === userTeamId)
 
   if (!project && !isLoading && projects.length > 0) {
     return (
@@ -179,6 +184,26 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         )}
       </div>
 
+      {/* Tab bar — chỉ hiện với super_admin và manager của team sở hữu dự án */}
+      {canShare && (
+        <div className="flex gap-1 border-b border-slate-200">
+          {(['info', 'share'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                activeTab === tab
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {tab === 'info' ? 'Thông tin' : 'Chia sẻ'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {(!canShare || activeTab === 'info') && (<>
       {/* Date range picker */}
       <DateRangePicker
         from={fromStr}
@@ -318,6 +343,15 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             </table>
           </div>
         </div>
+      )}
+      </>)}
+
+      {canShare && activeTab === 'share' && project && (
+        <ShareTab
+          projectId={project.project_id}
+          projectName={project.name}
+          teamId={project.team_id ?? null}
+        />
       )}
     </div>
   )
