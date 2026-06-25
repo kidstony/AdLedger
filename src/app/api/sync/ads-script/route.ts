@@ -65,19 +65,24 @@ export async function POST(req: NextRequest) {
   if ('type' in body && body.type === 'discover') {
     const campaigns = (body as { campaigns?: CampaignRecord[] }).campaigns ?? []
     if (campaigns.length > 0) {
+      const ids = campaigns.map(c => c.campaign_id)
+      const { data: existing } = await supabaseAdmin
+        .from('campaign_discoveries').select('campaign_id, mcc_id, mcc_name').in('campaign_id', ids)
+      const existingMap = new Map((existing ?? []).map(d => [d.campaign_id, d]))
+
       const rows = campaigns.map(c => ({
         campaign_id:   c.campaign_id,
         campaign_name: c.campaign_name,
         customer_id:   c.customer_id,
-        mcc_id:        c.mcc_id ?? null,
-        mcc_name:      c.mcc_name ?? null,
+        mcc_id:        c.mcc_id ?? existingMap.get(c.campaign_id)?.mcc_id ?? null,
+        mcc_name:      c.mcc_name ?? existingMap.get(c.campaign_id)?.mcc_name ?? null,
         last_seen:     new Date().toISOString(),
       }))
       const { error } = await supabaseAdmin
         .from('campaign_discoveries')
         .upsert(rows, { onConflict: 'campaign_id' })
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-      await backfillProjectCidMcc(campaigns.map(c => c.campaign_id))
+      await backfillProjectCidMcc(ids)
     }
     return NextResponse.json({ success: true, type: 'discover', count: campaigns.length })
   }
@@ -91,13 +96,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, count: 0, ping: true })
   }
 
-  // Upsert campaign discoveries (keep last_seen fresh)
+  // Upsert campaign discoveries — fetch existing MCC data first so we don't overwrite
+  // mcc_id/mcc_name that was set by the discover phase if this spend record lacks MCC info.
+  const spendCampaignIds = records.map(r => r.campaign_id)
+  const { data: existingSpend } = await supabaseAdmin
+    .from('campaign_discoveries').select('campaign_id, mcc_id, mcc_name').in('campaign_id', spendCampaignIds)
+  const existingSpendMap = new Map((existingSpend ?? []).map(d => [d.campaign_id, d]))
+
   const discoveryRows = records.map(r => ({
     campaign_id:   r.campaign_id,
     campaign_name: r.campaign_name,
     customer_id:   r.customer_id,
-    mcc_id:        r.mcc_id ?? null,
-    mcc_name:      r.mcc_name ?? null,
+    mcc_id:        r.mcc_id ?? existingSpendMap.get(r.campaign_id)?.mcc_id ?? null,
+    mcc_name:      r.mcc_name ?? existingSpendMap.get(r.campaign_id)?.mcc_name ?? null,
     last_seen:     new Date().toISOString(),
   }))
   await supabaseAdmin
