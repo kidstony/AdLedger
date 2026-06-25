@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Pencil, Trash2, Search, UserCheck, Link2, Mail, Copy, Check, RefreshCw, Loader2, ArrowUp, ArrowDown, ArrowUpDown, Download } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Plus, Pencil, Trash2, Search, Briefcase, Share2, Link2, Mail, Copy, Check, RefreshCw, Loader2, ArrowUp, ArrowDown, ArrowUpDown, Download } from 'lucide-react'
 import { useProjects } from '@/hooks/useProjects'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
 import { Project, CampaignDiscovery } from '@/lib/types'
@@ -24,6 +25,7 @@ function fmtCustomerId(id: string | null | undefined): string {
 export default function ProjectsPage() {
   const { projects, isLoading, addProject, updateProject, deleteProject, deleteProjects } = useProjects()
   const { role } = useAuth()
+  const router = useRouter()
   const { masterProjects } = useMasterProjectsContext()
   const [dialog, setDialog] = useState<{ mode: 'add' | 'edit'; data?: Project } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Project | null>(null)
@@ -89,6 +91,21 @@ export default function ProjectsPage() {
     }
     setSyncingMcc(false)
   }
+
+  const [shareCountMap, setShareCountMap] = useState<Map<string, number>>(new Map())
+
+  useEffect(() => {
+    if (projects.length === 0 || (role !== 'super_admin' && role !== 'manager')) return
+    const ids = projects.map(p => p.project_id)
+    supabase.from('project_shares').select('project_id').in('project_id', ids)
+      .then(({ data }) => {
+        const map = new Map<string, number>()
+        ;(data ?? []).forEach((r: { project_id: string }) => {
+          map.set(r.project_id, (map.get(r.project_id) ?? 0) + 1)
+        })
+        setShareCountMap(map)
+      })
+  }, [projects, role])
 
   const [employees, setEmployees] = useState<UserRow[]>([])
   const [employeesLoaded, setEmployeesLoaded] = useState(false)
@@ -165,7 +182,7 @@ export default function ProjectsPage() {
     if (employeesLoaded) return
     const res = await fetch('/api/admin/list-users')
     const data: UserRow[] = await res.json()
-    setEmployees(Array.isArray(data) ? data.filter(u => u.role === 'employee') : [])
+    setEmployees(Array.isArray(data) ? data.filter(u => u.role === 'member') : [])
     setEmployeesLoaded(true)
   }
 
@@ -289,9 +306,13 @@ export default function ProjectsPage() {
                       <th onClick={() => handleSort('name')} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:text-slate-700">
                         <span className="inline-flex items-center gap-1">Tên dự án {sortKey === 'name' ? (sortDir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : <ArrowUpDown size={11} className="text-slate-400" />}</span>
                       </th>
-                      {['CID', 'ID Campaign', 'MCC', 'ID MCC', 'Tổng Dự Án', 'Link Ref', 'Email Ref', 'Bank Nhận', ''].map(h => (
+                      {['CID', 'ID Campaign', 'MCC', 'ID MCC', 'Tổng Dự Án', 'Link Ref', 'Email Ref', 'Bank Nhận'].map(h => (
                         <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                       ))}
+                      {(role === 'super_admin' || role === 'manager') && (
+                        <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap">Chia sẻ</th>
+                      )}
+                      <th className="px-4 py-3"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -428,6 +449,23 @@ export default function ProjectsPage() {
                               </span>
                             )}
                           </td>
+                          {/* Chia sẻ column */}
+                          {(role === 'super_admin' || role === 'manager') && (
+                            <td className="px-4 py-3">
+                              {(shareCountMap.get(p.project_id) ?? 0) > 0 ? (
+                                <button
+                                  onClick={() => router.push(`/projects/${p.project_id}?tab=share`)}
+                                  className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                                  title="Xem danh sách chia sẻ"
+                                >
+                                  <Share2 size={11} />
+                                  {shareCountMap.get(p.project_id)}
+                                </button>
+                              ) : (
+                                <span className="text-slate-300 text-xs">—</span>
+                              )}
+                            </td>
+                          )}
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1 justify-end">
                               {role === 'super_admin' && projectAssignments[p.project_id] !== undefined && (
@@ -437,7 +475,7 @@ export default function ProjectsPage() {
                                 <button onClick={() => openAssignPanel(p.project_id)}
                                   className={`p-1.5 rounded transition-colors ${assigningProjectId === p.project_id ? 'bg-blue-100 text-blue-600' : 'hover:bg-slate-200 text-slate-500'}`}
                                   title="Phân công nhân viên">
-                                  <UserCheck size={13} />
+                                  <Briefcase size={13} />
                                 </button>
                               )}
                               <button onClick={() => setDialog({ mode: 'edit', data: p })}

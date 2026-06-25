@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Zap, Database, Monitor } from 'lucide-react'
 import { MOCK_PNL_DAILY } from '@/lib/mock-data'
 import { useProjectsContext } from '@/context/ProjectsContext'
@@ -31,7 +32,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const { role, teamId: userTeamId } = useAuth()
   const sharePerms = useSharePermissions(id)
   const project = projects.find(p => p.project_id === id)
-  const [activeTab, setActiveTab] = useState<'info' | 'share'>('info')
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
 
   const [fromStr, setFromStr] = useState(defaultFrom)
   const [toStr, setToStr]     = useState(() => localStr(new Date()))
@@ -144,11 +147,20 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const estimatedProfit = totalRevenue + totalScreen - totalSpend
   const estimatedRoi    = totalSpend > 0 ? (estimatedProfit / totalSpend) * 100 : 0
   const canShare        = role === 'super_admin' || (role === 'manager' && project?.team_id === userTeamId)
+  const activeTab: 'info' | 'share' = (searchParams.get('tab') === 'share' && canShare) ? 'share' : 'info'
+  function setActiveTab(tab: 'info' | 'share') {
+    const p = new URLSearchParams(searchParams.toString())
+    if (tab === 'share') p.set('tab', 'share'); else p.delete('tab')
+    router.replace(`${pathname}?${p.toString()}`)
+  }
   // Permission masking: non-members always see everything; members use resolved sharePerms
   const isMember        = role === 'member'
-  const canViewRevenue  = !isMember || (sharePerms?.view_revenue  ?? false)
-  const canViewProfit   = !isMember || (sharePerms?.view_profit   ?? false)
-  const canViewAdspend  = !isMember || (sharePerms?.view_adspend  ?? false)
+  const canViewRevenue  = !isMember || (sharePerms?.view_revenue   ?? false)
+  const canViewProfit   = !isMember || (sharePerms?.view_profit    ?? false)
+  const canViewAdspend  = !isMember || (sharePerms?.view_adspend   ?? false)
+  const canInputRevenue = !isMember || (sharePerms?.input_revenue  ?? false)
+  const canInputExpense = !isMember || (sharePerms?.input_expense  ?? false)
+  const canConfirmPay   = !isMember || (sharePerms?.confirm_payment ?? false)
 
   if (!project && !isLoading && projects.length > 0) {
     return (

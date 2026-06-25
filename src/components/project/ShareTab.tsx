@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Users, Plus, ChevronDown, Trash2 } from 'lucide-react'
+import { Users, Plus, ChevronDown, Trash2, Settings } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { ProjectShare, ShareAccessLevel, ACCESS_LEVEL_DEFAULTS, SharePermissionId } from '@/lib/types'
 import AddShareModal from './AddShareModal'
@@ -38,9 +38,12 @@ export default function ShareTab({ projectId, projectName, teamId }: Props) {
   const [shares, setShares]           = useState<ProjectShare[]>([])
   const [isLoading, setIsLoading]     = useState(true)
   const [showModal, setShowModal]     = useState(false)
-  const [openDropdown, setOpenDropdown] = useState<string | null>(null)
-  const [changingId, setChangingId]   = useState<string | null>(null)
-  const [revokingId, setRevokingId]   = useState<string | null>(null)
+  const [openDropdown, setOpenDropdown]     = useState<string | null>(null)
+  const [changingId, setChangingId]         = useState<string | null>(null)
+  const [revokingId, setRevokingId]         = useState<string | null>(null)
+  const [expandedShareId, setExpandedShareId] = useState<string | null>(null)
+  const [localPerms, setLocalPerms]         = useState<Record<SharePermissionId, boolean> | null>(null)
+  const [savingPerms, setSavingPerms]       = useState(false)
 
   const loadShares = useCallback(async () => {
     setIsLoading(true)
@@ -56,14 +59,42 @@ export default function ShareTab({ projectId, projectName, teamId }: Props) {
 
   async function changeLevel(shareId: string, access_level: ShareAccessLevel) {
     setChangingId(shareId)
+    setExpandedShareId(null)
+    setLocalPerms(null)
+    const token = await getToken()
+    // Gửi kèm default permissions để xóa sạch custom permissions cũ
+    await fetch(`/api/projects/${projectId}/shares/${shareId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ access_level, custom_permissions: ACCESS_LEVEL_DEFAULTS[access_level] }),
+    })
+    setOpenDropdown(null)
+    setChangingId(null)
+    loadShares()
+  }
+
+  function openPermEdit(share: ProjectShare) {
+    if (expandedShareId === share.id) {
+      setExpandedShareId(null)
+      setLocalPerms(null)
+      return
+    }
+    setExpandedShareId(share.id)
+    setLocalPerms(getEffectivePerms(share))
+  }
+
+  async function savePerms(shareId: string) {
+    if (!localPerms) return
+    setSavingPerms(true)
     const token = await getToken()
     await fetch(`/api/projects/${projectId}/shares/${shareId}`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ access_level }),
+      body: JSON.stringify({ custom_permissions: localPerms }),
     })
-    setOpenDropdown(null)
-    setChangingId(null)
+    setSavingPerms(false)
+    setExpandedShareId(null)
+    setLocalPerms(null)
     loadShares()
   }
 
@@ -167,6 +198,15 @@ export default function ShareTab({ projectId, projectName, teamId }: Props) {
                         )}
                       </div>
 
+                      {/* Custom permissions toggle */}
+                      <button
+                        onClick={() => openPermEdit(share)}
+                        className={`p-1.5 rounded transition-colors ${expandedShareId === share.id ? 'bg-blue-100 text-blue-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}`}
+                        title="Tùy chỉnh quyền chi tiết"
+                      >
+                        <Settings size={14} />
+                      </button>
+
                       {/* Revoke */}
                       <button
                         onClick={() => revokeShare(share.id, name)}
@@ -194,6 +234,57 @@ export default function ShareTab({ projectId, projectName, teamId }: Props) {
                       </span>
                     ))}
                   </div>
+
+                  {/* Inline permission editor */}
+                  {expandedShareId === share.id && localPerms && (
+                    <div className="mt-3 pt-3 border-t border-slate-100">
+                      <div className="grid grid-cols-2 gap-x-6 gap-y-0">
+                        <div>
+                          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Xem số liệu</p>
+                          {(['view_revenue', 'view_profit', 'view_adspend'] as SharePermissionId[]).map(pid => (
+                            <label key={pid} className="flex items-center gap-2 py-1 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={localPerms[pid]}
+                                onChange={e => setLocalPerms(prev => prev ? { ...prev, [pid]: e.target.checked } : prev)}
+                                className="accent-blue-600"
+                              />
+                              <span className="text-xs text-slate-600">{PERM_LABELS[pid]}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Nhập liệu</p>
+                          {(['input_revenue', 'input_expense', 'confirm_payment'] as SharePermissionId[]).map(pid => (
+                            <label key={pid} className="flex items-center gap-2 py-1 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={localPerms[pid]}
+                                onChange={e => setLocalPerms(prev => prev ? { ...prev, [pid]: e.target.checked } : prev)}
+                                className="accent-blue-600"
+                              />
+                              <span className="text-xs text-slate-600">{PERM_LABELS[pid]}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex justify-end gap-2 mt-3">
+                        <button
+                          onClick={() => { setExpandedShareId(null); setLocalPerms(null) }}
+                          className="text-xs px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded transition-colors"
+                        >
+                          Hủy
+                        </button>
+                        <button
+                          onClick={() => savePerms(share.id)}
+                          disabled={savingPerms}
+                          className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:opacity-50"
+                        >
+                          {savingPerms ? 'Đang lưu...' : 'Lưu quyền'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )
             })}
