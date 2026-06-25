@@ -45,11 +45,15 @@ export function usePnlData() {
 
   // Map google_campaign_id → project
   const projectByCampaignId = useMemo(
-    () => new Map(
-      projects
-        .filter(p => p.google_campaign_id)
-        .map(p => [p.google_campaign_id!, p])
-    ),
+    () => {
+      const map = new Map(
+        projects
+          .filter(p => p.google_campaign_id)
+          .map(p => [p.google_campaign_id!, p])
+      )
+      console.log('[usePnlData] projectByCampaignId rebuilt', { projectsLen: projects.length, mapSize: map.size })
+      return map
+    },
     [projects]
   )
 
