@@ -47,20 +47,27 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     }
 
     // Enrich cid from campaign_discoveries so stale '0000000000' is overridden
-    const cidRes = await fetch('/api/integrations/campaigns').catch(() => null)
-    if (cidRes?.ok) {
-      const campaigns: Array<{ project_id: string | null; customer_id: string }> = await cidRes.json().catch(() => [])
-      if (Array.isArray(campaigns)) {
-        const cidByProjectId = new Map(
-          campaigns.filter(c => c.project_id && c.customer_id).map(c => [c.project_id!, c.customer_id])
-        )
-        projectList = projectList.map(p => {
-          const realCid = cidByProjectId.get(p.project_id)
-          return realCid ? { ...p, cid: realCid } : p
-        })
+    // 8s timeout so setProjects is always called even if route is slow
+    try {
+      const controller = new AbortController()
+      const tid = setTimeout(() => controller.abort(), 8000)
+      const cidRes = await fetch('/api/integrations/campaigns', { signal: controller.signal })
+      clearTimeout(tid)
+      if (cidRes.ok) {
+        const campaigns: Array<{ project_id: string | null; customer_id: string }> = await cidRes.json().catch(() => [])
+        if (Array.isArray(campaigns)) {
+          const cidByProjectId = new Map(
+            campaigns.filter(c => c.project_id && c.customer_id).map(c => [c.project_id!, c.customer_id])
+          )
+          projectList = projectList.map(p => {
+            const realCid = cidByProjectId.get(p.project_id)
+            return realCid ? { ...p, cid: realCid } : p
+          })
+        }
       }
-    }
+    } catch { /* timeout or network error — setProjects still runs below */ }
 
+    console.log('[ProjectsContext] setProjects', { count: projectList.length, hasCampaignId: projectList.filter(p => p.google_campaign_id).length })
     setProjects(projectList)
     setIsLoading(false)
   }
