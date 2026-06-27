@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getCallerProfile } from '@/lib/require-role'
+import { memberCanDo } from '@/lib/check-member-permission'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -19,10 +21,21 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const caller = await getCallerProfile(req)
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const body = await req.json()
   const rows: { project_id: string; date: string; type: 'confirmed' | 'pending'; amount: number }[] = body.rows ?? []
 
   if (rows.length === 0) return NextResponse.json({ success: true, count: 0 })
+
+  if (caller.role === 'member') {
+    const uniqueProjectIds = [...new Set(rows.map(r => r.project_id))]
+    for (const projectId of uniqueProjectIds) {
+      const allowed = await memberCanDo(caller.user_id, projectId, 'input_revenue')
+      if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
 
   const toDelete = rows.filter(r => r.amount === 0)
   const toUpsert = rows.filter(r => r.amount > 0)
@@ -55,11 +68,18 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ success: true, count: rows.length })
 }
 
-// Partial update: note (on pending row) or payout dates (on confirmed row)
 export async function PATCH(req: NextRequest) {
+  const caller = await getCallerProfile(req)
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { project_id, date, type = 'pending', note, payout_start_date, payout_end_date } = await req.json()
 
   if (!project_id || !date) return NextResponse.json({ error: 'project_id and date required' }, { status: 400 })
+
+  if (caller.role === 'member') {
+    const allowed = await memberCanDo(caller.user_id, project_id, 'input_revenue')
+    if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   const fields: Record<string, string | null> = {}
   if (note !== undefined) fields.note = note ?? null

@@ -61,6 +61,16 @@ export default function MasterProjectsPage() {
     })
   , [masterProjects, summaryByMaster])
 
+  const accessibleMasterIds = useMemo(
+    () => new Set([...projectMasterMap.values()].filter(Boolean) as string[]),
+    [projectMasterMap]
+  )
+
+  const visibleMasterRows = useMemo(
+    () => accessibleMasterIds.size > 0 ? masterRows.filter(r => accessibleMasterIds.has(r.id)) : masterRows,
+    [masterRows, accessibleMasterIds]
+  )
+
   function toggleExpand(id: string) {
     setExpandedIds(prev => {
       const next = new Set(prev)
@@ -96,7 +106,7 @@ export default function MasterProjectsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-slate-800">Tổng Dự Án</h2>
-          <p className="text-sm text-slate-500 mt-0.5">{masterProjects.length} thương hiệu · Tổng hợp P&L theo nhóm</p>
+          <p className="text-sm text-slate-500 mt-0.5">{visibleMasterRows.length} thương hiệu · Tổng hợp P&L theo nhóm</p>
         </div>
         <Button onClick={openAdd} className="gap-1.5"><Plus size={14} /> Tạo Tổng Dự Án</Button>
       </div>
@@ -170,14 +180,14 @@ export default function MasterProjectsPage() {
               </tr>
             </thead>
             <tbody>
-              {masterRows.length === 0 && (
+              {visibleMasterRows.length === 0 && (
                 <tr>
                   <td colSpan={11} className="py-10 text-center text-sm text-slate-400">
                     Chưa có Tổng Dự Án nào. Tạo mới và gán chiến dịch vào.
                   </td>
                 </tr>
               )}
-              {masterRows.map(row => {
+              {visibleMasterRows.map(row => {
                 const expanded = expandedIds.has(row.id)
                 const isProfit = row.total_profit >= 0
                 return (

@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { SlidersHorizontal } from 'lucide-react'
-import { useRouter } from 'next/navigation'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { useDateRange } from '@/context/DateRangeContext'
 import { useAuth } from '@/context/AuthContext'
@@ -95,10 +94,15 @@ type Tab = 'qc' | 'rental' | 'other' | 'summary'
 
 export default function ExpensesPage() {
   const { role } = useAuth()
-  const router = useRouter()
-  useEffect(() => { if (role === 'member') router.replace('/dashboard') }, [role, router])
 
-  const { projects } = useProjectsContext()
+  const { projects: allProjects, isLoading: projectsLoading } = useProjectsContext()
+  // Members chỉ nhập được dự án có effective input_expense = true
+  const projects = useMemo(
+    () => role === 'member' ? allProjects.filter(p => p.effective_permissions?.input_expense === true) : allProjects,
+    [allProjects, role]
+  )
+  // True when we know the member has at least one project with input_expense permission
+  const memberHasAccess = role !== 'member' || (!projectsLoading && projects.length > 0)
   const { fromStr, toStr, setDateRange } = useDateRange()
   const [tab, setTab] = useState<Tab>('qc')
 
@@ -240,6 +244,18 @@ export default function ExpensesPage() {
     [projects, adSpendByCid, rentalByCid, otherByCid]
   )
 
+  // ── Auth token helper ─────────────────────────────────────────────────────
+  async function getToken(): Promise<string> {
+    const { data: { session } } = await supabase.auth.getSession()
+    return session?.access_token ?? ''
+  }
+
+  // ── Auth fetch helper ─────────────────────────────────────────────────────
+  async function authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
+    const token = await getToken()
+    return fetch(url, { ...opts, headers: { ...opts.headers as Record<string, string>, Authorization: `Bearer ${token}` } })
+  }
+
   // ── Fetchers ──────────────────────────────────────────────────────────────
 
   async function fetchAdSpend() {
@@ -247,20 +263,28 @@ export default function ExpensesPage() {
     setAdSpendRows(data ?? [])
   }
   async function fetchRentalGroups() {
-    const res = await fetch('/api/expenses/rental-groups')
+    const res = await authFetch('/api/expenses/rental-groups')
     if (res.ok) setRentalGroups(await res.json())
   }
   async function fetchOtherCosts() {
-    const res = await fetch(`/api/expenses/other?from=${fromStr}&to=${toStr}`)
+    const res = await authFetch(`/api/expenses/other?from=${fromStr}&to=${toStr}`)
     if (res.ok) setOtherCosts(await res.json())
   }
   async function fetchCategories() {
-    const res = await fetch('/api/expenses/categories')
+    const res = await authFetch('/api/expenses/categories')
     if (res.ok) setCategories(await res.json())
   }
 
-  useEffect(() => { fetchAdSpend(); fetchOtherCosts() }, [fromStr, toStr]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchRentalGroups(); fetchCategories() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!memberHasAccess) return
+    fetchAdSpend()
+    fetchOtherCosts()
+  }, [fromStr, toStr, memberHasAccess]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!memberHasAccess) return
+    fetchRentalGroups()
+    fetchCategories()
+  }, [memberHasAccess]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Group CRUD ────────────────────────────────────────────────────────────
 
@@ -291,9 +315,10 @@ export default function ExpensesPage() {
       payment_date: isOneTime  ? (groupForm.payment_date || null) : null,
       note: groupForm.note.trim() || null,
     }
+    const token = await getToken()
     const res = await fetch('/api/expenses/rental-groups', {
       method: editingGroup ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload),
     })
     if (res.ok) { await fetchRentalGroups(); setShowGroupModal(false); toast.success(editingGroup ? 'Đã cập nhật nhóm' : 'Đã thêm nhóm') }
@@ -302,7 +327,8 @@ export default function ExpensesPage() {
   }
   async function deleteGroup(id: string) {
     if (!confirm('Xóa danh mục này và tất cả CID trong đó?')) return
-    await fetch('/api/expenses/rental-groups', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    const token = await getToken()
+    await fetch('/api/expenses/rental-groups', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ id }) })
     await fetchRentalGroups()
     toast.success('Đã xóa nhóm')
   }
@@ -323,9 +349,10 @@ export default function ExpensesPage() {
       account_label: cidForm.account_label.trim() || cidForm.cid.trim(),
       project_id: cidForm.project_id || null,
     }
+    const token = await getToken()
     const res = await fetch('/api/expenses/rental-group-cids', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload),
     })
     if (res.ok) { await fetchRentalGroups(); setShowCidModal(false); toast.success('Đã thêm CID') }
@@ -334,7 +361,8 @@ export default function ExpensesPage() {
   }
   async function deleteCid(id: string) {
     if (!confirm('Xóa CID này khỏi nhóm?')) return
-    await fetch('/api/expenses/rental-group-cids', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    const token = await getToken()
+    await fetch('/api/expenses/rental-group-cids', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ id }) })
     await fetchRentalGroups()
     toast.success('Đã xóa CID')
   }
@@ -354,14 +382,16 @@ export default function ExpensesPage() {
   async function saveOther() {
     setOtherSaving(true)
     const payload = { ...(editingOther ? { id: editingOther.id } : {}), date: otherForm.date, category_id: otherForm.category_id || null, amount: parseFloat(otherForm.amount) || 0, description: otherForm.description.trim() || null, project_id: otherForm.project_id || null }
-    const res = await fetch('/api/expenses/other', { method: editingOther ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+    const token = await getToken()
+    const res = await fetch('/api/expenses/other', { method: editingOther ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) })
     if (res.ok) { await fetchOtherCosts(); setShowOtherModal(false); toast.success(editingOther ? 'Đã cập nhật chi phí' : 'Đã thêm chi phí') }
     else toast.error('Không thể lưu chi phí')
     setOtherSaving(false)
   }
   async function deleteOther(id: string) {
     if (!confirm('Xóa khoản chi phí này?')) return
-    await fetch('/api/expenses/other', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    const token = await getToken()
+    await fetch('/api/expenses/other', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ id }) })
     await fetchOtherCosts()
     toast.success('Đã xóa chi phí')
   }
@@ -373,14 +403,16 @@ export default function ExpensesPage() {
   async function saveCategory() {
     setCategorySaving(true)
     const payload = { ...(editingCategory ? { id: editingCategory.id } : {}), name: categoryForm.name.trim(), color: categoryForm.color }
-    const res = await fetch('/api/expenses/categories', { method: editingCategory ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+    const token = await getToken()
+    const res = await fetch('/api/expenses/categories', { method: editingCategory ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) })
     if (res.ok) { await fetchCategories(); openAddCategory() }
     setCategorySaving(false)
   }
   async function createCategoryFromModal(name: string, color: string): Promise<CostCategory | null> {
+    const token = await getToken()
     const res = await fetch('/api/expenses/categories', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ name, color }),
     })
     if (!res.ok) return null
@@ -390,11 +422,22 @@ export default function ExpensesPage() {
   }
   async function deleteCategory(id: string) {
     if (!confirm('Xóa danh mục này?')) return
-    await fetch('/api/expenses/categories', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    const token = await getToken()
+    await fetch('/api/expenses/categories', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ id }) })
     await Promise.all([fetchCategories(), fetchOtherCosts()])
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
+
+  if (role === 'member' && !projectsLoading && projects.length === 0) {
+    return (
+      <div className="p-6 flex flex-col items-center justify-center min-h-[60vh] text-center">
+        <div className="text-5xl mb-4">🔒</div>
+        <p className="text-slate-600 font-medium">Bạn không có quyền nhập chi phí</p>
+        <p className="text-slate-400 text-sm mt-1">Hãy liên hệ quản trị viên để được cấp quyền.</p>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 space-y-4">

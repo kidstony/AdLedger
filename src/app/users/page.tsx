@@ -22,6 +22,11 @@ const ROLE_LABEL: Record<string, string> = {
   member:      'Member',
 }
 
+function getRoleLabel(role: string, orgId: string | null): string {
+  if (role === 'super_admin') return orgId === null ? 'Global Admin' : 'Org Admin'
+  return ROLE_LABEL[role] ?? role
+}
+
 const COLOR_PRESETS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280']
 
 type Step = 'info' | 'role'
@@ -33,14 +38,16 @@ const BLANK_FORM = {
   role: 'member' as UserRole,
   team_id: '',
   project_ids: [] as string[],
+  organization_id: '',
 }
 
 export default function UsersPage() {
-  const { user: currentUser, role } = useAuth()
+  const { user: currentUser, role, teamId, organizationId } = useAuth()
   const router = useRouter()
 
   const [users, setUsers] = useState<UserProfile[]>([])
   const [teams, setTeams] = useState<Team[]>([])
+  const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([])
   const [projects, setProjects] = useState<{ project_id: string; name: string; team_id: string | null }[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -69,26 +76,25 @@ export default function UsersPage() {
   }
 
   useEffect(() => {
-    if (role && role !== 'super_admin') router.replace('/dashboard')
+    if (role && role !== 'super_admin' && role !== 'manager') router.replace('/dashboard')
   }, [role, router])
 
   useEffect(() => {
-    if (role !== 'super_admin') return
+    if (role !== 'super_admin' && role !== 'manager') return
     loadAll()
   }, [role])
 
   async function loadAll() {
     setLoading(true)
-    const [usersRes, teamsRes, projectsRes] = await Promise.all([
-      adminFetch('/api/admin/list-users'),
-      adminFetch('/api/teams'),
-      supabase.from('projects').select('project_id, name, team_id').order('project_id'),
-    ])
-    const usersData = await usersRes.json()
-    const teamsData = await teamsRes.json()
-    setUsers(Array.isArray(usersData) ? usersData : [])
-    setTeams(Array.isArray(teamsData) ? teamsData : [])
-    setProjects(projectsRes.data ?? [])
+    const promises: Promise<void>[] = [
+      adminFetch('/api/admin/list-users').then(r => r.json()).then(d => setUsers(Array.isArray(d) ? d : [])),
+      Promise.resolve(supabase.from('projects').select('project_id, name, team_id').order('project_id')).then(r => { setProjects(r.data ?? []) }),
+    ]
+    if (role === 'super_admin') {
+      promises.push(adminFetch('/api/teams').then(r => r.json()).then(d => setTeams(Array.isArray(d) ? d : [])))
+      promises.push(Promise.resolve(supabase.from('organizations').select('id, name').order('name')).then(r => { setOrgs(r.data ?? []) }))
+    }
+    await Promise.all(promises)
     setLoading(false)
   }
 
@@ -112,6 +118,10 @@ export default function UsersPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     if (step === 'info') { setStep('role'); return }
+    if (form.role === 'super_admin' && organizationId === null && !form.organization_id) {
+      setFormError('Vui lòng chọn tổ chức cho Org Admin')
+      return
+    }
     setSaving(true)
     setFormError('')
     let res: Response, data: any = {}
@@ -126,6 +136,7 @@ export default function UsersPage() {
           role: form.role,
           team_id: form.team_id || null,
           project_ids: form.role === 'member' ? form.project_ids : [],
+          organization_id: form.role === 'super_admin' ? form.organization_id || null : null,
         }),
       })
       data = await res.json().catch(() => ({}))
@@ -150,7 +161,7 @@ export default function UsersPage() {
     const res = await adminFetch('/api/admin/update-role', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: editUser.user_id, role: editForm.role, team_id: editForm.team_id || null }),
+      body: JSON.stringify({ user_id: editUser.user_id, full_name: editForm.full_name, role: editForm.role, team_id: editForm.team_id || null }),
     })
     if (res.ok) {
       setUsers(prev => prev.map(u => u.user_id === editUser.user_id
@@ -205,17 +216,19 @@ export default function UsersPage() {
     return name.split(' ').slice(-2).map(w => w[0]).join('').toUpperCase() || '?'
   }
 
-  if (role !== 'super_admin') return null
+  if (role !== 'super_admin' && role !== 'manager') return null
+
+  const isAdmin = role === 'super_admin'
 
   return (
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-slate-800">Quản lý User</h2>
-          <p className="text-sm text-slate-500 mt-0.5">{users.length} tài khoản</p>
+          <h2 className="text-xl font-semibold text-slate-800">{isAdmin ? 'Quản lý User' : 'Thành viên nhóm'}</h2>
+          <p className="text-sm text-slate-500 mt-0.5">{users.length} {isAdmin ? 'tài khoản' : 'thành viên'}</p>
         </div>
-        <Button onClick={() => { setShowCreate(true); setStep('info'); setForm({ ...BLANK_FORM }); setFormError('') }} className="gap-1.5">
-          <Plus size={14} /> Tạo user mới
+        <Button onClick={() => { setShowCreate(true); setStep('info'); setForm({ ...BLANK_FORM, ...(role === 'manager' ? { team_id: teamId ?? '', role: 'member' as UserRole } : {}) }); setFormError('') }} className="gap-1.5">
+          <Plus size={14} /> {isAdmin ? 'Tạo user mới' : 'Thêm thành viên'}
         </Button>
       </div>
 
@@ -230,24 +243,28 @@ export default function UsersPage() {
             className="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-slate-300 w-52"
           />
         </div>
+        {isAdmin && (
         <div className="relative">
           <select value={filterRole} onChange={e => setFilterRole(e.target.value)}
             className="appearance-none pl-3 pr-7 py-1.5 text-sm border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-slate-300">
             <option value="all">Tất cả vai trò</option>
-            <option value="super_admin">Super Admin</option>
+            <option value="super_admin">Admin (Global/Org)</option>
             <option value="manager">Manager</option>
             <option value="member">Member</option>
           </select>
           <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
         </div>
-        <div className="relative">
-          <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
-            className="appearance-none pl-3 pr-7 py-1.5 text-sm border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-slate-300">
-            <option value="all">Tất cả team</option>
-            {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-          <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-        </div>
+        )}
+        {isAdmin && (
+          <div className="relative">
+            <select value={filterTeam} onChange={e => setFilterTeam(e.target.value)}
+              className="appearance-none pl-3 pr-7 py-1.5 text-sm border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-slate-300">
+              <option value="all">Tất cả team</option>
+              {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          </div>
+        )}
         {(filterRole !== 'all' || filterTeam !== 'all' || search) && (
           <span className="text-xs text-slate-400">{filtered.length} / {users.length}</span>
         )}
@@ -258,7 +275,7 @@ export default function UsersPage() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
-              {['', 'Họ tên', 'Email', 'Vai trò', 'Team', ''].map((h, i) => (
+              {['', 'Họ tên', 'Email', 'Vai trò', ...(isAdmin ? ['Team'] : []), ''].map((h, i) => (
                 <th key={i} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -285,9 +302,10 @@ export default function UsersPage() {
                 <td className="px-4 py-3 text-slate-500 text-xs">{u.email}</td>
                 <td className="px-4 py-3">
                   <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_BADGE[u.role])}>
-                    {ROLE_LABEL[u.role]}
+                    {getRoleLabel(u.role, u.organization_id)}
                   </span>
                 </td>
+                {isAdmin && (
                 <td className="px-4 py-3">
                   {u.team ? (
                     <span className="inline-flex items-center gap-1.5 text-xs">
@@ -298,12 +316,15 @@ export default function UsersPage() {
                     <span className="text-xs text-slate-400">—</span>
                   )}
                 </td>
+                )}
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1">
-                    <button onClick={() => openEdit(u)} className="p-1 text-slate-400 hover:text-slate-700 transition-colors">
-                      <Pencil size={13} />
-                    </button>
-                    {u.user_id !== currentUser?.id && (
+                    {isAdmin && (
+                      <button onClick={() => openEdit(u)} className="p-1 text-slate-400 hover:text-slate-700 transition-colors">
+                        <Pencil size={13} />
+                      </button>
+                    )}
+                    {u.user_id !== currentUser?.id && (isAdmin || u.role === 'member') && (
                       <button
                         onClick={() => handleDelete(u.user_id)}
                         disabled={deletingId === u.user_id}
@@ -373,23 +394,36 @@ export default function UsersPage() {
                   <h3 className="font-semibold text-slate-800 mb-3">Phân quyền & Team</h3>
                   <div className="space-y-2">
                     <label className="block text-xs font-medium text-slate-600">Vai trò</label>
-                    {(['super_admin', 'manager', 'member'] as UserRole[]).map(r => (
+                    {(isAdmin ? ['super_admin', 'manager', 'member'] : ['member'] as UserRole[]).map(r => (
                       <label key={r} className={cn('flex items-center gap-3 p-3 rounded-md border cursor-pointer transition-colors',
                         form.role === r ? 'border-slate-800 bg-slate-50' : 'border-slate-200 hover:bg-slate-50')}>
                         <input type="radio" name="role" value={r} checked={form.role === r}
-                          onChange={() => setForm(f => ({ ...f, role: r, team_id: r === 'super_admin' ? '' : f.team_id, project_ids: [] }))}
+                          onChange={() => setForm(f => ({ ...f, role: r as UserRole, team_id: r === 'super_admin' ? '' : f.team_id, project_ids: [] }))}
                           className="accent-slate-800" />
                         <div>
-                          <div className={cn('text-sm font-medium px-1.5 py-0.5 rounded-full inline-block', ROLE_BADGE[r])}>{ROLE_LABEL[r]}</div>
+                          <div className={cn('text-sm font-medium px-1.5 py-0.5 rounded-full inline-block', ROLE_BADGE[r])}>
+                            {r === 'super_admin' ? 'Org Admin' : ROLE_LABEL[r]}
+                          </div>
                           <div className="text-xs text-slate-400 mt-0.5">
-                            {r === 'super_admin' ? 'Toàn quyền hệ thống' : r === 'manager' ? 'Quản lý team và dự án' : 'Xem dự án được giao'}
+                            {r === 'super_admin' ? 'Toàn quyền trong một tổ chức — cần chọn tổ chức' : r === 'manager' ? 'Quản lý team và dự án' : 'Xem dự án được giao'}
                           </div>
                         </div>
                       </label>
                     ))}
                   </div>
 
-                  {form.role !== 'super_admin' && (
+                  {isAdmin && form.role === 'super_admin' && organizationId === null && orgs.length > 0 && (
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Tổ chức</label>
+                      <select value={form.organization_id} onChange={e => setForm(f => ({ ...f, organization_id: e.target.value }))}
+                        className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-md outline-none">
+                        <option value="">— Chọn tổ chức (bắt buộc) —</option>
+                        {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  {isAdmin && form.role !== 'super_admin' && (
                     <div>
                       <label className="block text-xs font-medium text-slate-600 mb-1">Team</label>
                       <select value={form.team_id} onChange={e => setForm(f => ({ ...f, team_id: e.target.value, project_ids: [] }))}
@@ -468,7 +502,7 @@ export default function UsersPage() {
                 onChange={e => setEditForm(f => ({ ...f, role: e.target.value as UserRole }))}
                 disabled={editUser.user_id === currentUser?.id}
                 className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-md outline-none disabled:bg-slate-50 disabled:text-slate-400">
-                <option value="super_admin">Super Admin</option>
+                <option value="super_admin">{editUser?.organization_id === null ? 'Global Admin' : 'Org Admin'}</option>
                 <option value="manager">Manager</option>
                 <option value="member">Member</option>
               </select>

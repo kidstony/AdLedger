@@ -1,13 +1,14 @@
 'use client'
 
 import { useState, useEffect, use } from 'react'
-import { ArrowLeft, Plus, Trash2, UserCheck, FolderOpen, Crown } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, FolderOpen, Crown, LayoutGrid, Users, X } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import AccessMatrix from '@/components/team/AccessMatrix'
 
 interface Member { user_id: string; full_name: string; role: string }
 interface TeamProject { project_id: string; name: string }
@@ -17,6 +18,8 @@ interface TeamDetail {
   projects: TeamProject[]
 }
 
+const BLANK_CREATE = { full_name: '', email: '', password: '' }
+
 export default function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const { role, teamId: myTeamId } = useAuth()
@@ -24,11 +27,16 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
 
   const [team, setTeam] = useState<TeamDetail | null>(null)
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<'members' | 'projects' | 'matrix'>('members')
 
   const [allUsers, setAllUsers] = useState<{ user_id: string; full_name: string; team_id: string | null }[]>([])
   const [allProjects, setAllProjects] = useState<{ project_id: string; name: string; team_id: string | null }[]>([])
   const [addMemberVal, setAddMemberVal] = useState('')
   const [addProjectVal, setAddProjectVal] = useState('')
+
+  const [showCreate, setShowCreate] = useState(false)
+  const [createForm, setCreateForm] = useState({ ...BLANK_CREATE })
+  const [createSaving, setCreateSaving] = useState(false)
 
   const isAdmin = role === 'super_admin'
   const canAccess = role === 'super_admin' || (role === 'manager' && myTeamId === id)
@@ -82,6 +90,26 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     } else {
       toast.error('Không thể thêm thành viên')
     }
+  }
+
+  async function createMember() {
+    if (!createForm.full_name || !createForm.email || !createForm.password) return
+    setCreateSaving(true)
+    const res = await adminFetch('/api/admin/create-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...createForm, role: 'member', team_id: id }),
+    })
+    if (res.ok) {
+      toast.success('Đã tạo thành viên mới')
+      setShowCreate(false)
+      setCreateForm({ ...BLANK_CREATE })
+      loadTeam()
+    } else {
+      const err = await res.json().catch(() => ({}))
+      toast.error(err.error ?? 'Không thể tạo thành viên')
+    }
+    setCreateSaving(false)
   }
 
   async function removeMember(userId: string) {
@@ -147,13 +175,40 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         <span className="text-sm text-slate-400">{team.members.length} thành viên · {team.projects.length} dự án</span>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Members column */}
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-slate-200">
+        {[
+          { id: 'members' as const,  label: 'Thành viên',         icon: <Users size={14} /> },
+          { id: 'projects' as const, label: 'Dự án',              icon: <FolderOpen size={14} /> },
+          { id: 'matrix' as const,   label: 'Ma trận phân quyền', icon: <LayoutGrid size={14} /> },
+        ].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors',
+              activeTab === tab.id
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+            )}
+          >
+            {tab.icon} {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab: Thành viên */}
+      {activeTab === 'members' && (
         <div className="border border-slate-200 rounded-lg overflow-hidden">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-              <UserCheck size={14} /> Thành viên ({team.members.length})
+              <Users size={14} /> Thành viên ({team.members.length})
             </h3>
+            {!isAdmin && (
+              <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1 h-7 text-xs">
+                <Plus size={12} /> Thêm thành viên
+              </Button>
+            )}
           </div>
 
           <div className="divide-y divide-slate-100">
@@ -169,7 +224,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                     <p className="text-xs text-slate-400">{m.role === 'manager' ? 'Manager' : 'Member'}</p>
                   </div>
                 </div>
-                {(!isAdmin && m.role === 'manager') ? null : (
+                {(isAdmin || m.role !== 'manager') && (
                   <button onClick={() => removeMember(m.user_id)}
                     className="p-1 text-slate-400 hover:text-red-500 transition-colors">
                     <Trash2 size={13} />
@@ -182,23 +237,27 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             )}
           </div>
 
-          <div className="px-4 py-3 border-t border-slate-200 bg-slate-50 flex gap-2">
-            <select value={addMemberVal} onChange={e => setAddMemberVal(e.target.value)}
-              className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded-md outline-none">
-              <option value="">Chọn user để thêm...</option>
-              {(isAdmin ? unassignedUsers : allUsers.filter(u => u.team_id === id ? false : !u.team_id)).map(u => (
-                <option key={u.user_id} value={u.user_id}>{u.full_name}</option>
-              ))}
-            </select>
-            <Button size="sm" onClick={addMember} disabled={!addMemberVal} className="gap-1">
-              <Plus size={12} /> Thêm
-            </Button>
-          </div>
+          {isAdmin && (
+            <div className="px-4 py-3 border-t border-slate-200 bg-slate-50 flex gap-2">
+              <select value={addMemberVal} onChange={e => setAddMemberVal(e.target.value)}
+                className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded-md outline-none">
+                <option value="">Chọn user để thêm...</option>
+                {unassignedUsers.map(u => (
+                  <option key={u.user_id} value={u.user_id}>{u.full_name}</option>
+                ))}
+              </select>
+              <Button size="sm" onClick={addMember} disabled={!addMemberVal} className="gap-1">
+                <Plus size={12} /> Thêm
+              </Button>
+            </div>
+          )}
         </div>
+      )}
 
-        {/* Projects column */}
+      {/* Tab: Dự án */}
+      {activeTab === 'projects' && (
         <div className="border border-slate-200 rounded-lg overflow-hidden">
-          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+          <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
             <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
               <FolderOpen size={14} /> Dự án ({team.projects.length})
             </h3>
@@ -208,7 +267,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             {team.projects.map(p => (
               <div key={p.project_id} className="flex items-center justify-between px-4 py-3">
                 <div>
-                  <p className="text-sm font-mono text-slate-500 text-xs">{p.project_id}</p>
+                  <p className="text-xs font-mono text-slate-400">{p.project_id}</p>
                   <p className="text-sm text-slate-800">{p.name}</p>
                 </div>
                 {isAdmin && (
@@ -239,7 +298,79 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
             </div>
           )}
         </div>
-      </div>
+      )}
+
+      {/* Tab: Ma trận phân quyền */}
+      {activeTab === 'matrix' && (
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <AccessMatrix teamId={id} />
+        </div>
+      )}
+
+      {/* Modal tạo thành viên mới (Manager only) */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-slate-800">Thêm thành viên mới</h3>
+              <button onClick={() => { setShowCreate(false); setCreateForm({ ...BLANK_CREATE }) }}
+                className="p-1 rounded hover:bg-slate-100 text-slate-400">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Họ tên</label>
+                <input
+                  type="text"
+                  value={createForm.full_name}
+                  onChange={e => setCreateForm(f => ({ ...f, full_name: e.target.value }))}
+                  placeholder="Nguyễn Văn A"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-300"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={createForm.email}
+                  onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="email@example.com"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-300"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Mật khẩu</label>
+                <input
+                  type="password"
+                  value={createForm.password}
+                  onChange={e => setCreateForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder="••••••••"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-300"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => { setShowCreate(false); setCreateForm({ ...BLANK_CREATE }) }}
+              >
+                Hủy
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={createMember}
+                disabled={createSaving || !createForm.full_name || !createForm.email || !createForm.password}
+              >
+                {createSaving ? 'Đang tạo...' : 'Tạo thành viên'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -9,6 +9,7 @@ interface AuthContextValue {
   user: User | null
   role: UserRole | null
   teamId: string | null
+  organizationId: string | null
   isLoading: boolean
   signOut: () => Promise<void>
 }
@@ -19,16 +20,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [role, setRole] = useState<UserRole | null>(null)
   const [teamId, setTeamId] = useState<string | null>(null)
+  const [organizationId, setOrganizationId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   async function fetchProfile(userId: string) {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('user_profiles')
-      .select('role, team_id')
+      .select('role, team_id, organization_id')
       .eq('user_id', userId)
       .single()
     setRole((data?.role as UserRole) ?? null)
     setTeamId(data?.team_id ?? null)
+    setOrganizationId(data?.organization_id ?? null)
   }
 
   useEffect(() => {
@@ -43,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentUser = session?.user ?? null
       setUser(currentUser)
       if (currentUser) await fetchProfile(currentUser.id)
-      else { setRole(null); setTeamId(null) }
+      else { setRole(null); setTeamId(null); setOrganizationId(null) }
       setIsLoading(false)
     })
 
@@ -55,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, role, teamId, isLoading, signOut }}>
+    <AuthContext.Provider value={{ user, role, teamId, organizationId, isLoading, signOut }}>
       {children}
     </AuthContext.Provider>
   )

@@ -4,13 +4,14 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import { MOCK_PROJECTS } from '@/lib/mock-data'
-import { Project, ShareAccessLevel } from '@/lib/types'
+import { Project, ShareAccessLevel, SharePermissions, SharePermissionId, ACCESS_LEVEL_DEFAULTS } from '@/lib/types'
 
 interface ProjectsContextValue {
   projects: Project[]
   isLoading: boolean
   addProject: (p: Project) => Promise<string | null>
   updateProject: (p: Project) => Promise<string | null>
+  patchProjectLocal: (p: Project) => void
   deleteProject: (id: string) => Promise<void>
   deleteProjects: (ids: string[]) => Promise<void>
 }
@@ -25,14 +26,28 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) { setProjects([]); setIsLoading(false); return }
 
-    if (role === 'super_admin' || role === 'manager') loadAllProjects()
+    if (role === 'super_admin') loadAllProjects()
+    else if (role === 'manager') loadManagerProjects(user.id)
     else if (role === 'member') loadAssignedProjects(user.id)
   }, [user, role])
+
+  async function loadManagerProjects(userId: string) {
+    const { data: shares } = await supabase
+      .from('project_shares')
+      .select('project_id')
+      .eq('user_id', userId)
+
+    if (shares && shares.length > 0) {
+      loadAssignedProjects(userId)
+    } else {
+      loadAllProjects()
+    }
+  }
 
   async function loadAllProjects() {
     setIsLoading(true)
     const { data, error } = await supabase
-      .from('projects').select('*, bank_accounts(*, banks(*))').order('project_id')
+      .from('projects').select('*, bank_accounts(*, banks(*)), category:project_categories(id, name, color)').order('project_id')
 
     if (error) { console.error('Lỗi tải dự án:', error); setIsLoading(false); return }
 
@@ -40,7 +55,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
 
     if (projectList.length === 0) {
       const { data: seeded, error: seedError } = await supabase
-        .from('projects').insert(MOCK_PROJECTS).select('*, bank_accounts(*, banks(*))')
+        .from('projects').insert(MOCK_PROJECTS).select('*, bank_accounts(*, banks(*)), category:project_categories(id, name, color)')
       if (seedError) console.error('Lỗi seed data:', seedError)
       else projectList = seeded as Project[] ?? []
     }
@@ -74,24 +89,45 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     setIsLoading(true)
     const { data: assignments } = await supabase
       .from('project_shares')
-      .select('project_id, access_level')
+      .select('id, project_id, access_level')
       .eq('user_id', userId)
 
-    type Assignment = { project_id: string; access_level: string }
+    type Assignment = { id: string; project_id: string; access_level: string }
     const rows = (assignments ?? []) as Assignment[]
     const ids = rows.map(a => a.project_id)
-    const accessMap = new Map(rows.map(a => [a.project_id, a.access_level as ShareAccessLevel]))
+    const shareIds = rows.map(a => a.id)
+    const accessMap = new Map(rows.map(a => [a.project_id, { shareId: a.id, level: a.access_level as ShareAccessLevel }]))
 
     if (ids.length === 0) { setProjects([]); setIsLoading(false); return }
 
+    // Fetch custom permission overrides (member_view_own_perms policy allows this)
+    const { data: customPerms } = await supabase
+      .from('project_share_permissions')
+      .select('share_id, permission_id, granted')
+      .in('share_id', shareIds)
+
+    type CustomPerm = { share_id: string; permission_id: string; granted: boolean }
+    const permsByShareId = new Map<string, Map<string, boolean>>()
+    for (const cp of (customPerms ?? []) as CustomPerm[]) {
+      if (!permsByShareId.has(cp.share_id)) permsByShareId.set(cp.share_id, new Map())
+      permsByShareId.get(cp.share_id)!.set(cp.permission_id, cp.granted)
+    }
+
     const { data, error } = await supabase
-      .from('projects').select('*, bank_accounts(*, banks(*))').in('project_id', ids).order('project_id')
+      .from('projects').select('*, bank_accounts(*, banks(*)), category:project_categories(id, name, color)').in('project_id', ids).order('project_id')
 
     if (error) console.error('Lỗi tải dự án được phân công:', error)
-    else setProjects((data as Project[]).map(p => ({
-      ...p,
-      share_access_level: accessMap.get(p.project_id) ?? null,
-    })))
+    else setProjects((data as Project[]).map(p => {
+      const info = accessMap.get(p.project_id)
+      const level = info?.level ?? 'viewer'
+      const overrides = permsByShareId.get(info?.shareId ?? '') ?? new Map()
+      const defaults = ACCESS_LEVEL_DEFAULTS[level]
+      const effective: SharePermissions = { ...defaults }
+      for (const pid of Object.keys(defaults) as SharePermissionId[]) {
+        if (overrides.has(pid)) effective[pid] = overrides.get(pid)!
+      }
+      return { ...p, share_access_level: level, effective_permissions: effective }
+    }))
     setIsLoading(false)
   }
 
@@ -107,6 +143,16 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       ref_link: p.ref_link ?? null,
       email_ref: p.email_ref ?? null,
       bank_account_id: p.bank_account_id ?? null,
+      // Camp Manager fields
+      category_id: p.category_id ?? null,
+      affiliate_url: p.affiliate_url ?? null,
+      affiliate_username: p.affiliate_username ?? null,
+      affiliate_password: p.affiliate_password ?? null,
+      affiliate_network: p.affiliate_network ?? null,
+      statuses: p.statuses ?? [],
+      camp_start_date: p.camp_start_date ?? null,
+      person_in_charge: p.person_in_charge ?? null,
+      note: p.note ?? null,
     })
     if (error) {
       console.error('Lỗi thêm dự án:', error)
@@ -129,15 +175,29 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
         ref_link: updated.ref_link ?? null,
         email_ref: updated.email_ref ?? null,
         bank_account_id: updated.bank_account_id ?? null,
+        // Camp Manager fields
+        category_id: updated.category_id ?? null,
+        affiliate_url: updated.affiliate_url ?? null,
+        affiliate_username: updated.affiliate_username ?? null,
+        affiliate_password: updated.affiliate_password ?? null,
+        affiliate_network: updated.affiliate_network ?? null,
+        statuses: updated.statuses ?? [],
+        camp_start_date: updated.camp_start_date ?? null,
+        person_in_charge: updated.person_in_charge ?? null,
+        note: updated.note ?? null,
       })
       .eq('project_id', updated.project_id)
     if (error) {
       console.error('Lỗi cập nhật dự án:', error)
-      const { data } = await supabase.from('projects').select('*, bank_accounts(*, banks(*))').order('project_id')
+      const { data } = await supabase.from('projects').select('*, bank_accounts(*, banks(*)), category:project_categories(id, name, color)').order('project_id')
       if (data) setProjects(data as Project[])
       return error.message
     }
     return null
+  }
+
+  function patchProjectLocal(updated: Project) {
+    setProjects(prev => prev.map(p => p.project_id === updated.project_id ? updated : p))
   }
 
   async function deleteProject(id: string) {
@@ -162,7 +222,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <ProjectsContext.Provider value={{ projects, isLoading, addProject, updateProject, deleteProject, deleteProjects }}>
+    <ProjectsContext.Provider value={{ projects, isLoading, addProject, updateProject, patchProjectLocal, deleteProject, deleteProjects }}>
       {children}
     </ProjectsContext.Provider>
   )

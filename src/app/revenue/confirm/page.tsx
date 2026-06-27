@@ -3,8 +3,15 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useProjectsContext } from '@/context/ProjectsContext'
+import { useAuth } from '@/context/AuthContext'
+import { supabase } from '@/lib/supabase'
 import { formatVND, cn } from '@/lib/utils'
 import { ChevronLeft, Loader2 } from 'lucide-react'
+
+async function getToken(): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession()
+  return session?.access_token ?? ''
+}
 
 interface PendingRow {
   project_id: string
@@ -42,6 +49,17 @@ function Checkbox({ checked, indeterminate }: { checked: boolean; indeterminate?
 
 export default function PaymentConfirmPage() {
   const { projects } = useProjectsContext()
+  const { role } = useAuth()
+
+  // Members only see projects where they have confirm_payment permission
+  const confirmableProjects = useMemo(
+    () => role === 'member' ? projects.filter(p => p.effective_permissions?.confirm_payment === true) : projects,
+    [projects, role]
+  )
+  const confirmableProjectIds = useMemo(
+    () => new Set(confirmableProjects.map(p => p.project_id)),
+    [confirmableProjects]
+  )
   const { from: defaultFrom, to: defaultTo } = weekBounds()
 
   const [fromDate, setFromDate]     = useState(defaultFrom)
@@ -57,8 +75,8 @@ export default function PaymentConfirmPage() {
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const projectMap = useMemo(
-    () => new Map(projects.map(p => [p.project_id, p.name])),
-    [projects]
+    () => new Map(confirmableProjects.map(p => [p.project_id, p.name])),
+    [confirmableProjects]
   )
 
   const fetchPending = useCallback(async () => {
@@ -67,7 +85,7 @@ export default function PaymentConfirmPage() {
       const res = await fetch(`/api/revenue?from=${fromDate}&to=${toDate}`)
       const data: Record<string, unknown>[] = await res.json()
       const pending: PendingRow[] = data
-        .filter(r => r.type === 'pending' && ((r.amount as number) ?? 0) > 0)
+        .filter(r => r.type === 'pending' && ((r.amount as number) ?? 0) > 0 && confirmableProjectIds.has(r.project_id as string))
         .map(r => ({
           project_id:   r.project_id as string,
           project_name: projectMap.get(r.project_id as string) ?? (r.project_id as string),
@@ -149,9 +167,10 @@ export default function PaymentConfirmPage() {
     const items = confirmItems.map(r => ({ project_id: r.project_id, date: r.date, amount: r.amount }))
     const total = confirmTotal
 
+    const token = await getToken()
     const res = await fetch('/api/revenue/confirm-batch', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ items }),
     })
 
@@ -172,9 +191,10 @@ export default function PaymentConfirmPage() {
     setUndoMsg(null)
     setUndoItems([])
     setUndoCountdown(0)
+    const token = await getToken()
     await fetch('/api/revenue/revert-batch', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ items }),
     })
     fetchPending()

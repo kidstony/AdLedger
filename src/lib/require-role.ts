@@ -21,7 +21,7 @@ export async function requireRole(req: Request, allowedRoles: string[]): Promise
   return null
 }
 
-export async function getCallerProfile(req: Request): Promise<{ user_id: string; role: string; team_id: string | null } | null> {
+export async function getCallerProfile(req: Request): Promise<{ user_id: string; role: string; team_id: string | null; organization_id: string | null } | null> {
   const token = req.headers.get('Authorization')?.replace('Bearer ', '')
   if (!token) return null
 
@@ -30,10 +30,16 @@ export async function getCallerProfile(req: Request): Promise<{ user_id: string;
 
   const { data } = await supabaseAdmin
     .from('user_profiles')
-    .select('role, team_id')
+    .select('role, team_id, organization_id')
     .eq('user_id', user.id)
     .single()
 
   if (!data) return null
-  return { user_id: user.id, role: data.role, team_id: data.team_id }
+  return { user_id: user.id, role: data.role, team_id: data.team_id, organization_id: data.organization_id ?? null }
+}
+
+export async function getOrgTeamIds(organizationId: string): Promise<string[]> {
+  const { data } = await supabaseAdmin
+    .from('teams').select('id').eq('organization_id', organizationId)
+  return data?.map((t: { id: string }) => t.id) ?? []
 }

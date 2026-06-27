@@ -6,7 +6,6 @@ import {
   Search, Keyboard, CheckCircle2, Cloud, SlidersHorizontal, CircleCheck,
   RotateCcw, X,
 } from 'lucide-react'
-import { useRouter } from 'next/navigation'
 import { useRevenueGrid } from '@/hooks/useRevenueGrid'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { useAuth } from '@/context/AuthContext'
@@ -27,8 +26,6 @@ function addDays(date: string, n: number): string {
 
 type NoteModal    = { projectId: string; date: string; current: string }
 type PayoutModal  = { projectId: string; date: string; start: string; end: string }
-type ConfirmModal = { projectId: string; date: string; screenAmount: number; projectName: string }
-type RevertModal  = { projectId: string; date: string; amount: number; projectName: string }
 type UndoToast    = { items: Array<{ project_id: string; date: string }>; total: number; count: number; secondsLeft: number }
 
 function Checkbox({ checked, indeterminate }: { checked: boolean; indeterminate?: boolean }) {
@@ -62,11 +59,9 @@ const SHORTCUTS = [
 
 export default function RevenuePage() {
   const { role } = useAuth()
-  const router = useRouter()
-  useEffect(() => { if (role === 'member') router.replace('/dashboard') }, [role, router])
 
   const {
-    projects, today, viewMode, anchorDate, selectedDate,
+    projects: allProjects, today, viewMode, anchorDate, selectedDate,
     activeTab, setActiveTab,
     dates, gridData, revenueGrid, screenGrid, prevScreenMap,
     noteMap, payoutMap,
@@ -80,7 +75,14 @@ export default function RevenuePage() {
     statusMap, confirmedAtMap,
   } = useRevenueGrid()
 
-  const { updateProject } = useProjectsContext()
+  // Members chỉ nhập được dự án có effective input_revenue = true
+  const projects = useMemo(
+    () => role === 'member' ? allProjects.filter(p => p.effective_permissions?.input_revenue === true) : allProjects,
+    [allProjects, role]
+  )
+
+  const { updateProject, isLoading: projectsLoading } = useProjectsContext()
+  const memberHasAccess = role !== 'member' || (!projectsLoading && projects.length > 0)
   const tableRef        = useRef<HTMLTableElement>(null)
   const focusedCellRef  = useRef<{ pi: number; di: number } | null>(null)
   const searchRef       = useRef<HTMLInputElement>(null)
@@ -89,11 +91,8 @@ export default function RevenuePage() {
   const [filterIds,         setFilterIds]         = useState<Set<string>>(new Set())
   const [noteModal,         setNoteModal]         = useState<NoteModal | null>(null)
   const [payoutModal,       setPayoutModal]       = useState<PayoutModal | null>(null)
-  const [confirmModal,      setConfirmModal]      = useState<ConfirmModal | null>(null)
-  const [revertModal,       setRevertModal]       = useState<RevertModal | null>(null)
   const [batchConfirmModal, setBatchConfirmModal] = useState(false)
   const [batchConfirmLoading, setBatchConfirmLoading] = useState(false)
-  const [isReverting,       setIsReverting]       = useState(false)
   const [showShortcuts,     setShowShortcuts]     = useState(false)
   const [checkedProjectIds, setCheckedProjectIds] = useState<Set<string>>(new Set())
   const [undoToast,         setUndoToast]         = useState<UndoToast | null>(null)
@@ -249,14 +248,17 @@ export default function RevenuePage() {
     }
   }
 
-  async function handleSingleRevert() {
-    if (!revertModal) return
-    setIsReverting(true)
-    const { projectId, date, amount } = revertModal
+  async function handleConfirmDirect(projectId: string, date: string, amount: number, projectName: string) {
+    await flushSave()
+    await confirmCell(projectId, date)
+    refreshRevenue()
+    startUndoCountdown({ items: [{ project_id: projectId, date }], total: amount, count: 1 })
+  }
+
+  async function handleRevertDirect(projectId: string, date: string, amount: number) {
     const ok = await revertCells([{ project_id: projectId, date }])
-    setIsReverting(false)
-    setRevertModal(null)
     if (ok) {
+      refreshRevenue()
       showPageToast(`Đã hoàn tác ${formatVND(amount)}`)
     } else {
       showPageToast('Lỗi: Không thể hoàn tác. Vui lòng thử lại.')
@@ -442,6 +444,16 @@ export default function RevenuePage() {
     viewMode === 'all' ? fmtMY(date) : fmtShort(date),
     [viewMode]
   )
+
+  if (role === 'member' && !projectsLoading && projects.length === 0) {
+    return (
+      <div className="p-6 flex flex-col items-center justify-center min-h-[60vh] text-center">
+        <div className="text-5xl mb-4">🔒</div>
+        <p className="text-slate-600 font-medium">Bạn không có quyền nhập doanh thu</p>
+        <p className="text-slate-400 text-sm mt-1">Hãy liên hệ quản trị viên để được cấp quyền.</p>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 space-y-4">
@@ -752,7 +764,7 @@ export default function RevenuePage() {
                                 hasNote={hasNote}
                                 onNoteClick={() => setNoteModal({ projectId: project.project_id, date, current: noteMap.get(key) ?? '' })}
                                 onConfirmClick={(hasDelta && cumulative > 0)
-                                  ? () => setConfirmModal({ projectId: project.project_id, date, screenAmount: cumulative, projectName: project.name })
+                                  ? () => handleConfirmDirect(project.project_id, date, cumulative, project.name)
                                   : undefined}
                               />
                             </div>
@@ -794,10 +806,10 @@ export default function RevenuePage() {
                                   setPayoutModal({ projectId: project.project_id, date, start: ex?.start ?? '', end: ex?.end ?? date })
                                 } : undefined}
                                 onConfirmClick={(!isRevTab && !isConfirmed && (cellValue ?? 0) > 0)
-                                  ? () => setConfirmModal({ projectId: project.project_id, date, screenAmount: cellValue ?? 0, projectName: project.name })
+                                  ? () => handleConfirmDirect(project.project_id, date, cellValue ?? 0, project.name)
                                   : undefined}
                                 onRevertClick={(isRevTab && isConfirmed && (cellValue ?? 0) > 0)
-                                  ? () => setRevertModal({ projectId: project.project_id, date, amount: cellValue ?? 0, projectName: project.name })
+                                  ? () => handleRevertDirect(project.project_id, date, cellValue ?? 0)
                                   : undefined}
                               />
                             )}
@@ -825,34 +837,6 @@ export default function RevenuePage() {
           </table>
         </div>
       </div>
-
-      {/* ── Confirm payment modal ──────────────────────────────────────────── */}
-      {confirmModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-5 w-80">
-            <h3 className="font-semibold text-slate-800 text-sm mb-2">Xác nhận thanh toán</h3>
-            <p className="text-sm text-slate-600 mb-1">
-              Xác nhận đã nhận{' '}
-              <span className="font-semibold text-emerald-700">{formatVND(confirmModal.screenAmount)}</span>{' '}
-              từ <span className="font-semibold">{confirmModal.projectName}</span>?
-            </p>
-            <p className="text-xs text-slate-400 mb-4">
-              Doanh thu sẽ được chuyển sang tab &quot;Doanh thu thực&quot;.
-            </p>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setConfirmModal(null)} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">Hủy</button>
-              <button
-                onClick={async () => {
-                  await flushSave()
-                  await confirmCell(confirmModal.projectId, confirmModal.date)
-                  setConfirmModal(null)
-                }}
-                className="px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-md hover:bg-emerald-700"
-              >✓ Xác nhận đã nhận</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Note modal ─────────────────────────────────────────────────────── */}
       {noteModal && (
@@ -939,37 +923,6 @@ export default function RevenuePage() {
               >
                 {batchConfirmLoading && <Loader2 size={10} className="animate-spin" />}
                 Đồng ý, xác nhận
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Revert modal ──────────────────────────────────────────────────── */}
-      {revertModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-5 w-[340px]">
-            <h3 className="font-semibold text-slate-800 mb-2">Hoàn tác xác nhận</h3>
-            <p className="text-sm text-slate-600 mb-1">
-              Hoàn tác xác nhận{' '}
-              <span className="font-semibold text-amber-700">{formatVND(revertModal.amount)}</span>{' '}
-              từ <span className="font-semibold">{revertModal.projectName}</span>{' '}
-              ngày {new Date(revertModal.date + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })}?
-            </p>
-            <p className="text-xs text-slate-400 mb-4">Khoản này sẽ quay về trạng thái Chờ xác nhận.</p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setRevertModal(null)}
-                disabled={isReverting}
-                className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50"
-              >Hủy</button>
-              <button
-                onClick={handleSingleRevert}
-                disabled={isReverting}
-                className="flex items-center gap-1.5 px-4 py-1.5 text-xs bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:opacity-60"
-              >
-                {isReverting && <Loader2 size={10} className="animate-spin" />}
-                <RotateCcw size={10} /> Hoàn tác
               </button>
             </div>
           </div>

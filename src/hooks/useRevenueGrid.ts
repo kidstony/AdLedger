@@ -2,6 +2,12 @@
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useProjectsContext } from '@/context/ProjectsContext'
+import { supabase } from '@/lib/supabase'
+
+async function getToken(): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession()
+  return session?.access_token ?? ''
+}
 
 export type ViewMode = 'day' | 'week' | 'month' | 'all' | 'custom'
 export type RevenueTab = 'revenue' | 'screen'
@@ -136,9 +142,10 @@ export function useRevenueGrid() {
     ]
 
     try {
+      const token = await getToken()
       const res = await fetch('/api/revenue', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ rows }),
       })
       if (res.ok) {
@@ -481,9 +488,10 @@ export function useRevenueGrid() {
   }, [activeTab, executeSave])
 
   const revertCells = useCallback(async (items: Array<{ project_id: string; date: string }>) => {
+    const token = await getToken()
     const res = await fetch('/api/revenue/revert-batch', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ items }),
     })
     if (!res.ok) {
@@ -513,9 +521,10 @@ export function useRevenueGrid() {
   const confirmCell = useCallback(async (projectId: string, date: string) => {
     const key = `${projectId}__${date}`
     const amount = screenGridRef.current.get(key) ?? 0
+    const token = await getToken()
     const res = await fetch('/api/revenue/confirm', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ project_id: projectId, date, amount }),
     })
     if (!res.ok) return
@@ -530,9 +539,10 @@ export function useRevenueGrid() {
   const saveNote = useCallback(async (projectId: string, date: string, note: string) => {
     const key = `${projectId}__${date}`
     setNoteMap(prev => { const n = new Map(prev); if (note) n.set(key, note); else n.delete(key); return n })
+    const token = await getToken()
     await fetch('/api/revenue', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ project_id: projectId, date, type: 'pending', note: note || null }),
     })
   }, [])
@@ -544,9 +554,10 @@ export function useRevenueGrid() {
       if (start && end) n.set(key, { start, end }); else n.delete(key)
       return n
     })
+    const token = await getToken()
     await fetch('/api/revenue', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ project_id: projectId, date, type: 'confirmed', payout_start_date: start, payout_end_date: end }),
     })
   }, [])

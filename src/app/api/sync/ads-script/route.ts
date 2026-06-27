@@ -56,8 +56,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  if ((body as { secret?: string }).secret !== process.env.ADS_SCRIPT_SECRET) {
-    await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: 'Invalid secret' })
+  const incomingSecret = (body as { secret?: string }).secret ?? ''
+  let organizationId: string | null = null
+
+  // Try to match against per-org secrets first
+  const { data: matchedOrg } = await supabaseAdmin
+    .from('organizations').select('id').eq('ads_secret', incomingSecret).maybeSingle()
+
+  if (matchedOrg) {
+    organizationId = matchedOrg.id
+  } else if (incomingSecret !== process.env.ADS_SCRIPT_SECRET) {
+    await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: 'Invalid secret', organization_id: null })
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -71,12 +80,13 @@ export async function POST(req: NextRequest) {
       const existingMap = new Map((existing ?? []).map(d => [d.campaign_id, d]))
 
       const rows = campaigns.map(c => ({
-        campaign_id:   c.campaign_id,
-        campaign_name: c.campaign_name,
-        customer_id:   c.customer_id,
-        mcc_id:        c.mcc_id ?? existingMap.get(c.campaign_id)?.mcc_id ?? null,
-        mcc_name:      c.mcc_name ?? existingMap.get(c.campaign_id)?.mcc_name ?? null,
-        last_seen:     new Date().toISOString(),
+        campaign_id:     c.campaign_id,
+        campaign_name:   c.campaign_name,
+        customer_id:     c.customer_id,
+        mcc_id:          c.mcc_id ?? existingMap.get(c.campaign_id)?.mcc_id ?? null,
+        mcc_name:        c.mcc_name ?? existingMap.get(c.campaign_id)?.mcc_name ?? null,
+        last_seen:       new Date().toISOString(),
+        organization_id: organizationId,
       }))
       const { error } = await supabaseAdmin
         .from('campaign_discoveries')
@@ -104,12 +114,13 @@ export async function POST(req: NextRequest) {
   const existingSpendMap = new Map((existingSpend ?? []).map(d => [d.campaign_id, d]))
 
   const discoveryRows = records.map(r => ({
-    campaign_id:   r.campaign_id,
-    campaign_name: r.campaign_name,
-    customer_id:   r.customer_id,
-    mcc_id:        r.mcc_id ?? existingSpendMap.get(r.campaign_id)?.mcc_id ?? null,
-    mcc_name:      r.mcc_name ?? existingSpendMap.get(r.campaign_id)?.mcc_name ?? null,
-    last_seen:     new Date().toISOString(),
+    campaign_id:     r.campaign_id,
+    campaign_name:   r.campaign_name,
+    customer_id:     r.customer_id,
+    mcc_id:          r.mcc_id ?? existingSpendMap.get(r.campaign_id)?.mcc_id ?? null,
+    mcc_name:        r.mcc_name ?? existingSpendMap.get(r.campaign_id)?.mcc_name ?? null,
+    last_seen:       new Date().toISOString(),
+    organization_id: organizationId,
   }))
   await supabaseAdmin
     .from('campaign_discoveries')
@@ -127,10 +138,10 @@ export async function POST(req: NextRequest) {
     .upsert(spendRows, { onConflict: 'campaign_id,date' })
 
   if (error) {
-    await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: error.message })
+    await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: error.message, organization_id: organizationId })
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  await supabaseAdmin.from('sync_log').insert({ records: spendRows.length, status: 'success', message: null })
+  await supabaseAdmin.from('sync_log').insert({ records: spendRows.length, status: 'success', message: null, organization_id: organizationId })
   return NextResponse.json({ success: true, count: spendRows.length })
 }

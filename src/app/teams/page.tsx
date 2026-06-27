@@ -21,15 +21,16 @@ const COLOR_PRESETS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf
 const BLANK = { name: '', color: '#3b82f6', manager_id: '' }
 
 export default function TeamsPage() {
-  const { role } = useAuth()
+  const { role, organizationId } = useAuth()
   const router = useRouter()
 
   const [teams, setTeams] = useState<TeamWithCounts[]>([])
   const [managers, setManagers] = useState<{ user_id: string; full_name: string }[]>([])
+  const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<TeamWithCounts | null>(null)
-  const [form, setForm] = useState({ ...BLANK })
+  const [form, setForm] = useState({ ...BLANK, organization_id: '' })
   const [saving, setSaving] = useState(false)
 
   async function adminFetch(url: string, options?: RequestInit) {
@@ -48,6 +49,7 @@ export default function TeamsPage() {
     if (role !== 'super_admin') return
     loadTeams()
     loadManagers()
+    loadOrgs()
   }, [role])
 
   async function loadTeams() {
@@ -66,15 +68,21 @@ export default function TeamsPage() {
     setManagers((data ?? []).map((p: { user_id: string; full_name: string }) => ({ user_id: p.user_id, full_name: p.full_name })))
   }
 
+  async function loadOrgs() {
+    if (organizationId !== null) return
+    const { data } = await supabase.from('organizations').select('id, name').order('name')
+    setOrgs(data ?? [])
+  }
+
   function openCreate() {
     setEditing(null)
-    setForm({ ...BLANK })
+    setForm({ ...BLANK, organization_id: organizationId ?? '' })
     setShowModal(true)
   }
 
   function openEdit(t: TeamWithCounts) {
     setEditing(t)
-    setForm({ name: t.name, color: t.color, manager_id: '' })
+    setForm({ name: t.name, color: t.color, manager_id: '', organization_id: '' })
     setShowModal(true)
   }
 
@@ -99,7 +107,7 @@ export default function TeamsPage() {
       const res = await adminFetch('/api/teams', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: form.name, color: form.color, manager_id: form.manager_id || null }),
+        body: JSON.stringify({ name: form.name, color: form.color, manager_id: form.manager_id || null, organization_id: form.organization_id || null }),
       })
       if (res.ok) {
         const data = await res.json()
@@ -217,6 +225,16 @@ export default function TeamsPage() {
                 ))}
               </div>
             </div>
+            {!editing && organizationId === null && orgs.length > 0 && (
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Tổ chức</label>
+                <select value={form.organization_id} onChange={e => setForm(f => ({ ...f, organization_id: e.target.value }))}
+                  className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-md outline-none">
+                  <option value="">— Chưa phân nhóm —</option>
+                  {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+            )}
             {!editing && (
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Manager (tuỳ chọn)</label>

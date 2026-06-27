@@ -3,14 +3,14 @@
 import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
-import { ArrowLeft, Zap, Database, Monitor } from 'lucide-react'
+import { ArrowLeft, Zap, Database, Monitor, Calendar } from 'lucide-react'
 import { MOCK_PNL_DAILY } from '@/lib/mock-data'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
 import ProfitChart from '@/components/project-detail/ProfitChart'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import { formatVNDFull, formatROI, formatVND, getProfitTextClass, getRoiTextClass, formatCid } from '@/lib/utils'
-import { PnlDaily, RentalGroup, OtherCost } from '@/lib/types'
+import { PnlDaily, RentalGroup, OtherCost, STATUS_CONFIG } from '@/lib/types'
 import { computeCidCost } from '@/lib/costs'
 import { useAuth } from '@/context/AuthContext'
 import ShareTab from '@/components/project/ShareTab'
@@ -45,6 +45,18 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const [qcSpend, setQcSpend]       = useState(0)
   const [isLoading, setIsLoading]   = useState(true)
   const [dataSource, setDataSource] = useState<'real' | 'mock'>('mock')
+  const [teamUsers, setTeamUsers] = useState<{ user_id: string; full_name: string }[]>([])
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) return
+      fetch('/api/projects/team-users', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      }).then(r => r.json()).then((d: { user_id: string; full_name: string }[]) => {
+        if (Array.isArray(d)) setTeamUsers(d)
+      }).catch(() => {})
+    })
+  }, [])
 
   useEffect(() => {
     if (projects.length === 0) return
@@ -202,6 +214,42 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           </p>
         )}
       </div>
+
+      {/* Camp Manager info strip */}
+      {project && ((project.statuses?.length ?? 0) > 0 || project.category || project.camp_start_date || project.affiliate_network) && (
+        <div className="flex flex-wrap items-center gap-2 py-2 px-3 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+          {(project.statuses ?? []).map(s => (
+            <span key={s} className={`px-2 py-0.5 rounded-full font-medium ${STATUS_CONFIG[s]?.badge ?? ''}`}>
+              {STATUS_CONFIG[s]?.label}
+            </span>
+          ))}
+          {project.category && (
+            <span className="px-2 py-0.5 rounded-full font-medium"
+              style={{ backgroundColor: (project.category.color ?? '#6b7280') + '22', color: project.category.color ?? '#6b7280' }}>
+              {project.category.name}
+            </span>
+          )}
+          {project.camp_start_date && (
+            <span className="flex items-center gap-1 text-slate-500">
+              <Calendar size={10} />
+              Lên camp: {new Date(project.camp_start_date).toLocaleDateString('vi-VN')}
+            </span>
+          )}
+          {project.affiliate_network && (
+            <span className="text-slate-500">Mạng: <span className="font-medium text-slate-700">{project.affiliate_network}</span></span>
+          )}
+          {project.person_in_charge && (
+            <span className="text-slate-500">
+              👤 <span className="font-medium text-slate-700">
+                {teamUsers.find(u => u.user_id === project.person_in_charge)?.full_name ?? '—'}
+              </span>
+            </span>
+          )}
+          {project.note && (
+            <span className="text-slate-500 truncate max-w-xs" title={project.note}>{project.note}</span>
+          )}
+        </div>
+      )}
 
       {/* Tab bar — chỉ hiện với super_admin và manager của team sở hữu dự án */}
       {canShare && (

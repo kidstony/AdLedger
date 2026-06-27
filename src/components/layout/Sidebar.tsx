@@ -5,6 +5,8 @@ import { usePathname, useRouter } from 'next/navigation'
 import { BarChart3, FolderOpen, DollarSign, LogOut, Layers, Plug, Receipt, Building2, Users, UsersRound } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/context/AuthContext'
+import { useProjectsContext } from '@/context/ProjectsContext'
+import NotificationBell from '@/components/layout/NotificationBell'
 
 const roleBadge: Record<string, { label: string; className: string }> = {
   super_admin: { label: 'Super Admin', className: 'bg-red-900 text-red-300' },
@@ -17,22 +19,30 @@ const roleBadge: Record<string, { label: string; className: string }> = {
 export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, role, teamId, signOut } = useAuth()
+  const { user, role, teamId, organizationId, signOut } = useAuth()
+  const { projects, isLoading: projectsLoading } = useProjectsContext()
+
+  // For members: show input links only when they have projects with those permissions
+  // While loading (projectsLoading), default to showing (avoid flicker-hide)
+  const canInputRevenue = role !== 'member' || projectsLoading || projects.some(p => p.effective_permissions?.input_revenue)
+  const canInputExpense = role !== 'member' || projectsLoading || projects.some(p => p.effective_permissions?.input_expense)
 
   const mainItems = [
     { href: '/dashboard',          label: 'Dashboard P&L',    icon: BarChart3,  roles: ['super_admin', 'manager', 'member', 'admin', 'employee'] },
     { href: '/master-projects',    label: 'Tổng Dự Án',       icon: Layers,     roles: ['super_admin', 'manager', 'admin'] },
     { href: '/projects',           label: 'Quản lý dự án',    icon: FolderOpen, roles: ['super_admin', 'manager', 'member', 'admin', 'employee'] },
-    { href: '/revenue',            label: 'Nhập doanh thu',   icon: DollarSign, roles: ['super_admin', 'manager', 'admin'] },
-    { href: '/expenses',           label: 'Nhập Chi Phí',     icon: Receipt,    roles: ['super_admin', 'manager', 'admin'] },
+    { href: '/revenue',            label: 'Nhập doanh thu',   icon: DollarSign, roles: ['super_admin', 'manager', 'admin', 'member'] },
+    { href: '/expenses',           label: 'Nhập Chi Phí',     icon: Receipt,    roles: ['super_admin', 'manager', 'admin', 'member'] },
     { href: '/banks',              label: 'Quản lý Bank',     icon: Building2,  roles: ['super_admin', 'manager', 'admin'] },
-    { href: teamId ? `/teams/${teamId}` : '#', label: 'Thành viên team', icon: UsersRound, roles: ['manager'] },
+    { href: teamId ? `/teams/${teamId}` : '#', label: 'Quản lý Team', icon: UsersRound, roles: ['manager'] },
     { href: '/admin/integrations', label: 'Tích hợp',         icon: Plug,       roles: ['super_admin', 'admin'] },
   ]
 
   const adminItems = [
     { href: '/teams', label: 'Quản lý Team', icon: UsersRound },
     { href: '/users', label: 'Quản lý User', icon: Users },
+    { href: '/admin/categories', label: 'Categories', icon: FolderOpen },
+    ...(organizationId === null ? [{ href: '/admin/organizations', label: 'Tổ chức', icon: Building2 }] : []),
   ]
 
   async function handleSignOut() {
@@ -40,7 +50,12 @@ export default function Sidebar() {
     router.push('/login')
   }
 
-  const visibleMain = mainItems.filter(item => !role || item.roles.includes(role))
+  const visibleMain = mainItems.filter(item => {
+    if (!role || !item.roles.includes(role)) return false
+    if (item.href === '/revenue') return canInputRevenue
+    if (item.href === '/expenses') return canInputExpense
+    return true
+  })
 
   function NavLink({ href, label, icon: Icon }: { href: string; label: string; icon: React.ElementType }) {
     const active = pathname === href || (href !== '/dashboard' && href !== '#' && pathname.startsWith(href + '/'))
@@ -80,13 +95,18 @@ export default function Sidebar() {
 
       <div className="px-4 py-4 border-t border-slate-700 space-y-2">
         {user && (
-          <div className="px-2">
-            <p className="text-slate-300 text-xs font-medium truncate">{user.email}</p>
-            {role && (
-              <span className={cn('inline-block text-[10px] px-1.5 py-0.5 rounded mt-0.5 font-medium', roleBadge[role]?.className)}>
-                {roleBadge[role]?.label}
-              </span>
-            )}
+          <div className="flex items-center gap-2 px-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-slate-300 text-xs font-medium truncate">{user.email}</p>
+              {role && (
+                <span className={cn('inline-block text-[10px] px-1.5 py-0.5 rounded mt-0.5 font-medium', roleBadge[role]?.className)}>
+                  {role === 'super_admin'
+                  ? (organizationId === null ? 'Global Admin' : 'Org Admin')
+                  : roleBadge[role]?.label}
+                </span>
+              )}
+            </div>
+            <NotificationBell />
           </div>
         )}
         <button

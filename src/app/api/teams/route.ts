@@ -1,15 +1,19 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireRole } from '@/lib/require-role'
+import { getCallerProfile } from '@/lib/require-role'
 
 export async function GET(req: Request) {
-  const authErr = await requireRole(req, ['super_admin'])
-  if (authErr) return authErr
+  const caller = await getCallerProfile(req)
+  if (!caller || caller.role !== 'super_admin') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
-  const { data: teams, error } = await supabaseAdmin
-    .from('teams')
-    .select('*')
-    .order('created_at')
+  let query = supabaseAdmin.from('teams').select('*').order('created_at')
+  if (caller.organization_id) {
+    query = query.eq('organization_id', caller.organization_id)
+  }
+
+  const { data: teams, error } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
@@ -37,14 +41,17 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const authErr = await requireRole(req, ['super_admin'])
-  if (authErr) return authErr
+  const caller = await getCallerProfile(req)
+  if (!caller || caller.role !== 'super_admin') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
-  const { name, color, manager_id } = await req.json()
+  const { name, color, manager_id, organization_id } = await req.json()
+  const orgId = caller.organization_id ?? organization_id ?? null
 
   const { data, error } = await supabaseAdmin
     .from('teams')
-    .insert({ name, color: color ?? '#6b7280' })
+    .insert({ name, color: color ?? '#6b7280', organization_id: orgId })
     .select()
     .single()
 

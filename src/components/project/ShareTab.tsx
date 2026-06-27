@@ -18,13 +18,36 @@ const LEVEL_META: Record<ShareAccessLevel, { icon: string; label: string; cls: s
   editor:   { icon: '✏️', label: 'Editor',   cls: 'bg-green-100 text-green-700' },
 }
 
-const PERM_LABELS: Record<SharePermissionId, string> = {
-  view_revenue:    'Xem DT',
-  view_profit:     'Xem LN',
-  view_adspend:    'Xem QC',
-  input_revenue:   'Nhập DT',
-  input_expense:   'Nhập CP',
-  confirm_payment: 'XN TT',
+const PERM_LABELS: Record<SharePermissionId, { short: string; full: string }> = {
+  view_revenue:    { short: 'Xem DT',  full: 'Xem doanh thu' },
+  view_profit:     { short: 'Xem LN',  full: 'Xem lợi nhuận' },
+  view_adspend:    { short: 'Xem QC',  full: 'Xem chi phí QC' },
+  input_revenue:   { short: 'Nhập DT', full: 'Nhập doanh thu' },
+  input_expense:   { short: 'Nhập CP', full: 'Nhập chi phí' },
+  confirm_payment: { short: 'XN TT',   full: 'Xác nhận thanh toán' },
+}
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/)
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+function avatarColor(userId: string): string {
+  const colors = ['bg-blue-500','bg-violet-500','bg-emerald-500','bg-orange-500','bg-rose-500','bg-cyan-500']
+  let hash = 0
+  for (let i = 0; i < userId.length; i++) hash = (hash * 31 + userId.charCodeAt(i)) >>> 0
+  return colors[hash % colors.length]
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const days = Math.floor(diff / 86400000)
+  if (days === 0) return 'hôm nay'
+  if (days === 1) return 'hôm qua'
+  if (days < 30) return `${days} ngày trước`
+  const months = Math.floor(days / 30)
+  return `${months} tháng trước`
 }
 
 const ALL_PERMS = Object.keys(PERM_LABELS) as SharePermissionId[]
@@ -156,13 +179,26 @@ export default function ShareTab({ projectId, projectName, teamId }: Props) {
               const hasCustom = (share.custom_permissions ?? []).length > 0
               const name  = share.user_profile?.full_name ?? 'Unknown'
 
+              const initials = name !== 'Unknown' ? getInitials(name) : '?'
+              const email = share.user_profile?.email ?? ''
+
               return (
                 <div key={share.id} className="bg-white border border-slate-200 rounded-lg p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    {/* User info */}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-800 truncate">{name}</p>
-                      <p className="text-xs text-slate-400 truncate">{share.user_profile?.email}</p>
+                  <div className="flex items-center justify-between gap-3">
+                    {/* Avatar + User info */}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={`w-8 h-8 rounded-full ${avatarColor(share.user_id)} flex items-center justify-center text-white text-xs font-semibold shrink-0`}>
+                        {initials}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{name}</p>
+                        <p className="text-xs text-slate-400 truncate">
+                          {email}
+                          {share.created_at && (
+                            <span className="ml-1.5 text-slate-300">· {timeAgo(share.created_at)}</span>
+                          )}
+                        </p>
+                      </div>
                     </div>
 
                     {/* Controls */}
@@ -220,25 +256,26 @@ export default function ShareTab({ projectId, projectName, teamId }: Props) {
                   </div>
 
                   {/* Permission chips */}
-                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  <div className="mt-2.5 ml-11 flex flex-wrap gap-1.5">
                     {ALL_PERMS.map(pid => (
                       <span
                         key={pid}
-                        className={`text-[11px] px-2 py-0.5 rounded-full ${
+                        title={PERM_LABELS[pid].full}
+                        className={`text-[11px] px-2 py-0.5 rounded-full cursor-default ${
                           perms[pid]
                             ? 'bg-green-50 text-green-700'
                             : 'bg-slate-100 text-slate-400 line-through'
                         }`}
                       >
-                        {PERM_LABELS[pid]}
+                        {PERM_LABELS[pid].short}
                       </span>
                     ))}
                   </div>
 
                   {/* Inline permission editor */}
                   {expandedShareId === share.id && localPerms && (
-                    <div className="mt-3 pt-3 border-t border-slate-100">
-                      <div className="grid grid-cols-2 gap-x-6 gap-y-0">
+                    <div className="mt-3 ml-11 pt-3 border-t border-slate-100">
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-0 max-w-sm">
                         <div>
                           <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Xem số liệu</p>
                           {(['view_revenue', 'view_profit', 'view_adspend'] as SharePermissionId[]).map(pid => (
@@ -249,7 +286,7 @@ export default function ShareTab({ projectId, projectName, teamId }: Props) {
                                 onChange={e => setLocalPerms(prev => prev ? { ...prev, [pid]: e.target.checked } : prev)}
                                 className="accent-blue-600"
                               />
-                              <span className="text-xs text-slate-600">{PERM_LABELS[pid]}</span>
+                              <span className="text-xs text-slate-600">{PERM_LABELS[pid].full}</span>
                             </label>
                           ))}
                         </div>
@@ -263,24 +300,24 @@ export default function ShareTab({ projectId, projectName, teamId }: Props) {
                                 onChange={e => setLocalPerms(prev => prev ? { ...prev, [pid]: e.target.checked } : prev)}
                                 className="accent-blue-600"
                               />
-                              <span className="text-xs text-slate-600">{PERM_LABELS[pid]}</span>
+                              <span className="text-xs text-slate-600">{PERM_LABELS[pid].full}</span>
                             </label>
                           ))}
                         </div>
                       </div>
-                      <div className="flex justify-end gap-2 mt-3">
-                        <button
-                          onClick={() => { setExpandedShareId(null); setLocalPerms(null) }}
-                          className="text-xs px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded transition-colors"
-                        >
-                          Hủy
-                        </button>
+                      <div className="flex justify-start gap-2 mt-3">
                         <button
                           onClick={() => savePerms(share.id)}
                           disabled={savingPerms}
                           className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:opacity-50"
                         >
                           {savingPerms ? 'Đang lưu...' : 'Lưu quyền'}
+                        </button>
+                        <button
+                          onClick={() => { setExpandedShareId(null); setLocalPerms(null) }}
+                          className="text-xs px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded transition-colors"
+                        >
+                          Hủy
                         </button>
                       </div>
                     </div>

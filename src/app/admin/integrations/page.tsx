@@ -4,6 +4,9 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Copy, Eye, EyeOff, CheckCircle, XCircle, Loader2, RefreshCw, Zap, X, Search, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useProjectsContext } from '@/context/ProjectsContext'
+import { useAuth } from '@/context/AuthContext'
+import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
 import { CampaignDiscovery } from '@/lib/types'
 
 interface SyncLogEntry {
@@ -256,6 +259,8 @@ function CampaignProjectSelect({ campaignId, currentProjectId, projects, inProgr
 }
 
 export default function IntegrationsPage() {
+  const { role, organizationId } = useAuth()
+  const router = useRouter()
   const { projects } = useProjectsContext()
   const [secret, setSecret] = useState('')
   const [secretPreview, setSecretPreview] = useState('')
@@ -275,19 +280,39 @@ export default function IntegrationsPage() {
   const [step2Open, setStep2Open] = useState(false)
   const [scriptTab, setScriptTab] = useState<'discover' | 'spend' | 'backfill'>('spend')
 
+  // ── Telegram config ──
+  const [tgToken, setTgToken] = useState('')
+  const [tgChatId, setTgChatId] = useState('')
+  const [tgSaving, setTgSaving] = useState(false)
+  const [tgTesting, setTgTesting] = useState(false)
+  const [tgMsg, setTgMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
   const webhookUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/api/sync/ads-script`
     : '/api/sync/ads-script'
 
+  async function authFetch(url: string, options?: RequestInit) {
+    const { data: { session } } = await supabase.auth.getSession()
+    return fetch(url, {
+      ...options,
+      headers: { ...options?.headers, Authorization: `Bearer ${session?.access_token ?? ''}` },
+    })
+  }
+
   useEffect(() => {
-    fetch('/api/integrations/secret')
+    if (role && role !== 'super_admin') router.replace('/dashboard')
+  }, [role, router])
+
+  useEffect(() => {
+    if (role !== 'super_admin') return
+    authFetch('/api/integrations/secret')
       .then(r => r.json())
       .then(d => { setSecret(d.full ?? ''); setSecretPreview(d.preview ?? '') })
-  }, [])
+  }, [role])
 
   const loadLog = useCallback(async (page = 0, append = false) => {
     setLogLoading(true)
-    const res = await fetch(`/api/integrations/sync-log?page=${page}`)
+    const res = await authFetch(`/api/integrations/sync-log?page=${page}`)
     const data = await res.json()
     const entries = Array.isArray(data) ? data : []
     setSyncLog(prev => append ? [...prev, ...entries] : entries)
@@ -297,13 +322,42 @@ export default function IntegrationsPage() {
 
   const loadCampaigns = useCallback(async () => {
     setCampaignsLoading(true)
-    const res = await fetch('/api/integrations/campaigns')
+    const res = await authFetch('/api/integrations/campaigns')
     const data = await res.json()
     setCampaigns(Array.isArray(data) ? data : [])
     setCampaignsLoading(false)
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadLog(); loadCampaigns() }, [loadLog, loadCampaigns])
+
+  useEffect(() => {
+    if (role !== 'super_admin') return
+    authFetch('/api/admin/telegram-config').then(r => r.json()).then(d => {
+      setTgToken(d.telegram_bot_token ?? '')
+      setTgChatId(d.telegram_chat_id ?? '')
+    }).catch(() => {})
+  }, [role]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleTgSave() {
+    setTgSaving(true); setTgMsg(null)
+    const res = await authFetch('/api/admin/telegram-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telegram_bot_token: tgToken, telegram_chat_id: tgChatId }),
+    })
+    setTgSaving(false)
+    setTgMsg(res.ok ? { ok: true, text: 'Đã lưu cấu hình' } : { ok: false, text: 'Lưu thất bại' })
+    setTimeout(() => setTgMsg(null), 3000)
+  }
+
+  async function handleTgTest() {
+    setTgTesting(true); setTgMsg(null)
+    const res = await authFetch('/api/admin/telegram-config', { method: 'PUT' })
+    setTgTesting(false)
+    const body = await res.json()
+    setTgMsg(res.ok ? { ok: true, text: 'Gửi test thành công!' } : { ok: false, text: body.error ?? 'Thất bại' })
+    setTimeout(() => setTgMsg(null), 4000)
+  }
 
   async function handlePing() {
     setPingStatus('loading')
@@ -322,14 +376,14 @@ export default function IntegrationsPage() {
 
   async function handleBackfillCid() {
     setBackfillStatus('loading')
-    await fetch('/api/integrations/campaigns', { method: 'POST' })
+    await authFetch('/api/integrations/campaigns', { method: 'POST' })
     setBackfillStatus('done')
     setTimeout(() => setBackfillStatus('idle'), 3000)
   }
 
   async function handleMapping(campaignId: string, projectId: string | null) {
     setMappingInProgress(prev => new Set(prev).add(campaignId))
-    await fetch('/api/integrations/campaigns', {
+    await authFetch('/api/integrations/campaigns', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ campaign_id: campaignId, project_id: projectId }),
@@ -354,6 +408,8 @@ export default function IntegrationsPage() {
       c.campaign_name.toLowerCase().includes(q) || c.campaign_id.includes(q)
     )
   }, [displayList, campaignSearch])
+
+  if (role !== 'super_admin') return null
 
   return (
     <div className="p-6 max-w-3xl space-y-6">
@@ -595,6 +651,66 @@ export default function IntegrationsPage() {
               </div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Telegram Bot Config */}
+      <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">✈️ Telegram Bot</p>
+          <p className="text-xs text-slate-400 mt-0.5">Nhận nhắc nhở qua Telegram khi reminders đến hạn</p>
+        </div>
+        <div className="p-4 space-y-4">
+          {organizationId === null && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-md px-3 py-2">
+              ⚠️ Tài khoản Global Admin không có tổ chức. Hãy gán tổ chức trước khi cấu hình Telegram.
+            </div>
+          )}
+          <div className="grid grid-cols-1 gap-3">
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">Bot Token</label>
+              <input
+                type="password"
+                placeholder="123456:ABC-DEF..."
+                value={tgToken}
+                onChange={e => setTgToken(e.target.value)}
+                className="w-full text-sm font-mono border border-slate-200 rounded-md px-3 py-2 outline-none focus:ring-2 focus:ring-slate-300"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">Chat ID</label>
+              <input
+                type="text"
+                placeholder="-100123456789"
+                value={tgChatId}
+                onChange={e => setTgChatId(e.target.value)}
+                className="w-full text-sm font-mono border border-slate-200 rounded-md px-3 py-2 outline-none focus:ring-2 focus:ring-slate-300"
+              />
+              <p className="text-xs text-slate-400 mt-1">Group ID (âm) hoặc User ID. Dùng @userinfobot để lấy ID.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button size="sm" onClick={handleTgSave} disabled={tgSaving}>
+              {tgSaving ? <Loader2 size={13} className="animate-spin mr-1" /> : null}
+              Lưu cấu hình
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleTgTest} disabled={tgTesting || !tgToken || !tgChatId}>
+              {tgTesting ? <Loader2 size={13} className="animate-spin mr-1" /> : null}
+              Gửi test
+            </Button>
+            {tgMsg && (
+              <span className={`text-sm font-medium ${tgMsg.ok ? 'text-green-600' : 'text-red-600'}`}>
+                {tgMsg.ok ? '✅' : '❌'} {tgMsg.text}
+              </span>
+            )}
+          </div>
+          <div className="bg-slate-50 rounded-md p-3 text-xs text-slate-500 space-y-1">
+            <p className="font-medium text-slate-600">Hướng dẫn nhanh:</p>
+            <p>1. Tạo bot qua <strong>@BotFather</strong> → nhận Bot Token</p>
+            <p>2. Thêm bot vào group hoặc nhắn tin trực tiếp</p>
+            <p>3. Lấy Chat ID qua <strong>@userinfobot</strong></p>
+            <p>4. Dán vào đây → Lưu → Gửi test để kiểm tra</p>
+          </div>
         </div>
       </div>
 

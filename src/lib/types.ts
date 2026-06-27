@@ -13,6 +13,7 @@ export interface UserProfile {
   email: string
   role: UserRole
   team_id: string | null
+  organization_id: string | null
   email_confirmed: boolean
   project_count: number
   team?: Pick<Team, 'id' | 'name' | 'color'>
@@ -53,6 +54,71 @@ export interface BankAccount {
   banks?: Bank | null
 }
 
+export interface ProjectCategory {
+  id: string
+  name: string
+  color: string
+  organization_id: string | null
+  created_by?: string | null
+  created_at?: string
+}
+
+export interface AffiliateNetwork {
+  id: string
+  name: string
+  color: string
+  organization_id: string | null
+}
+
+export type ProjectStatus =
+  | 'waiting_camp'    // Chờ Lên Camp
+  | 'testing'         // Đang Test
+  | 'tested_loss'     // Đã Test (Lỗ)
+  | 'waiting_payment' // Chờ Thanh Toán  ← Tab 2
+  | 'scaling'         // Đang Scale       ← Tab 2
+  | 'paused_camp'     // Dừng Camp        ← Tab 2
+  | 'on_hold'         // Tạm Dừng         ← Tab 2
+  | 'abandoned'       // Bỏ
+
+export const ACTIVE_STATUSES: ProjectStatus[] = [
+  'waiting_payment', 'scaling', 'paused_camp', 'on_hold',
+]
+
+export const STATUS_CONFIG: Record<ProjectStatus, { label: string; badge: string; row?: string }> = {
+  waiting_camp:    { label: 'Chờ Lên Camp',    badge: 'bg-slate-100 text-slate-600' },
+  testing:         { label: 'Đang Test',        badge: 'bg-yellow-100 text-yellow-700' },
+  tested_loss:     { label: 'Đã Test (Lỗ)',     badge: 'bg-red-100 text-red-700',     row: 'opacity-60' },
+  waiting_payment: { label: 'Chờ Thanh Toán',   badge: 'bg-orange-100 text-orange-700', row: 'bg-amber-50' },
+  scaling:         { label: 'Đang Scale',       badge: 'bg-green-100 text-green-700', row: 'bg-green-50' },
+  paused_camp:     { label: 'Dừng Camp',        badge: 'bg-blue-100 text-blue-700' },
+  on_hold:         { label: 'Tạm Dừng',         badge: 'bg-purple-100 text-purple-700' },
+  abandoned:       { label: 'Bỏ',              badge: 'bg-slate-200 text-slate-400',  row: 'opacity-60' },
+}
+
+export interface ProjectReminder {
+  id: string
+  project_id: string
+  user_id?: string
+  remind_at: string
+  repeat_type: 'none' | 'daily' | 'weekly' | 'custom'
+  repeat_days: number | null
+  message: string | null
+  notify_inapp: boolean
+  notify_telegram: boolean
+  is_triggered: boolean
+  created_at?: string
+}
+
+export interface AppNotification {
+  id: string
+  type: string
+  title: string
+  body: string | null
+  project_id: string | null
+  is_read: boolean
+  created_at: string
+}
+
 export interface Project {
   project_id: string
   cid: string
@@ -67,6 +133,19 @@ export interface Project {
   team_id?: string | null
   bank_accounts?: (BankAccount & { banks?: Bank | null }) | null
   share_access_level?: ShareAccessLevel | null  // only set for member role (from project_shares)
+  effective_permissions?: SharePermissions | null  // computed from access_level + custom overrides
+  // ── Camp Manager fields ──
+  category_id?:        string | null
+  category?:           ProjectCategory | null
+  affiliate_url?:      string | null
+  affiliate_username?: string | null
+  affiliate_password?: string | null
+  affiliate_network?:  string | null
+  statuses?:           ProjectStatus[]
+  camp_start_date?:    string | null
+  person_in_charge?:   string | null
+  note?:               string | null
+  created_at?:         string | null
 }
 
 export interface CampaignDiscovery {
@@ -123,6 +202,7 @@ export interface PnlSummary {
   total_screen_revenue: number
   total_pending: number
   share_access_level?: ShareAccessLevel | null  // set for member role
+  effective_permissions?: SharePermissions | null  // respects custom overrides
 }
 
 export interface DateRange {

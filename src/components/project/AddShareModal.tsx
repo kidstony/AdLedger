@@ -60,13 +60,23 @@ export default function AddShareModal({
   useEffect(() => {
     async function load() {
       if (!teamId) { setLoading(false); return }
-      const { data } = await supabase
-        .from('user_profiles')
-        .select('user_id, full_name, email')
-        .eq('team_id', teamId)
-        .eq('role', 'member')
-        .order('full_name')
-      setMembers((data ?? []) as TeamMember[])
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token ?? ''
+      const res = await fetch('/api/admin/list-users', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const allUsers = await res.json()
+      const teamMembers = (Array.isArray(allUsers) ? allUsers : [])
+        .filter((u: { role: string; team_id: string | null }) =>
+          u.role === 'member' && u.team_id === teamId
+        )
+        .map((u: { user_id: string; full_name: string; email: string }) => ({
+          user_id: u.user_id,
+          full_name: u.full_name,
+          email: u.email,
+        }))
+        .sort((a: TeamMember, b: TeamMember) => a.full_name.localeCompare(b.full_name))
+      setMembers(teamMembers)
       setLoading(false)
     }
     load()

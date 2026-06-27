@@ -6,6 +6,7 @@ import { aggregatePnl } from '@/lib/utils'
 import { DateRange, PnlSummary, RentalGroup, OtherCost } from '@/lib/types'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { useDateRange } from '@/context/DateRangeContext'
+import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { computeCidCost } from '@/lib/costs'
 import { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
@@ -33,6 +34,7 @@ interface RevenueRow {
 export function usePnlData() {
   const { projects } = useProjectsContext()
   const { dateRange, setDateRange } = useDateRange()
+  const { role } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set())
@@ -84,12 +86,17 @@ export function usePnlData() {
     setRevenueRows((data ?? []) as RevenueRow[])
   }
 
+  async function authFetch(url: string) {
+    const { data: { session } } = await supabase.auth.getSession()
+    return fetch(url, { headers: { 'Authorization': `Bearer ${session?.access_token ?? ''}` } })
+  }
+
   async function fetchCosts(range: DateRange) {
     const from = range.from.toISOString().split('T')[0]
     const to = range.to.toISOString().split('T')[0]
     const [rgRes, otherRes] = await Promise.all([
-      fetch('/api/expenses/rental-groups').then(r => r.json()),
-      fetch(`/api/expenses/other?from=${from}&to=${to}`).then(r => r.json()),
+      authFetch('/api/expenses/rental-groups').then(r => r.json()),
+      authFetch(`/api/expenses/other?from=${from}&to=${to}`).then(r => r.json()),
     ])
     setRentalGroups(Array.isArray(rgRes) ? rgRes : [])
     setOtherCosts(Array.isArray(otherRes) ? otherRes : [])
@@ -195,6 +202,7 @@ export function usePnlData() {
             total_screen_revenue: 0,
             total_pending: 0,
             share_access_level: project.share_access_level ?? null,
+            effective_permissions: project.effective_permissions ?? null,
           })
         } else {
           existing.total_spend += row.spend
@@ -226,6 +234,7 @@ export function usePnlData() {
       s.total_screen_revenue = 0
       s.total_pending = 0
       s.share_access_level = p?.share_access_level ?? null
+      s.effective_permissions = p?.effective_permissions ?? null
     })
     return summaries
   }, [dataSource, adSpendRows, revenueRows, rentalGroups, otherCosts, projectByCampaignId, projectByCid, projectNameMap, activeProjectIds, dateRange, campaignInfoByProjectId])
@@ -240,14 +249,34 @@ export function usePnlData() {
     [allSummaries]
   )
 
+  // For members: mask unauthorized numeric fields to 0 so totals are correct
+  const maskedSummaries = useMemo(() => {
+    if (role !== 'member') return allSummaries
+    return allSummaries.map(s => {
+      const p = s.effective_permissions
+      if (!p) return s
+      return {
+        ...s,
+        total_spend:          p.view_adspend  ? s.total_spend          : 0,
+        total_rental:         p.view_adspend  ? s.total_rental         : 0,
+        total_other:          p.view_adspend  ? s.total_other          : 0,
+        total_revenue:        p.view_revenue  ? s.total_revenue        : 0,
+        total_screen_revenue: p.view_revenue  ? s.total_screen_revenue : 0,
+        total_pending:        p.view_revenue  ? s.total_pending        : 0,
+        total_profit:         p.view_profit   ? s.total_profit         : 0,
+        avg_roi:              p.view_profit   ? s.avg_roi              : 0,
+      }
+    })
+  }, [allSummaries, role])
+
   const filtered = useMemo(() => {
-    let result = allSummaries
+    let result = maskedSummaries
     if (selectedProjectIds.size > 0)
       result = result.filter(s => selectedProjectIds.has(s.project_id))
     if (!search.trim()) return result
     const q = search.toLowerCase()
     return result.filter(s => s.name.toLowerCase().includes(q) || s.project_id.includes(q))
-  }, [allSummaries, search, selectedProjectIds])
+  }, [maskedSummaries, search, selectedProjectIds])
 
   const totals = useMemo(() => {
     return filtered.reduce(

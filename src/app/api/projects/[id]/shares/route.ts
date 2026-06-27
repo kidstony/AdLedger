@@ -29,14 +29,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   if (!shares?.length) return NextResponse.json([])
 
-  // Enrich với user_profiles
+  // Enrich với user_profiles + email từ auth.users
   const userIds = shares.map(s => s.user_id)
-  const { data: profiles } = await supabaseAdmin
-    .from('user_profiles')
-    .select('user_id, full_name, email, role')
-    .in('user_id', userIds)
-
-  const profileMap = new Map((profiles ?? []).map(p => [p.user_id, p]))
+  const [{ data: profiles }, { data: authData }] = await Promise.all([
+    supabaseAdmin.from('user_profiles').select('user_id, full_name, role').in('user_id', userIds),
+    supabaseAdmin.auth.admin.listUsers(),
+  ])
+  const authEmailMap = new Map(
+    (authData?.users ?? [])
+      .filter(u => userIds.includes(u.id))
+      .map(u => [u.id, u.email ?? ''])
+  )
+  const profileMap = new Map(
+    (profiles ?? []).map(p => [p.user_id, { ...p, email: authEmailMap.get(p.user_id) ?? '' }])
+  )
 
   // Enrich với custom permissions
   const shareIds = shares.map(s => s.id)
