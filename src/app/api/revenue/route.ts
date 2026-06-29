@@ -58,24 +58,13 @@ export async function POST(req: NextRequest) {
   }
 
   if (toUpsert.length > 0) {
-    for (const row of toUpsert) {
-      const { error: delError } = await supabaseAdmin
-        .from('affiliate_revenue')
-        .delete()
-        .eq('project_id', row.project_id)
-        .eq('date', row.date)
-        .eq('type', row.type)
+    const { error } = await supabaseAdmin
+      .from('affiliate_revenue')
+      .upsert(toUpsert, { onConflict: 'project_id,date,type', ignoreDuplicates: false })
 
-      if (delError) console.error('[revenue] delete error:', delError.message, 'row:', JSON.stringify(row))
-
-      const { error } = await supabaseAdmin
-        .from('affiliate_revenue')
-        .insert(row)
-
-      if (error) {
-        console.error('[revenue] insert error:', error.message, 'code:', error.code, 'row:', JSON.stringify(row))
-        return NextResponse.json({ error: error.message, code: error.code, row }, { status: 500 })
-      }
+    if (error) {
+      console.error('[revenue] upsert error:', error.message, 'code:', error.code)
+      return NextResponse.json({ error: error.message }, { status: 500 })
     }
   }
 
