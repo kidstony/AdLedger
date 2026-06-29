@@ -549,17 +549,6 @@ export default function RevenuePage() {
           }}
         />
 
-        {/* Toàn thời gian toggle */}
-        <button
-          onClick={() => switchMode(viewMode === 'all' ? 'week' : 'all')}
-          className={cn(
-            'px-3 py-1.5 text-xs font-medium border rounded-lg transition-colors',
-            viewMode === 'all'
-              ? 'bg-slate-800 text-white border-slate-800'
-              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-          )}
-        >Toàn thời gian</button>
-
         {/* Revenue type tab */}
         <div className="ml-auto flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
           <button

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import { toast as sonnerToast } from 'sonner'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
 
@@ -112,6 +113,7 @@ export function useRevenueGrid() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const executeSave = useCallback(async () => {
+    console.log('[executeSave] pending rev:', pendingRevenueKeysRef.current.size, 'scn:', pendingScreenKeysRef.current.size)
     if (pendingRevenueKeysRef.current.size === 0 && pendingScreenKeysRef.current.size === 0) return
     setSaveStatus('saving')
 
@@ -143,20 +145,25 @@ export function useRevenueGrid() {
 
     try {
       const token = await getToken()
+      console.log('[executeSave] token ok:', !!token, 'rows:', JSON.stringify(rows))
       const res = await fetch('/api/revenue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ rows }),
       })
+      console.log('[executeSave] response status:', res.status)
       if (res.ok) {
         clearedRevenueRef.current.clear()
         clearedScreenRef.current.clear()
         setSaveStatus('saved')
         setTimeout(() => setSaveStatus('idle'), 3000)
       } else {
+        const body = await res.json().catch(() => ({}))
+        sonnerToast.error(`Lưu thất bại: ${body?.error ?? res.status}`)
         setSaveStatus('idle')
       }
-    } catch {
+    } catch (err) {
+      sonnerToast.error(`Lỗi kết nối: ${err instanceof Error ? err.message : 'Unknown'}`)
       setSaveStatus('idle')
     }
   }, [])
@@ -271,7 +278,9 @@ export function useRevenueGrid() {
     const to   = viewMode === 'all' ? today : (dateList[dateList.length - 1] ?? today)
     setIsLoading(true)
     try {
-      const res = await fetch(`/api/revenue?from=${from}&to=${to}`)
+      const token = await getToken()
+      const headers = { Authorization: `Bearer ${token}` }
+      const res = await fetch(`/api/revenue?from=${from}&to=${to}`, { headers })
       if (!res.ok) return
       const rows: RevenueRow[] = await res.json()
 
@@ -308,7 +317,7 @@ export function useRevenueGrid() {
 
       if (viewMode !== 'all') {
         const prevDate = addDays(dateList[0], -1)
-        const prevRes  = await fetch(`/api/revenue?from=${prevDate}&to=${prevDate}`)
+        const prevRes  = await fetch(`/api/revenue?from=${prevDate}&to=${prevDate}`, { headers })
         if (prevRes.ok) {
           const prevRows: RevenueRow[] = await prevRes.json()
           const nextPrev = new Map<string, number>()

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { STATUS_CONFIG, ProjectStatus } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { ChevronDown } from 'lucide-react'
@@ -17,12 +18,17 @@ const ALL_STATUSES = Object.keys(STATUS_CONFIG) as ProjectStatus[]
 
 export default function StatusPicker({ value, onChange, disabled, compact, inline }: StatusPickerProps) {
   const [open, setOpen] = useState(false)
+  const [dropPos, setDropPos] = useState<{ top: number; left: number } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!open) return
     function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false)
+        setDropPos(null)
+      }
     }
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
@@ -34,6 +40,20 @@ export default function StatusPicker({ value, onChange, disabled, compact, inlin
       ? value.filter(s => s !== status)
       : [...value, status]
     onChange(next)
+  }
+
+  function handleInlineToggle() {
+    if (disabled) return
+    if (open) {
+      setOpen(false)
+      setDropPos(null)
+    } else {
+      if (triggerRef.current) {
+        const r = triggerRef.current.getBoundingClientRect()
+        setDropPos({ top: r.bottom + 4, left: r.left })
+      }
+      setOpen(true)
+    }
   }
 
   // Member view: read-only badges only
@@ -53,13 +73,14 @@ export default function StatusPicker({ value, onChange, disabled, compact, inlin
     )
   }
 
-  // Admin table view: badges + click to open dropdown popover
+  // Admin table view: badges + click to open dropdown popover (portal)
   if (inline) {
     return (
-      <div ref={ref} className="relative">
+      <div ref={ref}>
         <button
+          ref={triggerRef}
           type="button"
-          onClick={() => !disabled && setOpen(v => !v)}
+          onClick={handleInlineToggle}
           className={cn(
             'flex flex-wrap gap-1 items-center min-w-[80px] px-1 py-0.5 rounded hover:bg-slate-50 transition-colors text-left',
             disabled && 'cursor-not-allowed opacity-60'
@@ -77,8 +98,11 @@ export default function StatusPicker({ value, onChange, disabled, compact, inlin
           <ChevronDown size={11} className="text-slate-400 ml-auto shrink-0" />
         </button>
 
-        {open && (
-          <div className="absolute z-50 top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg p-2 flex flex-wrap gap-1.5 w-56">
+        {open && dropPos && createPortal(
+          <div
+            style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, zIndex: 9999 }}
+            className="bg-white border border-slate-200 rounded-lg shadow-lg p-2 flex flex-wrap gap-1.5 w-56"
+          >
             {ALL_STATUSES.map(status => {
               const selected = value.includes(status)
               return (
@@ -97,7 +121,8 @@ export default function StatusPicker({ value, onChange, disabled, compact, inlin
                 </button>
               )
             })}
-          </div>
+          </div>,
+          document.body
         )}
       </div>
     )
