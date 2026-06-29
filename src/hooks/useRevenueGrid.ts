@@ -110,13 +110,10 @@ export function useRevenueGrid() {
     setCanRedo(futureRef.current.length > 0)
   }
 
-  const saveTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const isSavingRef   = useRef(false)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const executeSave = useCallback(async () => {
-    if (isSavingRef.current) return
     if (pendingRevenueKeysRef.current.size === 0 && pendingScreenKeysRef.current.size === 0) return
-    isSavingRef.current = true
     setSaveStatus('saving')
 
     const revKeys = Array.from(pendingRevenueKeysRef.current)
@@ -165,8 +162,6 @@ export function useRevenueGrid() {
     } catch (err) {
       sonnerToast.error(`Lỗi kết nối: ${err instanceof Error ? err.message : 'Unknown'}`)
       setSaveStatus('idle')
-    } finally {
-      isSavingRef.current = false
     }
   }, [])
 
