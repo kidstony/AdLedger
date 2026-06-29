@@ -283,12 +283,20 @@ export function useRevenueGrid() {
 
       setRevenueGrid(prev => {
         const next = new Map(prev)
-        rows.forEach(r => { if (r.type === 'confirmed' && r.amount > 0) next.set(`${r.project_id}__${r.date}`, r.amount) })
+        rows.forEach(r => {
+          const key = `${r.project_id}__${r.date}`
+          if (pendingRevenueKeysRef.current.has(key)) return
+          if (r.type === 'confirmed' && r.amount > 0) next.set(key, r.amount)
+        })
         return next
       })
       setScreenGrid(prev => {
         const next = new Map(prev)
-        rows.forEach(r => { if (r.type === 'pending' && r.amount > 0) next.set(`${r.project_id}__${r.date}`, r.amount) })
+        rows.forEach(r => {
+          const key = `${r.project_id}__${r.date}`
+          if (pendingScreenKeysRef.current.has(key)) return
+          if (r.type === 'pending' && r.amount > 0) next.set(key, r.amount)
+        })
         return next
       })
 
