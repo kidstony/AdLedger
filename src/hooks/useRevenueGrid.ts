@@ -113,7 +113,6 @@ export function useRevenueGrid() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const executeSave = useCallback(async () => {
-    console.log('[executeSave] pending rev:', pendingRevenueKeysRef.current.size, 'scn:', pendingScreenKeysRef.current.size)
     if (pendingRevenueKeysRef.current.size === 0 && pendingScreenKeysRef.current.size === 0) return
     setSaveStatus('saving')
 
@@ -145,13 +144,11 @@ export function useRevenueGrid() {
 
     try {
       const token = await getToken()
-      console.log('[executeSave] token ok:', !!token, 'rows:', JSON.stringify(rows))
       const res = await fetch('/api/revenue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ rows }),
       })
-      console.log('[executeSave] response status:', res.status)
       if (res.ok) {
         clearedRevenueRef.current.clear()
         clearedScreenRef.current.clear()
