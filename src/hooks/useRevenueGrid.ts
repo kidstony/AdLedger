@@ -154,6 +154,7 @@ export function useRevenueGrid() {
         clearedScreenRef.current.clear()
         setSaveStatus('saved')
         setTimeout(() => setSaveStatus('idle'), 3000)
+        setRefreshKey(k => k + 1)
       } else {
         const body = await res.json().catch(() => ({}))
         sonnerToast.error(`Lưu thất bại: ${body?.error ?? res.status}`)
