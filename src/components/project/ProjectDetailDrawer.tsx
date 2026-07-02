@@ -9,6 +9,7 @@ import { cn, formatVND } from '@/lib/utils'
 import StatusPicker from '@/components/project/StatusPicker'
 import ReminderModal from '@/components/project/ReminderModal'
 import { useAuth } from '@/context/AuthContext'
+import { useMasterProjectsContext } from '@/context/MasterProjectsContext'
 
 interface HistoryEntry {
   id: string
@@ -76,6 +77,7 @@ export default function ProjectDetailDrawer({
   const isOpen = !!project
   const { role } = useAuth()
   const canEdit = role === 'super_admin' || role === 'manager'
+  const { masterProjects } = useMasterProjectsContext()
 
   // Reset on new project
   useEffect(() => {
@@ -154,6 +156,19 @@ export default function ProjectDetailDrawer({
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ person_in_charge: userId || null }),
+    })
+    if (res.ok) {
+      const updated = await res.json()
+      onProjectUpdated?.({ ...project, ...updated })
+    }
+  }
+
+  const handleMasterProjectChange = async (masterProjectId: string) => {
+    if (!project) return
+    const res = await authFetch(`/api/projects/${project.project_id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ master_project_id: masterProjectId || null }),
     })
     if (res.ok) {
       const updated = await res.json()
@@ -283,6 +298,26 @@ export default function ProjectDetailDrawer({
                   onChange={id => handlePersonChange(id ?? '')}
                   size="md"
                 />
+              </Section>
+
+              {/* Tổng Dự Án */}
+              <Section label="Tổng Dự Án">
+                {canEdit ? (
+                  <select
+                    value={project.master_project_id ?? ''}
+                    onChange={e => handleMasterProjectChange(e.target.value)}
+                    className="text-sm text-slate-700 border border-slate-200 rounded-md px-2.5 py-1.5 bg-white hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 w-full"
+                  >
+                    <option value="">— Chưa gán —</option>
+                    {masterProjects.map(mp => (
+                      <option key={mp.id} value={mp.id}>{mp.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="text-sm text-slate-700">
+                    {masterProjects.find(mp => mp.id === project.master_project_id)?.name ?? '—'}
+                  </span>
+                )}
               </Section>
 
               {/* Ngày lên camp */}

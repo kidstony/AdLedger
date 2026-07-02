@@ -61,7 +61,14 @@ export default function RevenueSummaryCards({ projectTotals, totalProjectCount, 
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-amber-600 font-medium">⏳ Chờ xác nhận</span>
-              <span className="text-sm font-bold text-amber-700">{pendingTotal > 0 ? formatVND(pendingTotal) : <span className="opacity-30">$0.00</span>}</span>
+              <span className="text-sm font-bold text-amber-700">
+                {pendingTotal > 0
+                  ? formatVND(pendingTotal)
+                  : pendingTotal < 0
+                    ? <span className="text-red-600">-{formatVND(Math.abs(pendingTotal))}</span>
+                    : <span className="opacity-30">$0.00</span>
+                }
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-blue-600 font-medium">✓ Đã xác nhận</span>

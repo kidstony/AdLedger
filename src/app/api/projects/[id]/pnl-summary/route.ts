@@ -9,6 +9,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const caller = await getCallerProfile(req)
   if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  if (caller.role === 'member') {
+    const { data: share } = await supabaseAdmin
+      .from('project_shares').select('id')
+      .eq('project_id', project_id).eq('user_id', caller.user_id).maybeSingle()
+    if (!share) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  } else if (caller.role === 'manager') {
+    const { data: proj } = await supabaseAdmin
+      .from('projects').select('team_id').eq('project_id', project_id).single()
+    if (proj?.team_id !== caller.team_id)
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   const url = new URL(req.url)
   const from = url.searchParams.get('from') ?? '2000-01-01'
   const to   = url.searchParams.get('to')   ?? new Date().toISOString().split('T')[0]

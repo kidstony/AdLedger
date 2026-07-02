@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getCallerProfile } from '@/lib/require-role'
 
 export async function GET(req: NextRequest) {
+  const caller = await getCallerProfile(req)
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const bankId = new URL(req.url).searchParams.get('bank_id')
 
   let query = supabaseAdmin.from('bank_accounts').select('*').order('created_at')
@@ -13,6 +17,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const caller = await getCallerProfile(req)
+  if (!caller || !['super_admin', 'manager'].includes(caller.role))
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
   const { bank_id, account_identifier, owner_name, note, coin_type, network, wallet_address } = await req.json()
   if (!bank_id || !owner_name) {
     return NextResponse.json({ error: 'bank_id and owner_name required' }, { status: 400 })
@@ -37,6 +45,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const caller = await getCallerProfile(req)
+  if (!caller || !['super_admin', 'manager'].includes(caller.role))
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
   const { id, account_identifier, owner_name, note, coin_type, network, wallet_address } = await req.json()
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
@@ -59,6 +71,10 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const caller = await getCallerProfile(req)
+  if (!caller || !['super_admin', 'manager'].includes(caller.role))
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
   const id = new URL(req.url).searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 

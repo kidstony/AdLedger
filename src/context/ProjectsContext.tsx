@@ -19,7 +19,7 @@ interface ProjectsContextValue {
 const ProjectsContext = createContext<ProjectsContextValue | null>(null)
 
 export function ProjectsProvider({ children }: { children: ReactNode }) {
-  const { user, role } = useAuth()
+  const { user, role, teamId } = useAuth()
   const [projects, setProjects] = useState<Project[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
@@ -27,21 +27,26 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     if (!user) { setProjects([]); setIsLoading(false); return }
 
     if (role === 'super_admin') loadAllProjects()
-    else if (role === 'manager') loadManagerProjects(user.id)
+    else if (role === 'manager') loadManagerProjects()
     else if (role === 'member') loadAssignedProjects(user.id)
-  }, [user, role])
+  }, [user, role, teamId])
 
-  async function loadManagerProjects(userId: string) {
-    const { data: shares } = await supabase
-      .from('project_shares')
-      .select('project_id')
-      .eq('user_id', userId)
-
-    if (shares && shares.length > 0) {
-      loadAssignedProjects(userId)
-    } else {
-      loadAllProjects()
+  async function loadManagerProjects() {
+    if (!teamId) {
+      setProjects([])
+      setIsLoading(false)
+      return
     }
+    setIsLoading(true)
+    const { data, error } = await supabase
+      .from('projects')
+      .select('*, bank_accounts(*, banks(*)), category:project_categories(id, name, color)')
+      .eq('team_id', teamId)
+      .order('project_id')
+
+    if (error) { console.error('Lỗi tải dự án team:', error); setIsLoading(false); return }
+    setProjects((data ?? []) as Project[])
+    setIsLoading(false)
   }
 
   async function loadAllProjects() {
@@ -87,24 +92,34 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
 
   async function loadAssignedProjects(userId: string) {
     setIsLoading(true)
-    const { data: assignments } = await supabase
-      .from('project_shares')
-      .select('id, project_id, access_level')
-      .eq('user_id', userId)
+
+    // Fetch both sources in parallel: explicit shares + person_in_charge assignments
+    const [sharesRes, ownedRes] = await Promise.all([
+      supabase.from('project_shares').select('id, project_id, access_level').eq('user_id', userId),
+      supabase.from('projects').select('project_id').eq('person_in_charge', userId),
+    ])
 
     type Assignment = { id: string; project_id: string; access_level: string }
-    const rows = (assignments ?? []) as Assignment[]
-    const ids = rows.map(a => a.project_id)
+    const rows = (sharesRes.data ?? []) as Assignment[]
+    const shareIdSet = new Set(rows.map(a => a.project_id))
     const shareIds = rows.map(a => a.id)
     const accessMap = new Map(rows.map(a => [a.project_id, { shareId: a.id, level: a.access_level as ShareAccessLevel }]))
 
-    if (ids.length === 0) { setProjects([]); setIsLoading(false); return }
+    // Projects from person_in_charge not already in project_shares → add with 'editor' level
+    const ownedIds = ((ownedRes.data ?? []) as { project_id: string }[])
+      .map(p => p.project_id)
+      .filter(id => !shareIdSet.has(id))
+    for (const id of ownedIds) {
+      accessMap.set(id, { shareId: '', level: 'viewer' })
+    }
 
-    // Fetch custom permission overrides (member_view_own_perms policy allows this)
-    const { data: customPerms } = await supabase
-      .from('project_share_permissions')
-      .select('share_id, permission_id, granted')
-      .in('share_id', shareIds)
+    const allIds = [...shareIdSet, ...ownedIds]
+    if (allIds.length === 0) { setProjects([]); setIsLoading(false); return }
+
+    // Fetch custom permission overrides (only for explicit project_shares entries)
+    const { data: customPerms } = shareIds.length > 0
+      ? await supabase.from('project_share_permissions').select('share_id, permission_id, granted').in('share_id', shareIds)
+      : { data: [] }
 
     type CustomPerm = { share_id: string; permission_id: string; granted: boolean }
     const permsByShareId = new Map<string, Map<string, boolean>>()
@@ -114,7 +129,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     }
 
     const { data, error } = await supabase
-      .from('projects').select('*, bank_accounts(*, banks(*)), category:project_categories(id, name, color)').in('project_id', ids).order('project_id')
+      .from('projects').select('*, bank_accounts(*, banks(*)), category:project_categories(id, name, color)').in('project_id', allIds).order('project_id')
 
     if (error) console.error('Lỗi tải dự án được phân công:', error)
     else setProjects((data as Project[]).map(p => {
@@ -138,6 +153,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       cid: p.cid,
       name: p.name,
       mcc_id: p.mcc_id,
+      team_id: teamId ?? null,
       master_project_id: p.master_project_id ?? null,
       screen_revenue_type: p.screen_revenue_type ?? 'daily',
       ref_link: p.ref_link ?? null,
@@ -153,6 +169,7 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       camp_start_date: p.camp_start_date ?? null,
       person_in_charge: p.person_in_charge ?? null,
       note: p.note ?? null,
+      created_by: user?.id ?? null,
     })
     if (error) {
       console.error('Lỗi thêm dự án:', error)

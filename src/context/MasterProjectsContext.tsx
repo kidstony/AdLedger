@@ -23,28 +23,45 @@ export function MasterProjectsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) { setMasterProjects([]); setIsLoading(false); return }
     load()
-  }, [user])
+  }, [user?.id])
 
   async function load() {
     setIsLoading(true)
-    const { data, error } = await supabase.from('master_projects').select('*').order('name')
-    if (error) console.error('Lỗi tải tổng dự án:', error)
-    else setMasterProjects(data ?? [])
+    const token = await getToken()
+    if (!token) { setMasterProjects([]); setIsLoading(false); return }
+    const res = await fetch('/api/master-projects', { headers: { Authorization: `Bearer ${token}` } })
+    if (res.ok) setMasterProjects(await res.json())
     setIsLoading(false)
   }
 
+  async function getToken(): Promise<string | null> {
+    const { data: { session } } = await supabase.auth.getSession()
+    return session?.access_token ?? null
+  }
+
   async function addMasterProject(mp: Omit<MasterProject, 'created_at'>) {
-    const { data, error } = await supabase.from('master_projects').insert(mp).select().single()
-    if (error) { console.error(error); return }
+    const token = await getToken()
+    if (!token) return
+    const res = await fetch('/api/master-projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: mp.name }),
+    })
+    if (!res.ok) { console.error(await res.text()); return }
+    const data: MasterProject = await res.json()
     setMasterProjects(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)))
   }
 
   async function updateMasterProject(mp: MasterProject) {
     setMasterProjects(prev => prev.map(x => x.id === mp.id ? mp : x))
-    const { error } = await supabase.from('master_projects')
-      .update({ name: mp.name, description: mp.description })
-      .eq('id', mp.id)
-    if (error) { console.error(error); load() }
+    const token = await getToken()
+    if (!token) { load(); return }
+    const res = await fetch(`/api/master-projects/${mp.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: mp.name }),
+    })
+    if (!res.ok) { console.error(await res.text()); load() }
   }
 
   async function deleteMasterProject(id: string) {

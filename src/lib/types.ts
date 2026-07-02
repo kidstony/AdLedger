@@ -31,6 +31,7 @@ export interface MasterProject {
   name: string
   description?: string | null
   created_at?: string
+  created_by?: string | null
 }
 
 export interface Bank {
@@ -145,6 +146,7 @@ export interface Project {
   camp_start_date?:    string | null
   person_in_charge?:   string | null
   note?:               string | null
+  created_by?:         string | null
   created_at?:         string | null
 }
 

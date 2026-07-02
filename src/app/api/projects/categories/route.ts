@@ -6,16 +6,10 @@ export async function GET(req: Request) {
   const caller = await getCallerProfile(req)
   if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  let query = supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('project_categories')
-    .select('id, name, color, organization_id, created_at')
+    .select('id, name, color, created_at')
     .order('name')
-
-  if (caller.organization_id) {
-    query = query.eq('organization_id', caller.organization_id)
-  }
-
-  const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data ?? [])
 }
@@ -34,7 +28,7 @@ export async function POST(req: Request) {
     .insert({
       name: name.trim(),
       color: color ?? '#6b7280',
-      organization_id: caller.organization_id ?? null,
+      organization_id: null,
       created_by: caller.user_id,
     })
     .select()

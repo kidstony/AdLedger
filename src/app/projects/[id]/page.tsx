@@ -22,8 +22,7 @@ function localStr(d: Date): string {
 
 function defaultFrom(): string {
   const d = new Date()
-  d.setDate(d.getDate() - 29)
-  return localStr(d)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
 }
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {

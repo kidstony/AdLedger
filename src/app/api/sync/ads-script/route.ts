@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 interface CampaignRecord {
   campaign_id: string
@@ -49,6 +50,11 @@ async function backfillProjectCidMcc(campaignIds: string[]) {
 }
 
 export async function POST(req: NextRequest) {
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  if (!checkRateLimit(`ads-script:${ip}`, 30, 60_000)) {
+    return NextResponse.json({ error: 'Too Many Requests' }, { status: 429 })
+  }
+
   let body: Body
   try {
     body = await req.json()

@@ -104,7 +104,7 @@ export default function ExpensesPage() {
   // True when we know the member has at least one project with input_expense permission
   const memberHasAccess = role !== 'member' || (!projectsLoading && projects.length > 0)
   const { fromStr, toStr, setDateRange } = useDateRange()
-  const [tab, setTab] = useState<Tab>('qc')
+  const [tab, setTab] = useState<Tab>('summary')
 
   // Tab 1
   const [adSpendRows, setAdSpendRows] = useState<{ campaign_id: string; date: string; spend: number }[]>([])

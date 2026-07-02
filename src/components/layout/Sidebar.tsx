@@ -1,8 +1,9 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import { BarChart3, FolderOpen, DollarSign, LogOut, Layers, Plug, Receipt, Building2, Users, UsersRound } from 'lucide-react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { BarChart3, FolderOpen, DollarSign, LogOut, Plug, Receipt, Building2, Users, UsersRound, ChevronDown, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/context/AuthContext'
 import { useProjectsContext } from '@/context/ProjectsContext'
@@ -19,17 +20,20 @@ const roleBadge: Record<string, { label: string; className: string }> = {
 export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
+  const sp = useSearchParams()
+  const currentTab = sp.get('tab')
   const { user, role, teamId, organizationId, signOut } = useAuth()
   const { projects, isLoading: projectsLoading } = useProjectsContext()
 
-  // For members: show input links only when they have projects with those permissions
-  // While loading (projectsLoading), default to showing (avoid flicker-hide)
-  const canInputRevenue = role !== 'member' || projectsLoading || projects.some(p => p.effective_permissions?.input_revenue)
-  const canInputExpense = role !== 'member' || projectsLoading || projects.some(p => p.effective_permissions?.input_expense)
+  const isAdminPath = pathname.startsWith('/teams') || pathname.startsWith('/users') || pathname.startsWith('/admin/')
+  const [adminExpanded, setAdminExpanded] = useState(isAdminPath)
+
+  // For members: show input links only when confirmed they have a project with that permission
+  const canInputRevenue = role !== 'member' || projects.some(p => p.effective_permissions?.input_revenue)
+  const canInputExpense = role !== 'member' || projects.some(p => p.effective_permissions?.input_expense)
 
   const mainItems = [
     { href: '/dashboard',          label: 'Dashboard P&L',    icon: BarChart3,  roles: ['super_admin', 'manager', 'member', 'admin', 'employee'] },
-    { href: '/master-projects',    label: 'Tổng Dự Án',       icon: Layers,     roles: ['super_admin', 'manager', 'admin'] },
     { href: '/projects',           label: 'Quản lý dự án',    icon: FolderOpen, roles: ['super_admin', 'manager', 'member', 'admin', 'employee'] },
     { href: '/revenue',            label: 'Nhập doanh thu',   icon: DollarSign, roles: ['super_admin', 'manager', 'admin', 'member'] },
     { href: '/expenses',           label: 'Nhập Chi Phí',     icon: Receipt,    roles: ['super_admin', 'manager', 'admin', 'member'] },
@@ -58,7 +62,16 @@ export default function Sidebar() {
   })
 
   function NavLink({ href, label, icon: Icon }: { href: string; label: string; icon: React.ElementType }) {
-    const active = pathname === href || (href !== '/dashboard' && href !== '#' && pathname.startsWith(href + '/'))
+    const [hrefPath, hrefQuery = ''] = href.split('?')
+    const hrefTab = hrefQuery ? new URLSearchParams(hrefQuery).get('tab') : null
+    let active: boolean
+    if (hrefTab !== null) {
+      active = pathname === hrefPath && currentTab === hrefTab
+    } else {
+      const pathMatch = pathname === hrefPath || (hrefPath !== '/dashboard' && hrefPath !== '#' && pathname.startsWith(hrefPath + '/'))
+      const notMasterTab = hrefPath !== '/projects' || currentTab !== 'master'
+      active = pathMatch && notMasterTab
+    }
     return (
       <Link
         href={href}
@@ -85,10 +98,24 @@ export default function Sidebar() {
 
         {role === 'super_admin' && (
           <>
-            <div className="px-3 pt-3 pb-1">
-              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Quản trị</p>
-            </div>
-            {adminItems.map(item => <NavLink key={item.href} {...item} />)}
+            <button
+              onClick={() => setAdminExpanded(v => !v)}
+              className={cn(
+                'w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors mt-1',
+                'text-slate-400 hover:bg-slate-800 hover:text-white'
+              )}
+            >
+              <Settings size={16} />
+              <span className="flex-1 text-left">Quản trị</span>
+              <ChevronDown
+                size={14}
+                className={cn(
+                  'transition-transform duration-200',
+                  adminExpanded ? 'rotate-0' : '-rotate-90'
+                )}
+              />
+            </button>
+            {adminExpanded && adminItems.map(item => <NavLink key={item.href} {...item} />)}
           </>
         )}
       </nav>

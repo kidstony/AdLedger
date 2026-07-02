@@ -21,11 +21,15 @@ export default function StatusPicker({ value, onChange, disabled, compact, inlin
   const [dropPos, setDropPos] = useState<{ top: number; left: number } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const portalRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
     function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      const target = e.target as Node
+      const insideTrigger = ref.current?.contains(target)
+      const insidePortal = portalRef.current?.contains(target)
+      if (!insideTrigger && !insidePortal) {
         setOpen(false)
         setDropPos(null)
       }
@@ -100,6 +104,7 @@ export default function StatusPicker({ value, onChange, disabled, compact, inlin
 
         {open && dropPos && createPortal(
           <div
+            ref={portalRef}
             style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, zIndex: 9999 }}
             className="bg-white border border-slate-200 rounded-lg shadow-lg p-2 flex flex-wrap gap-1.5 w-56"
           >

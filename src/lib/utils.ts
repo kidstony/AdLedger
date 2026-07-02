@@ -90,9 +90,14 @@ export function aggregatePnl(daily: PnlDaily[], dateRange: DateRange): PnlSummar
 }
 
 export function getDefaultDateRange(): DateRange {
-  const to = new Date()
-  const from = new Date(to.getFullYear(), to.getMonth(), 1)
-  return { from, to }
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return {
+    from: new Date(`${y}-${m}-01T00:00:00Z`),
+    to:   new Date(`${y}-${m}-${d}T00:00:00Z`),
+  }
 }
 
 export function formatDate(date: Date): string {

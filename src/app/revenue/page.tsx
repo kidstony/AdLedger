@@ -280,11 +280,12 @@ export default function RevenuePage() {
       const total = dates.reduce((sum, d, di) => {
         const key = `${p.project_id}__${d}`
         if (viewMode !== 'all' && activeTab === 'screen' && p.screen_revenue_type === 'cumulative') {
-          const curr     = screenGrid.get(key) ?? 0
+          const currRaw = screenGrid.get(key)
+          if (currRaw === undefined) return sum
           const prevDate = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
           const prevKey  = `${p.project_id}__${prevDate}`
           const prev     = di === 0 ? (prevScreenMap.get(prevKey) ?? 0) : (screenGrid.get(prevKey) ?? 0)
-          return sum + Math.max(0, curr - prev)
+          return sum + (currRaw - prev)
         }
         return sum + (gridData.get(key) ?? 0)
       }, 0)
@@ -303,11 +304,12 @@ export default function RevenuePage() {
         const isConfirmed = statusMap.get(key) === 'confirmed'
         let amount = 0
         if (p.screen_revenue_type === 'cumulative' && viewMode !== 'all') {
-          const curr     = screenGrid.get(key) ?? 0
+          const currRaw = screenGrid.get(key)
+          if (currRaw === undefined) return
           const prevDate = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
           const prevKey  = `${p.project_id}__${prevDate}`
           const prev     = di === 0 ? (prevScreenMap.get(prevKey) ?? 0) : (screenGrid.get(prevKey) ?? 0)
-          amount = Math.max(0, curr - prev)
+          amount = currRaw - prev
         } else {
           amount = screenGrid.get(key) ?? 0
         }
@@ -383,11 +385,12 @@ export default function RevenuePage() {
         // In all-time view, gridData already contains correct monthly deltas for cumulative projects
         // so we just sum gridData directly. Daily delta logic only applies to day/week/month views.
         if (viewMode !== 'all' && activeTab === 'screen' && p.screen_revenue_type === 'cumulative') {
-          const curr     = screenGrid.get(key) ?? 0
+          const currRaw = screenGrid.get(key)
+          if (currRaw === undefined) return sum
           const prevDate = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
           const prevKey  = `${p.project_id}__${prevDate}`
           const prev     = di === 0 ? (prevScreenMap.get(prevKey) ?? 0) : (screenGrid.get(prevKey) ?? 0)
-          return sum + Math.max(0, curr - prev)
+          return sum + (currRaw - prev)
         }
         return sum + (gridData.get(key) ?? 0)
       }, 0)
@@ -405,6 +408,9 @@ export default function RevenuePage() {
     else                     npi = (pi - 1 + filteredProjects.length) % filteredProjects.length
     ndi = Math.max(0, Math.min(ndi, dates.length - 1))
     if (npi < 0 || npi >= filteredProjects.length) return
+    // Don't re-open the same cell — happens when filter leaves only 1 project and wrap-around
+    // would re-trigger startEdit() with stale props, stomping the just-committed value.
+    if (npi === pi && ndi === di) return
     focusedCellRef.current = { pi: npi, di: ndi }
     const key = `${filteredProjects[npi].project_id}__${dates[ndi]}`
     // Click the inner display div (cursor-text), not the wrapper — events don't bubble down
@@ -818,7 +824,12 @@ export default function RevenuePage() {
                 </td>
                 {dateTotals.map((total, i) => (
                   <td key={dates[i]} className={cn('px-3 py-2 text-center text-xs font-semibold', dates[i] === today && 'bg-blue-50/50')}>
-                    {total > 0 ? <span className="text-green-700">{formatVND(total)}</span> : <span className="opacity-20">$0.00</span>}
+                    {total > 0
+                      ? <span className="text-green-700">{formatVND(total)}</span>
+                      : total < 0
+                        ? <span className="text-red-500">-{formatVND(Math.abs(total))}</span>
+                        : <span className="opacity-20">$0.00</span>
+                    }
                   </td>
                 ))}
               </tr>

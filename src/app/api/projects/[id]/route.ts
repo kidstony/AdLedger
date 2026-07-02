@@ -44,29 +44,60 @@ async function resolvePersonName(userId: unknown): Promise<string | null> {
   return data?.full_name ?? String(userId)
 }
 
+// Fields member can update (camp-manager fields only)
+const MEMBER_ALLOWED_FIELDS = [
+  'affiliate_url', 'affiliate_username', 'affiliate_password',
+  'affiliate_network', 'statuses', 'camp_start_date', 'person_in_charge', 'note', 'ref_link',
+]
+
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id: project_id } = await params
   const caller = await getCallerProfile(req)
-  if (!caller || !['super_admin', 'manager'].includes(caller.role)) {
+  if (!caller || !['super_admin', 'manager', 'member'].includes(caller.role)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  if (caller.role === 'manager') {
+    const { data: existingProj } = await supabaseAdmin
+      .from('projects').select('team_id').eq('project_id', project_id).single()
+    if (existingProj?.team_id !== caller.team_id)
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  if (caller.role === 'member') {
+    const { data: proj } = await supabaseAdmin
+      .from('projects').select('team_id, person_in_charge').eq('project_id', project_id).single()
+    const { data: share } = await supabaseAdmin
+      .from('project_shares').select('id').eq('project_id', project_id).eq('user_id', caller.user_id).maybeSingle()
+    const hasAccess = (proj?.team_id && proj.team_id === caller.team_id) || !!share || proj?.person_in_charge === caller.user_id
+    if (!hasAccess)
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   const body = await req.json()
 
-  const allowed = [
-    'category_id', 'affiliate_url', 'affiliate_username', 'affiliate_password',
-    'affiliate_network', 'statuses', 'camp_start_date', 'person_in_charge', 'note',
-    'name', 'cid', 'mcc_id', 'ref_link', 'email_ref', 'bank_account_id',
-    'master_project_id', 'screen_revenue_type', 'team_id', 'google_campaign_id',
-  ]
+  const allowedFields = caller.role === 'member'
+    ? MEMBER_ALLOWED_FIELDS
+    : [
+        'category_id', 'affiliate_url', 'affiliate_username', 'affiliate_password',
+        'affiliate_network', 'statuses', 'camp_start_date', 'person_in_charge', 'note',
+        'name', 'cid', 'mcc_id', 'ref_link', 'email_ref', 'bank_account_id',
+        'master_project_id', 'screen_revenue_type', 'team_id', 'google_campaign_id',
+      ]
 
   const update: Record<string, unknown> = {}
-  for (const key of allowed) {
+  for (const key of allowedFields) {
     if (key in body) update[key] = body[key]
   }
 
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: 'Không có field nào để cập nhật' }, { status: 400 })
+  }
+
+  if ('statuses' in update) {
+    const VALID_STATUSES = Object.keys(STATUS_CONFIG)
+    if (!Array.isArray(update.statuses) || !update.statuses.every(s => VALID_STATUSES.includes(s as string)))
+      return NextResponse.json({ error: 'Invalid status value' }, { status: 400 })
   }
 
   // Fetch current values for history diff

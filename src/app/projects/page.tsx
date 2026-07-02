@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Plus, Pencil, Trash2, Search, Share2, Link2, Mail, Copy, Check,
   RefreshCw, Loader2, ArrowUp, ArrowDown, ArrowUpDown, Download,
-  Bell, Eye, EyeOff, LayoutGrid, List, FileText,
+  Bell, Eye, EyeOff, LayoutGrid, List, FileText, User,
 } from 'lucide-react'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
 import { useProjects } from '@/hooks/useProjects'
@@ -15,7 +15,7 @@ import StatusPicker from '@/components/project/StatusPicker'
 import CategorySelect from '@/components/project/CategorySelect'
 import ReminderModal from '@/components/project/ReminderModal'
 import ProjectDetailDrawer from '@/components/project/ProjectDetailDrawer'
-import UserSelect from '@/components/project/UserSelect'
+import UserSelect, { UserAvatar } from '@/components/project/UserSelect'
 import NetworkSelect from '@/components/project/NetworkSelect'
 import {
   Project, CampaignDiscovery, ProjectCategory, ProjectStatus, AffiliateNetwork,
@@ -28,6 +28,7 @@ import { exportToCsv, cn } from '@/lib/utils'
 import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { useMasterProjectsContext } from '@/context/MasterProjectsContext'
+import MasterProjectsTab from '@/components/project/MasterProjectsTab'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -59,12 +60,14 @@ function rowBg(statuses: ProjectStatus[] = []) {
 
 function ProjectsPageInner() {
   const { projects, isLoading, addProject, updateProject, patchProjectLocal, deleteProject, deleteProjects } = useProjects()
-  const { role } = useAuth()
+  const { role, user } = useAuth()
   const isAdminOrManager = role === 'super_admin' || role === 'manager'
+  const canCreateProject = isAdminOrManager || role === 'member'
   const canManageCategories = role === 'super_admin' || role === 'manager'
+  const canEditCampFields = isAdminOrManager || role === 'member'
   const router = useRouter()
   const searchParams = useSearchParams()
-  const tab = (searchParams.get('tab') ?? 'manage') as 'manage' | 'ads'
+  const tab = (searchParams.get('tab') ?? 'manage') as 'manage' | 'ads' | 'master'
   const { masterProjects } = useMasterProjectsContext()
 
   // ── categories ──
@@ -89,18 +92,21 @@ function ProjectsPageInner() {
   }, [])
 
   // ── dialogs & selections ──
-  const [dialog, setDialog] = useState<{ mode: 'add' | 'edit'; data?: Project } | null>(null)
+  const [dialog, setDialog] = useState<{ mode: 'add' | 'edit'; data?: Partial<Project> } | null>(null)
   const [reminderProject, setReminderProject] = useState<{ id: string; name: string } | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const headerCheckboxRef = useRef<HTMLInputElement>(null)
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false)
   const bulkStatusRef = useRef<HTMLDivElement>(null)
+  const [bulkPersonOpen, setBulkPersonOpen] = useState(false)
+  const bulkPersonRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
-  // Close bulk status dropdown on outside click
+  // Close bulk dropdowns on outside click
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
       if (bulkStatusRef.current && !bulkStatusRef.current.contains(e.target as Node)) setBulkStatusOpen(false)
+      if (bulkPersonRef.current && !bulkPersonRef.current.contains(e.target as Node)) setBulkPersonOpen(false)
     }
     document.addEventListener('mousedown', onClickOutside)
     return () => document.removeEventListener('mousedown', onClickOutside)
@@ -311,6 +317,29 @@ function ProjectsPageInner() {
     else toast.success(`Đã thêm trạng thái "${STATUS_CONFIG[status].label}" cho ${ids.length} dự án`)
   }
 
+  async function handleBulkSetPerson(userId: string | null) {
+    setBulkPersonOpen(false)
+    const ids = [...selectedIds].filter(id => filtered.some(p => p.project_id === id))
+    const results = await Promise.allSettled(
+      ids.map(async id => {
+        const project = projects.find(p => p.project_id === id)
+        if (!project) return
+        patchProjectLocal({ ...project, person_in_charge: userId ?? undefined })
+        await authFetch(`/api/projects/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ person_in_charge: userId }),
+        })
+      })
+    )
+    const failed = results.filter(r => r.status === 'rejected').length
+    if (failed > 0) toast.error(`${failed} dự án không thể cập nhật`)
+    else {
+      const name = userId ? (teamUsers.find(u => u.user_id === userId)?.full_name ?? userId) : 'Chưa giao'
+      toast.success(`Đã gán "${name}" cho ${ids.length} dự án`)
+    }
+  }
+
   // ── copy helpers ──
   function copyText(text: string, key: string, setter: (v: string | null) => void, clearClipboard = false) {
     navigator.clipboard.writeText(text)
@@ -427,6 +456,7 @@ function ProjectsPageInner() {
         'Note': p.note ?? '',
         'Link Ref': p.ref_link ?? '',
         'Project ID': p.project_id,
+        'Người thêm': teamUsers.find(u => u.user_id === p.created_by)?.full_name ?? '',
         'Ngày thêm': p.created_at ? new Date(p.created_at).toLocaleDateString('vi-VN') : '',
       })),
       `projects-${new Date().toISOString().slice(0, 10)}.csv`
@@ -448,7 +478,7 @@ function ProjectsPageInner() {
     setSyncingMcc(false)
   }
 
-  function setTab(t: 'manage' | 'ads') {
+  function setTab(t: 'manage' | 'ads' | 'master') {
     const params = new URLSearchParams(searchParams.toString())
     params.set('tab', t)
     router.push(`/projects?${params.toString()}`)
@@ -470,8 +500,8 @@ function ProjectsPageInner() {
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">
             <Download size={14} /> Export CSV
           </button>
-          {isAdminOrManager && (
-            <Button onClick={() => setDialog({ mode: 'add' })} className="gap-1.5">
+          {canCreateProject && (
+            <Button onClick={() => setDialog({ mode: 'add', data: role === 'member' ? { person_in_charge: user?.id ?? null } : undefined })} className="gap-1.5">
               <Plus size={14} /> Thêm dự án
             </Button>
           )}
@@ -480,7 +510,7 @@ function ProjectsPageInner() {
 
       {/* Tab switcher */}
       <div className="flex border-b border-slate-200">
-        {([['manage', '📁 Quản lý Dự Án'], ['ads', '📢 Ads Mapping']] as const).map(([key, label]) => (
+        {([['manage', '📁 Quản lý Dự Án'], ['ads', '📢 Ads Mapping'], ['master', '🏢 Tổng Dự Án']] as const).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
             className={cn(
               'px-4 py-2.5 text-sm font-medium border-b-2 transition-colors',
@@ -606,6 +636,28 @@ function ProjectsPageInner() {
                   </div>
                 )}
               </div>
+              {/* Bulk person in charge dropdown */}
+              <div ref={bulkPersonRef} className="relative">
+                <button onClick={() => setBulkPersonOpen(o => !o)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-md text-xs font-medium">
+                  <User size={12} /> Người phụ trách ▾
+                </button>
+                {bulkPersonOpen && (
+                  <div className="absolute bottom-full mb-1 right-0 w-48 bg-white border border-slate-200 rounded-lg shadow-xl py-1 z-50 max-h-56 overflow-y-auto">
+                    <button onClick={() => handleBulkSetPerson(null)}
+                      className="w-full text-left px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-50 italic">
+                      — Bỏ gán
+                    </button>
+                    {teamUsers.map(u => (
+                      <button key={u.user_id} onClick={() => handleBulkSetPerson(u.user_id)}
+                        className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+                        <UserAvatar userId={u.user_id} name={u.full_name} size="sm" />
+                        {u.full_name || u.email}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button onClick={() => handleExport(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-md text-xs font-medium">
                 <Download size={12} /> Export ({selectedCount})
@@ -708,7 +760,7 @@ function ProjectsPageInner() {
                           className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide cursor-pointer select-none hover:text-slate-700 whitespace-nowrap">
                           <span className="inline-flex items-center gap-1">Tên dự án {sortKey === 'name' ? (sortDir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />) : <ArrowUpDown size={11} className="text-slate-400" />}</span>
                         </th>
-                        {['Category', 'URL Affiliate', 'Username', 'Password', 'Link Ref', 'Affiliate Network', 'Tình trạng', 'Ngày lên camp', 'Người phụ trách', 'Note', '🔔', 'Ngày thêm'].map(h => (
+                        {['Category', 'URL Affiliate', 'Username', 'Password', 'Link Ref', 'Affiliate Network', 'Tình trạng', 'Ngày lên camp', 'Người phụ trách', 'Note', '🔔', 'Người thêm', 'Ngày thêm'].map(h => (
                           <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                         ))}
                         {isAdminOrManager && <th className="px-4 py-3" />}
@@ -757,7 +809,7 @@ function ProjectsPageInner() {
                             {/* URL Affiliate */}
                             <td className="px-4 py-3 max-w-[180px]">
                               <div className="relative">
-                                {isAdminOrManager && editingCell?.id === p.project_id && editingCell.field === 'affiliate_url' && (
+                                {canEditCampFields && editingCell?.id === p.project_id && editingCell.field === 'affiliate_url' && (
                                   <input autoFocus defaultValue={p.affiliate_url ?? ''}
                                     className="absolute inset-0 text-xs px-2 outline-none border-2 border-blue-400 rounded bg-white z-10"
                                     onBlur={e => { if (!e.relatedTarget) saveCell(p, 'affiliate_url', e.target.value) }}
@@ -780,8 +832,8 @@ function ProjectsPageInner() {
                                       {p.affiliate_url.replace(/^https?:\/\//, '').slice(0, 22)}{p.affiliate_url.length > 28 ? '…' : ''}
                                     </a>
                                   ) : (
-                                    <span onClick={() => isAdminOrManager && setEditingCell({ id: p.project_id, field: 'affiliate_url' })}
-                                      className={cn('text-slate-300 text-xs', isAdminOrManager && 'cursor-text hover:bg-slate-100 px-1 rounded')}>—</span>
+                                    <span onClick={() => canEditCampFields && setEditingCell({ id: p.project_id, field: 'affiliate_url' })}
+                                      className={cn('text-slate-300 text-xs', canEditCampFields && 'cursor-text hover:bg-slate-100 px-1 rounded')}>—</span>
                                   )}
                                   {p.affiliate_url && (
                                     <>
@@ -789,7 +841,7 @@ function ProjectsPageInner() {
                                         className="opacity-0 group-hover:opacity-100 shrink-0 p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700">
                                         {copied === `url-${p.project_id}` ? <Check size={11} className="text-green-500" /> : <Copy size={11} />}
                                       </button>
-                                      {isAdminOrManager && (
+                                      {canEditCampFields && (
                                         <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setEditingCell({ id: p.project_id, field: 'affiliate_url' }) }}
                                           className="opacity-0 group-hover:opacity-100 shrink-0 p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700">
                                           <Pencil size={10} />
@@ -803,7 +855,7 @@ function ProjectsPageInner() {
                             {/* Username */}
                             <td className="px-4 py-3 max-w-[120px]">
                               <div className="relative">
-                                {isAdminOrManager && editingCell?.id === p.project_id && editingCell.field === 'affiliate_username' && (
+                                {canEditCampFields && editingCell?.id === p.project_id && editingCell.field === 'affiliate_username' && (
                                   <input autoFocus defaultValue={p.affiliate_username ?? ''}
                                     className="absolute inset-0 text-xs px-2 outline-none border-2 border-blue-400 rounded bg-white z-10"
                                     onBlur={e => { if (!e.relatedTarget) saveCell(p, 'affiliate_username', e.target.value) }}
@@ -820,8 +872,8 @@ function ProjectsPageInner() {
                                 )}
                                 <div className="flex items-center gap-1 group">
                                   <span
-                                    onClick={() => isAdminOrManager && setEditingCell({ id: p.project_id, field: 'affiliate_username' })}
-                                    className={cn('text-xs text-slate-600 truncate', isAdminOrManager && 'cursor-text hover:bg-slate-100 px-1 rounded')}
+                                    onClick={() => canEditCampFields && setEditingCell({ id: p.project_id, field: 'affiliate_username' })}
+                                    className={cn('text-xs text-slate-600 truncate', canEditCampFields && 'cursor-text hover:bg-slate-100 px-1 rounded')}
                                   >
                                     {p.affiliate_username ?? <span className="text-slate-300">—</span>}
                                   </span>
@@ -837,7 +889,7 @@ function ProjectsPageInner() {
                             {/* Password */}
                             <td className="px-4 py-3">
                               <div className="relative">
-                                {isAdminOrManager && editingCell?.id === p.project_id && editingCell.field === 'affiliate_password' && (
+                                {canEditCampFields && editingCell?.id === p.project_id && editingCell.field === 'affiliate_password' && (
                                   <>
                                     <input autoFocus type={editPwVisible ? 'text' : 'password'}
                                       defaultValue={p.affiliate_password ?? ''}
@@ -869,8 +921,8 @@ function ProjectsPageInner() {
                                 )}
                                 {p.affiliate_password ? (
                                   <div className="flex items-center gap-1 group"
-                                    onClick={() => isAdminOrManager && setEditingCell({ id: p.project_id, field: 'affiliate_password' })}>
-                                    <span className={cn('text-xs text-slate-600 font-mono', isAdminOrManager && 'cursor-text')}>
+                                    onClick={() => canEditCampFields && setEditingCell({ id: p.project_id, field: 'affiliate_password' })}>
+                                    <span className={cn('text-xs text-slate-600 font-mono', canEditCampFields && 'cursor-text')}>
                                       {isRevealed ? p.affiliate_password : '••••••'}
                                     </span>
                                     <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setRevealedPasswords(prev => { const n = new Set(prev); n.has(p.project_id) ? n.delete(p.project_id) : n.add(p.project_id); return n }) }}
@@ -885,8 +937,8 @@ function ProjectsPageInner() {
                                   </div>
                                 ) : (
                                   <span
-                                    onClick={() => isAdminOrManager && setEditingCell({ id: p.project_id, field: 'affiliate_password' })}
-                                    className={cn('text-slate-300 text-xs', isAdminOrManager && 'cursor-text hover:bg-slate-100 px-1 rounded')}
+                                    onClick={() => canEditCampFields && setEditingCell({ id: p.project_id, field: 'affiliate_password' })}
+                                    className={cn('text-slate-300 text-xs', canEditCampFields && 'cursor-text hover:bg-slate-100 px-1 rounded')}
                                   >—</span>
                                 )}
                               </div>
@@ -894,7 +946,7 @@ function ProjectsPageInner() {
                             {/* Link Ref */}
                             <td className="px-4 py-3 max-w-[160px]">
                               <div className="relative">
-                                {isAdminOrManager && editingCell?.id === p.project_id && editingCell.field === 'ref_link' && (
+                                {canEditCampFields && editingCell?.id === p.project_id && editingCell.field === 'ref_link' && (
                                   <input autoFocus type="url" defaultValue={p.ref_link ?? ''}
                                     className="absolute inset-0 text-xs px-2 outline-none border-2 border-blue-400 rounded bg-white z-10"
                                     onBlur={e => { if (!e.relatedTarget) saveCell(p, 'ref_link', e.target.value) }}
@@ -906,9 +958,9 @@ function ProjectsPageInner() {
                                 )}
                                 {p.ref_link ? (
                                   <div className="flex items-center gap-1.5 group"
-                                    onClick={() => isAdminOrManager && setEditingCell({ id: p.project_id, field: 'ref_link' })}>
+                                    onClick={() => canEditCampFields && setEditingCell({ id: p.project_id, field: 'ref_link' })}>
                                     <Link2 size={11} className="text-slate-400 shrink-0" />
-                                    <span className={cn('text-xs text-slate-600 truncate', isAdminOrManager && 'cursor-text')} title={p.ref_link}>
+                                    <span className={cn('text-xs text-slate-600 truncate', canEditCampFields && 'cursor-text')} title={p.ref_link}>
                                       {p.ref_link.replace(/^https?:\/\//, '').slice(0, 22)}{p.ref_link.length > 28 ? '…' : ''}
                                     </span>
                                     <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); copyText(p.ref_link!, `ref1-${p.project_id}`, v => setCopied(v)) }}
@@ -918,8 +970,8 @@ function ProjectsPageInner() {
                                   </div>
                                 ) : (
                                   <span
-                                    onClick={() => isAdminOrManager && setEditingCell({ id: p.project_id, field: 'ref_link' })}
-                                    className={cn('text-slate-300 text-xs', isAdminOrManager && 'cursor-text hover:bg-slate-100 px-1 rounded')}
+                                    onClick={() => canEditCampFields && setEditingCell({ id: p.project_id, field: 'ref_link' })}
+                                    className={cn('text-slate-300 text-xs', canEditCampFields && 'cursor-text hover:bg-slate-100 px-1 rounded')}
                                   >—</span>
                                 )}
                               </div>
@@ -930,7 +982,7 @@ function ProjectsPageInner() {
                                 value={p.affiliate_network ?? null}
                                 networks={affiliateNetworks}
                                 canManage={isAdminOrManager}
-                                disabled={!isAdminOrManager}
+                                disabled={!canEditCampFields}
                                 onChange={async name => {
                                   const prev = p.affiliate_network
                                   patchProjectLocal({ ...p, affiliate_network: name })
@@ -951,14 +1003,14 @@ function ProjectsPageInner() {
                             <td className="px-4 py-3">
                               <StatusPicker
                                 value={p.statuses ?? []}
-                                onChange={isAdminOrManager ? s => handleStatusChange(p, s) : () => {}}
-                                inline={isAdminOrManager}
-                                compact={!isAdminOrManager}
+                                onChange={canEditCampFields ? s => handleStatusChange(p, s) : () => {}}
+                                inline={canEditCampFields}
+                                compact={!canEditCampFields}
                               />
                             </td>
                             {/* Ngày lên camp */}
                             <td className="px-4 py-3">
-                              {isAdminOrManager ? (
+                              {canEditCampFields ? (
                                 <input type="date" value={p.camp_start_date ?? ''}
                                   onChange={async e => {
                                     const d = e.target.value || null
@@ -982,7 +1034,7 @@ function ProjectsPageInner() {
                               <UserSelect
                                 value={p.person_in_charge ?? null}
                                 users={teamUsers}
-                                disabled={!isAdminOrManager || teamUsers.length === 0}
+                                disabled={!canEditCampFields || teamUsers.length === 0}
                                 onChange={async id => {
                                   const prev = p.person_in_charge
                                   patchProjectLocal({ ...p, person_in_charge: id })
@@ -998,9 +1050,9 @@ function ProjectsPageInner() {
                             {/* Note */}
                             <td className="px-4 py-3 max-w-[160px]">
                               <div
-                                onClick={e => isAdminOrManager && openNotePopover(p, e.currentTarget as HTMLElement)}
+                                onClick={e => canEditCampFields && openNotePopover(p, e.currentTarget as HTMLElement)}
                                 className={cn('flex items-center gap-1 text-xs text-slate-600 min-h-[20px] truncate',
-                                  isAdminOrManager && 'cursor-text hover:bg-slate-100 px-1 rounded')}
+                                  canEditCampFields && 'cursor-text hover:bg-slate-100 px-1 rounded')}
                                 title={p.note ?? undefined}
                               >
                                 {p.note
@@ -1018,6 +1070,18 @@ function ProjectsPageInner() {
                                 title="Nhắc nhở">
                                 <Bell size={14} />
                               </button>
+                            </td>
+                            {/* Người thêm */}
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {(() => {
+                                const u = teamUsers.find(u => u.user_id === p.created_by)
+                                return u
+                                  ? <div className="flex items-center gap-1.5">
+                                      <UserAvatar userId={u.user_id} name={u.full_name} size="sm" />
+                                      <span className="text-xs text-slate-600">{u.full_name}</span>
+                                    </div>
+                                  : <span className="text-slate-300">—</span>
+                              })()}
                             </td>
                             {/* Ngày thêm */}
                             <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">
@@ -1114,7 +1178,7 @@ function ProjectsPageInner() {
                           <td className="px-4 py-3 font-medium text-slate-800 whitespace-nowrap">{p.name}</td>
                           {/* Tình trạng */}
                           <td className="px-4 py-3">
-                            <StatusPicker value={(p.statuses ?? []).filter(s => ACTIVE_STATUSES.includes(s))} onChange={() => {}} compact />
+                            <StatusPicker value={p.statuses ?? []} onChange={() => {}} compact />
                           </td>
                           <td className="px-4 py-3 font-mono text-xs text-slate-400">{fmtCustomerId(campaignInfoMap.get(p.project_id)?.customer_id ?? p.cid)}</td>
                           <td className="px-4 py-3 font-mono text-xs text-slate-400">{campaignInfoMap.get(p.project_id)?.campaign_id ?? <span className="text-slate-300">—</span>}</td>
@@ -1236,6 +1300,9 @@ function ProjectsPageInner() {
           )}
         </>
       )}
+
+      {/* ═══ TAB 3: TỔNG DỰ ÁN ════════════════════════════════════════ */}
+      {tab === 'master' && <MasterProjectsTab />}
 
       {/* ─── Project Detail Drawer ─────────────────────────────────────── */}
       <ProjectDetailDrawer

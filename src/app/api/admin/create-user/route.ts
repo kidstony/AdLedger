@@ -10,6 +10,9 @@ export async function POST(req: Request) {
 
   const { email, password, full_name, role: requestedRole, team_id: requestedTeamId, project_ids, organization_id: requestedOrgId } = await req.json()
 
+  if (!password || password.length < 8)
+    return NextResponse.json({ error: 'Mật khẩu tối thiểu 8 ký tự' }, { status: 400 })
+
   let role = requestedRole
   let team_id = requestedTeamId
   let organization_id: string | null = null

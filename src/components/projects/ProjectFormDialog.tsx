@@ -46,7 +46,7 @@ const ALL_STATUSES = Object.keys(STATUS_CONFIG) as ProjectStatus[]
 
 interface Props {
   mode: 'add' | 'edit'
-  initialData?: Project
+  initialData?: Partial<Project>
   existingIds: string[]
   masterProjects: MasterProject[]
   teamUsers?: { user_id: string; full_name: string; email: string }[]
@@ -61,9 +61,17 @@ function nextProjectId(existingIds: string[]): string {
 }
 
 export default function ProjectFormDialog({ mode, initialData, existingIds, masterProjects, teamUsers = [], onSave, onClose }: Props) {
-  const [form, setForm] = useState<Project>(
-    initialData ?? { project_id: nextProjectId(existingIds), cid: '0000000000', name: '', mcc_id: 'uncategorized', master_project_id: null }
-  )
+  const [form, setForm] = useState<Project>({
+    project_id: nextProjectId(existingIds), cid: '0000000000', name: '', mcc_id: 'uncategorized', master_project_id: null,
+    ...(initialData ?? {}),
+  } as Project)
+
+  useEffect(() => {
+    if (mode !== 'add') return
+    authFetch('/api/projects/next-id').then(r => r.json()).then(d => {
+      if (d.project_id) setForm(f => ({ ...f, project_id: d.project_id }))
+    }).catch(() => {})
+  }, [])
   const [errors, setErrors] = useState<Partial<Record<keyof Project, string>>>({})
   const [saveError, setSaveError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -89,7 +97,7 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
   async function handleCreateMaster() {
     if (!newMasterName.trim()) return
     setCreatingMaster(true)
-    const res = await fetch('/api/master-projects', {
+    const res = await authFetch('/api/master-projects', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newMasterName.trim() }),
     }).catch(() => null)
@@ -110,14 +118,14 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
   const selectedAccount = accounts.find(a => a.id === form.bank_account_id)
 
   useEffect(() => {
-    fetch('/api/banks').then(r => r.json()).then(d => { if (Array.isArray(d)) setBanks(d) }).catch(() => {})
+    authFetch('/api/banks').then(r => r.json()).then(d => { if (Array.isArray(d)) setBanks(d) }).catch(() => {})
   }, [])
   useEffect(() => { if (selectedBankId) loadAccounts(selectedBankId) }, [selectedBankId])
 
   async function loadAccounts(bankId: string) {
     setLoadingAccounts(true)
     try {
-      const res = await fetch(`/api/bank-accounts?bank_id=${bankId}`)
+      const res = await authFetch(`/api/bank-accounts?bank_id=${bankId}`)
       const data = await res.json()
       if (Array.isArray(data)) setAccounts(data)
     } finally { setLoadingAccounts(false) }
@@ -223,6 +231,43 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
             </div>
           </div>
 
+          {/* Tổng Dự Án — luôn hiển thị */}
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-slate-600">Tổng Dự Án</label>
+            <div className="flex gap-1">
+              <select value={form.master_project_id ?? ''}
+                onChange={e => setForm(f => ({ ...f, master_project_id: e.target.value || null }))}
+                className="flex-1 border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300">
+                <option value="">— Chưa phân nhóm —</option>
+                {allMasterProjects.map(mp => <option key={mp.id} value={mp.id}>{mp.name}</option>)}
+              </select>
+              {!showCreateMaster && (
+                <button type="button" onClick={() => setShowCreateMaster(true)}
+                  className="p-2 text-slate-400 hover:text-slate-600 border border-slate-200 rounded-md hover:bg-slate-50">
+                  <Plus size={13} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Inline master project creation */}
+          {showCreateMaster && (
+            <div className="flex items-center gap-1.5">
+              <input autoFocus value={newMasterName} onChange={e => setNewMasterName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCreateMaster() } if (e.key === 'Escape') { setShowCreateMaster(false); setNewMasterName('') } }}
+                placeholder="Tên nhóm mới..."
+                className="flex-1 border border-slate-200 rounded-md px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-slate-300" />
+              <button type="button" onClick={handleCreateMaster} disabled={creatingMaster || !newMasterName.trim()}
+                className="p-1.5 rounded-md bg-slate-800 text-white hover:bg-slate-700 disabled:opacity-50">
+                {creatingMaster ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+              </button>
+              <button type="button" onClick={() => { setShowCreateMaster(false); setNewMasterName('') }}
+                className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-slate-600">
+                <X size={13} />
+              </button>
+            </div>
+          )}
+
           {/* ── Toggle chi tiết (chỉ hiện ở add mode) ── */}
           {mode === 'add' && (
             <button type="button"
@@ -235,50 +280,13 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
 
           {showDetails && (
             <>
-              {/* Ngày lên camp + Tổng Dự Án */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-600">Ngày lên camp</label>
-                  <input type="date" value={form.camp_start_date ?? ''}
-                    onChange={e => setForm(f => ({ ...f, camp_start_date: e.target.value || null }))}
-                    className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-600">Tổng Dự Án</label>
-                  <div className="flex gap-1">
-                    <select value={form.master_project_id ?? ''}
-                      onChange={e => setForm(f => ({ ...f, master_project_id: e.target.value || null }))}
-                      className="flex-1 border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300">
-                      <option value="">— Chưa phân nhóm —</option>
-                      {allMasterProjects.map(mp => <option key={mp.id} value={mp.id}>{mp.name}</option>)}
-                    </select>
-                    {!showCreateMaster && (
-                      <button type="button" onClick={() => setShowCreateMaster(true)}
-                        className="p-2 text-slate-400 hover:text-slate-600 border border-slate-200 rounded-md hover:bg-slate-50">
-                        <Plus size={13} />
-                      </button>
-                    )}
-                  </div>
-                </div>
+              {/* Ngày lên camp */}
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-600">Ngày lên camp</label>
+                <input type="date" value={form.camp_start_date ?? ''}
+                  onChange={e => setForm(f => ({ ...f, camp_start_date: e.target.value || null }))}
+                  className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300" />
               </div>
-
-              {/* Inline master project creation */}
-              {showCreateMaster && (
-                <div className="flex items-center gap-1.5">
-                  <input autoFocus value={newMasterName} onChange={e => setNewMasterName(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCreateMaster() } if (e.key === 'Escape') { setShowCreateMaster(false); setNewMasterName('') } }}
-                    placeholder="Tên nhóm mới..."
-                    className="flex-1 border border-slate-200 rounded-md px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-slate-300" />
-                  <button type="button" onClick={handleCreateMaster} disabled={creatingMaster || !newMasterName.trim()}
-                    className="p-1.5 rounded-md bg-slate-800 text-white hover:bg-slate-700 disabled:opacity-50">
-                    {creatingMaster ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                  </button>
-                  <button type="button" onClick={() => { setShowCreateMaster(false); setNewMasterName('') }}
-                    className="p-1.5 rounded-md border border-slate-200 text-slate-400 hover:text-slate-600">
-                    <X size={13} />
-                  </button>
-                </div>
-              )}
 
               {/* Người phụ trách */}
               {teamUsers.length > 0 && (

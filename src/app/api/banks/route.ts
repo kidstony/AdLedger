@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getCallerProfile } from '@/lib/require-role'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const caller = await getCallerProfile(req)
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { data, error } = await supabaseAdmin
     .from('banks')
     .select('*, bank_accounts(count)')
@@ -12,6 +16,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const caller = await getCallerProfile(req)
+  if (!caller || caller.role !== 'super_admin')
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
   const { name, type, bank_category } = await req.json()
   if (!name || !bank_category) return NextResponse.json({ error: 'name and bank_category required' }, { status: 400 })
 
@@ -26,6 +34,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const caller = await getCallerProfile(req)
+  if (!caller || caller.role !== 'super_admin')
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
   const { id, name, type, bank_category } = await req.json()
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
@@ -41,10 +53,13 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const caller = await getCallerProfile(req)
+  if (!caller || caller.role !== 'super_admin')
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
   const id = new URL(req.url).searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
-  // Check if bank has accounts
   const { count } = await supabaseAdmin
     .from('bank_accounts')
     .select('*', { count: 'exact', head: true })
