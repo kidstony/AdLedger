@@ -209,6 +209,31 @@ export function usePnlData() {
         }
       })
 
+      // Include projects that have revenue/costs but no ad spend in this date range
+      const projectById = new Map(projects.map(p => [p.project_id, p]))
+      for (const pid of new Set([
+        ...revenueByProject.keys(),
+        ...screenByProject.keys(),
+        ...rentalByProject.keys(),
+        ...otherByProject.keys(),
+      ])) {
+        if (map.has(pid)) continue
+        const project = projectById.get(pid)
+        if (!project) continue
+        const campaignInfo = campaignInfoByProjectId.get(pid)
+        map.set(pid, {
+          project_id: pid,
+          cid:        campaignInfo?.customer_id ?? project.cid ?? null,
+          name:       project.name,
+          mcc_id:     campaignInfo?.mcc_id ?? project.mcc_id ?? null,
+          total_spend: 0, total_rental: 0, total_other: 0,
+          total_revenue: 0, total_profit: 0, avg_roi: 0,
+          total_screen_revenue: 0, total_pending: 0,
+          share_access_level:    project.share_access_level ?? null,
+          effective_permissions: project.effective_permissions ?? null,
+        })
+      }
+
       // Apply revenue, rental, other costs, then compute profit/ROI
       map.forEach(s => {
         s.total_revenue        = revenueByProject.get(s.project_id) ?? 0
