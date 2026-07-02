@@ -44,6 +44,7 @@ export function usePnlData() {
   const [otherCosts, setOtherCosts] = useState<OtherCost[]>([])
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null)
   const [campaignInfoByProjectId, setCampaignInfoByProjectId] = useState<Map<string, CampaignInfo>>(new Map())
+  const [prevCumulativeMap, setPrevCumulativeMap] = useState<Map<string, number>>(new Map())
 
   // Map google_campaign_id → project
   const projectByCampaignId = useMemo(
@@ -84,6 +85,25 @@ export function usePnlData() {
       .gte('date', from)
       .lte('date', to)
     setRevenueRows((data ?? []) as RevenueRow[])
+
+    // For cumulative projects: fetch the last pending value before `from` to compute delta
+    const cumulativePids = projects
+      .filter(p => p.screen_revenue_type === 'cumulative')
+      .map(p => p.project_id)
+    if (cumulativePids.length > 0) {
+      const { data: prevData } = await supabase
+        .from('affiliate_revenue')
+        .select('project_id, amount')
+        .in('project_id', cumulativePids)
+        .eq('type', 'pending')
+        .lt('date', from)
+        .order('date', { ascending: false })
+      const prevMap = new Map<string, number>()
+      prevData?.forEach(r => { if (!prevMap.has(r.project_id)) prevMap.set(r.project_id, r.amount) })
+      setPrevCumulativeMap(prevMap)
+    } else {
+      setPrevCumulativeMap(new Map())
+    }
   }
 
   async function authFetch(url: string) {
@@ -171,14 +191,32 @@ export function usePnlData() {
 
     if (dataSource === 'real' && adSpendRows && adSpendRows.length > 0) {
       // Aggregate revenue from affiliate_revenue by project_id
+      const cumulativePidSet = new Set(
+        projects.filter(p => p.screen_revenue_type === 'cumulative').map(p => p.project_id)
+      )
       const revenueByProject = new Map<string, number>()
-      const screenByProject = new Map<string, number>()
+      const screenByProject  = new Map<string, number>()
+      const latestPendingCumulative = new Map<string, { amount: number; date: string }>()
+
       revenueRows.forEach(r => {
         if (r.type === 'confirmed') {
           revenueByProject.set(r.project_id, (revenueByProject.get(r.project_id) ?? 0) + r.amount)
+        } else if (cumulativePidSet.has(r.project_id)) {
+          // Pending cumulative entries store the running total, not per-day earnings.
+          // Track only the latest value in the date range; delta is computed below.
+          const existing = latestPendingCumulative.get(r.project_id)
+          if (!existing || r.date > existing.date) {
+            latestPendingCumulative.set(r.project_id, { amount: r.amount, date: r.date })
+          }
         } else {
           screenByProject.set(r.project_id, (screenByProject.get(r.project_id) ?? 0) + r.amount)
         }
+      })
+      // Convert latest cumulative value to delta: earned = latest_in_range - last_before_range
+      latestPendingCumulative.forEach(({ amount }, pid) => {
+        const prev  = prevCumulativeMap.get(pid) ?? 0
+        const delta = Math.max(0, amount - prev)
+        screenByProject.set(pid, (screenByProject.get(pid) ?? 0) + delta)
       })
 
       const map = new Map<string, PnlSummary>()
@@ -262,7 +300,7 @@ export function usePnlData() {
       s.effective_permissions = p?.effective_permissions ?? null
     })
     return summaries
-  }, [dataSource, adSpendRows, revenueRows, rentalGroups, otherCosts, projectByCampaignId, projectByCid, projectNameMap, activeProjectIds, dateRange, campaignInfoByProjectId])
+  }, [dataSource, adSpendRows, revenueRows, rentalGroups, otherCosts, projectByCampaignId, projectByCid, projectNameMap, activeProjectIds, dateRange, campaignInfoByProjectId, prevCumulativeMap, projects])
 
   const filterProjectData = useMemo<FilterProject[]>(() =>
     allSummaries.map(s => ({
