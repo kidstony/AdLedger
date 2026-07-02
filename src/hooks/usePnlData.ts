@@ -64,6 +64,10 @@ export function usePnlData() {
     () => new Set(projects.map(p => p.project_id)),
     [projects]
   )
+  const cumulativePids = useMemo(
+    () => projects.filter(p => p.screen_revenue_type === 'cumulative').map(p => p.project_id),
+    [projects]
+  )
 
   async function fetchAdSpend(range: DateRange) {
     const from = range.from.toISOString().split('T')[0]
@@ -85,25 +89,6 @@ export function usePnlData() {
       .gte('date', from)
       .lte('date', to)
     setRevenueRows((data ?? []) as RevenueRow[])
-
-    // For cumulative projects: fetch the last pending value before `from` to compute delta
-    const cumulativePids = projects
-      .filter(p => p.screen_revenue_type === 'cumulative')
-      .map(p => p.project_id)
-    if (cumulativePids.length > 0) {
-      const { data: prevData } = await supabase
-        .from('affiliate_revenue')
-        .select('project_id, amount')
-        .in('project_id', cumulativePids)
-        .eq('type', 'pending')
-        .lt('date', from)
-        .order('date', { ascending: false })
-      const prevMap = new Map<string, number>()
-      prevData?.forEach(r => { if (!prevMap.has(r.project_id)) prevMap.set(r.project_id, r.amount) })
-      setPrevCumulativeMap(prevMap)
-    } else {
-      setPrevCumulativeMap(new Map())
-    }
   }
 
   async function authFetch(url: string) {
@@ -153,6 +138,28 @@ export function usePnlData() {
     fetchCosts(dateRange)
     fetchLastSync()
   }, [dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch baseline cumulative value before date range — depends on both dateRange AND projects
+  // (separate effect so it re-runs when projects load after initial render)
+  useEffect(() => {
+    const from = dateRange.from.toISOString().split('T')[0]
+    if (cumulativePids.length === 0) {
+      setPrevCumulativeMap(new Map())
+      return
+    }
+    supabase
+      .from('affiliate_revenue')
+      .select('project_id, amount')
+      .in('project_id', cumulativePids)
+      .eq('type', 'pending')
+      .lt('date', from)
+      .order('date', { ascending: false })
+      .then(({ data }) => {
+        const prevMap = new Map<string, number>()
+        data?.forEach(r => { if (!prevMap.has(r.project_id)) prevMap.set(r.project_id, r.amount) })
+        setPrevCumulativeMap(prevMap)
+      })
+  }, [dateRange, cumulativePids]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const dataSource: 'real' | 'mock' = (adSpendRows && adSpendRows.length > 0) ? 'real' : 'mock'
 
