@@ -14,6 +14,7 @@ import ProjectFilterDropdown, { type FilterProject } from '@/components/revenue/
 import RevenueSummaryCards from '@/components/revenue/RevenueSummaryCards'
 import { cn, formatVND } from '@/lib/utils'
 import DateRangePicker from '@/components/ui/DateRangePicker'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 
 // ── date helpers ────────────────────────────────────────────────────────────
 function fmtShort(d: string) { return new Date(d + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) }
@@ -712,7 +713,12 @@ export default function RevenuePage() {
                             }
                           </div>
                         )}
-                        <span className="font-medium text-slate-700 text-xs truncate flex-1">{project.name}</span>
+                        <Tooltip>
+                          <TooltipTrigger className="font-medium text-slate-700 text-xs truncate flex-1 text-left">
+                            {project.name}
+                          </TooltipTrigger>
+                          <TooltipContent side="right">{project.name}</TooltipContent>
+                        </Tooltip>
                         {activeTab === 'screen' && !isReadOnly && (
                           <button
                             onClick={() => updateProject({ ...project, screen_revenue_type: isCumulative ? 'daily' : 'cumulative' })}
