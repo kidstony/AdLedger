@@ -713,12 +713,17 @@ export default function RevenuePage() {
                             }
                           </div>
                         )}
-                        <Tooltip>
-                          <TooltipTrigger className="font-medium text-slate-700 text-xs truncate flex-1 text-left">
-                            {project.name}
-                          </TooltipTrigger>
-                          <TooltipContent side="right">{project.name}</TooltipContent>
-                        </Tooltip>
+                        <div className="flex flex-col min-w-0 flex-1">
+                          <Tooltip>
+                            <TooltipTrigger className="font-medium text-slate-700 text-xs truncate text-left leading-tight">
+                              {project.name}
+                            </TooltipTrigger>
+                            <TooltipContent side="right">{project.name}</TooltipContent>
+                          </Tooltip>
+                          {project.email_ref && (
+                            <span className="text-[10px] text-slate-400 truncate leading-tight">{project.email_ref}</span>
+                          )}
+                        </div>
                         {activeTab === 'screen' && !isReadOnly && (
                           <button
                             onClick={() => updateProject({ ...project, screen_revenue_type: isCumulative ? 'daily' : 'cumulative' })}
