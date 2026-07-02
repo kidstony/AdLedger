@@ -720,8 +720,8 @@ export default function RevenuePage() {
                             </TooltipTrigger>
                             <TooltipContent side="right">{project.name}</TooltipContent>
                           </Tooltip>
-                          {project.email_ref && (
-                            <span className="text-[10px] text-slate-400 truncate leading-tight">{project.email_ref}</span>
+                          {project.affiliate_username && (
+                            <span className="text-[10px] text-slate-400 truncate leading-tight">{project.affiliate_username}</span>
                           )}
                         </div>
                         {activeTab === 'screen' && !isReadOnly && (
