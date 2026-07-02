@@ -771,8 +771,8 @@ export default function RevenuePage() {
                                 onNavigate={dir => navigate(pi, di, dir)}
                                 onFocus={() => { focusedCellRef.current = { pi, di } }}
                                 onPaste={handlePaste}
-                                displayValue={hasDelta ? cumulative : undefined}
-                                valueSubtitle={hasDelta && delta !== 0 ? `${delta > 0 ? '+' : ''}${formatVND(delta)} hôm nay` : undefined}
+                                displayValue={hasDelta && delta !== 0 ? delta : undefined}
+                                valueSubtitle={hasDelta && delta !== 0 ? `${formatVND(cumulative)} cộng dồn` : undefined}
                                 valueColorClass={delta < 0 ? 'text-red-600' : 'text-slate-700'}
                                 hasNote={hasNote}
                                 onNoteClick={() => setNoteModal({ projectId: project.project_id, date, current: noteMap.get(key) ?? '' })}
