@@ -301,12 +301,8 @@ export default function RevenuePage() {
         const isConfirmed = statusMap.get(key) === 'confirmed'
         let amount = 0
         if (p.screen_revenue_type === 'cumulative' && viewMode !== 'all') {
-          const currRaw = screenGrid.get(key)
-          if (currRaw === undefined) return
-          const prevDate = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
-          const prevKey  = `${p.project_id}__${prevDate}`
-          const prev     = di === 0 ? (prevScreenMap.get(prevKey) ?? 0) : (screenGrid.get(prevKey) ?? 0)
-          amount = currRaw - prev
+          if (screenGrid.get(key) === undefined) return
+          amount = getCumulativeDelta(p.project_id, d, di).delta
         } else {
           amount = screenGrid.get(key) ?? 0
         }
@@ -382,12 +378,8 @@ export default function RevenuePage() {
         // In all-time view, gridData already contains correct monthly deltas for cumulative projects
         // so we just sum gridData directly. Daily delta logic only applies to day/week/month views.
         if (viewMode !== 'all' && activeTab === 'screen' && p.screen_revenue_type === 'cumulative') {
-          const currRaw = screenGrid.get(key)
-          if (currRaw === undefined) return sum
-          const prevDate = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
-          const prevKey  = `${p.project_id}__${prevDate}`
-          const prev     = di === 0 ? (prevScreenMap.get(prevKey) ?? 0) : (screenGrid.get(prevKey) ?? 0)
-          return sum + (currRaw - prev)
+          if (screenGrid.get(key) === undefined) return sum
+          return sum + getCumulativeDelta(p.project_id, date, di).delta
         }
         return sum + (gridData.get(key) ?? 0)
       }, 0)
