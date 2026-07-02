@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCallerProfile } from '@/lib/require-role'
 import { STATUS_CONFIG } from '@/lib/types'
+import { encrypt } from '@/lib/crypto'
 
 // Human-readable labels for history log
 const FIELD_LABELS: Record<string, string> = {
@@ -88,6 +89,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const update: Record<string, unknown> = {}
   for (const key of allowedFields) {
     if (key in body) update[key] = body[key]
+  }
+
+  // Encrypt affiliate_password before storing; empty string = keep existing (don't overwrite)
+  if ('affiliate_password' in update) {
+    if (update.affiliate_password && typeof update.affiliate_password === 'string') {
+      update.affiliate_password = encrypt(update.affiliate_password)
+    } else if (update.affiliate_password === '') {
+      delete update.affiliate_password
+    }
   }
 
   if (Object.keys(update).length === 0) {

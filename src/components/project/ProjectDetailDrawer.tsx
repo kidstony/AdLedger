@@ -68,6 +68,7 @@ export default function ProjectDetailDrawer({
   const [pnlFrom, setPnlFrom] = useState('')
   const [pnlTo, setPnlTo] = useState(new Date().toISOString().split('T')[0])
   const [showPassword, setShowPassword] = useState(false)
+  const [decryptedPassword, setDecryptedPassword] = useState<string | null>(null)
   const [editingNote, setEditingNote] = useState(false)
   const [noteValue, setNoteValue] = useState('')
   const [savingNote, setSavingNote] = useState(false)
@@ -79,11 +80,24 @@ export default function ProjectDetailDrawer({
   const canEdit = role === 'super_admin' || role === 'manager'
   const { masterProjects } = useMasterProjectsContext()
 
+  async function handleRevealPassword() {
+    if (showPassword) { setShowPassword(false); return }
+    if (!decryptedPassword && project?.affiliate_password) {
+      const res = await authFetch(`/api/projects/${project.project_id}/password`)
+      if (res.ok) {
+        const { password } = await res.json()
+        setDecryptedPassword(password ?? null)
+      }
+    }
+    setShowPassword(true)
+  }
+
   // Reset on new project
   useEffect(() => {
     if (!project) return
     setTab('info')
     setShowPassword(false)
+    setDecryptedPassword(null)
     setEditingNote(false)
     setNoteValue(project.note ?? '')
     setHistory([])
@@ -353,12 +367,12 @@ export default function ProjectDetailDrawer({
                   {project.affiliate_password && (
                     <InfoRow label="Password">
                       <span className="font-mono text-sm">
-                        {showPassword ? project.affiliate_password : '•'.repeat(Math.min(project.affiliate_password.length, 12))}
+                        {showPassword ? (decryptedPassword ?? '••••••••••••') : '••••••••••••'}
                       </span>
-                      <button onClick={() => setShowPassword(v => !v)} className="ml-1 text-slate-400 hover:text-slate-600">
+                      <button onClick={handleRevealPassword} className="ml-1 text-slate-400 hover:text-slate-600">
                         {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
                       </button>
-                      {showPassword && <CopyButton value={project.affiliate_password} />}
+                      {showPassword && decryptedPassword && <CopyButton value={decryptedPassword} />}
                     </InfoRow>
                   )}
                 </div>

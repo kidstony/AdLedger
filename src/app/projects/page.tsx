@@ -145,6 +145,7 @@ function ProjectsPageInner() {
   const [copiedEmail, setCopiedEmail] = useState<string | null>(null)
   const [copiedWallet, setCopiedWallet] = useState<string | null>(null)
   const [revealedPasswords, setRevealedPasswords] = useState<Set<string>>(new Set())
+  const [decryptedPasswords, setDecryptedPasswords] = useState<Map<string, string>>(new Map())
   const [copiedPassword, setCopiedPassword] = useState<string | null>(null)
 
   // ── campaign / share data (Tab 2) ──
@@ -379,9 +380,43 @@ function ProjectsPageInner() {
   type EditableField = typeof CELL_ORDER[number]
   const [editPwVisible, setEditPwVisible] = useState(false)
 
+  async function fetchDecryptedPassword(projectId: string): Promise<string | null> {
+    const res = await authFetch(`/api/projects/${projectId}/password`)
+    if (!res.ok) return null
+    const { password } = await res.json()
+    if (password) setDecryptedPasswords(prev => new Map(prev).set(projectId, password))
+    return password
+  }
+
+  async function handleRevealPassword(projectId: string) {
+    if (revealedPasswords.has(projectId)) {
+      setRevealedPasswords(prev => { const n = new Set(prev); n.delete(projectId); return n })
+      return
+    }
+    if (!decryptedPasswords.has(projectId)) {
+      await fetchDecryptedPassword(projectId)
+    }
+    setRevealedPasswords(prev => new Set(prev).add(projectId))
+  }
+
+  async function handleCopyPassword(projectId: string) {
+    let pw = decryptedPasswords.get(projectId)
+    if (!pw) pw = await fetchDecryptedPassword(projectId) ?? undefined
+    if (pw) copyText(pw, `pw-${projectId}`, v => setCopiedPassword(v), true)
+  }
+
   async function saveCell(project: Project, field: string, value: string, nextField?: EditableField) {
+    // Empty affiliate_password = "keep existing", not "clear" — API handles this too
+    if (field === 'affiliate_password' && !value) {
+      setEditingCell(nextField ? { id: project.project_id, field: nextField } : null)
+      return
+    }
     const prev = { ...project }
     patchProjectLocal({ ...project, [field]: value || null })
+    // After saving a new password, cache the plaintext for reveal
+    if (field === 'affiliate_password' && value) {
+      setDecryptedPasswords(m => new Map(m).set(project.project_id, value))
+    }
     const res = await authFetch(`/api/projects/${project.project_id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -892,7 +927,8 @@ function ProjectsPageInner() {
                                 {canEditCampFields && editingCell?.id === p.project_id && editingCell.field === 'affiliate_password' && (
                                   <>
                                     <input autoFocus type={editPwVisible ? 'text' : 'password'}
-                                      defaultValue={p.affiliate_password ?? ''}
+                                      defaultValue=""
+                                      placeholder={p.affiliate_password ? '••••••' : ''}
                                       className="absolute inset-0 text-xs px-2 pr-7 outline-none border-2 border-blue-400 rounded bg-white z-10 font-mono"
                                       onBlur={e => {
                                         if (!e.relatedTarget) {
@@ -923,13 +959,13 @@ function ProjectsPageInner() {
                                   <div className="flex items-center gap-1 group"
                                     onClick={() => canEditCampFields && setEditingCell({ id: p.project_id, field: 'affiliate_password' })}>
                                     <span className={cn('text-xs text-slate-600 font-mono', canEditCampFields && 'cursor-text')}>
-                                      {isRevealed ? p.affiliate_password : '••••••'}
+                                      {isRevealed ? (decryptedPasswords.get(p.project_id) ?? '••••••') : '••••••'}
                                     </span>
-                                    <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setRevealedPasswords(prev => { const n = new Set(prev); n.has(p.project_id) ? n.delete(p.project_id) : n.add(p.project_id); return n }) }}
+                                    <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); handleRevealPassword(p.project_id) }}
                                       className="p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 shrink-0">
                                       {isRevealed ? <EyeOff size={11} /> : <Eye size={11} />}
                                     </button>
-                                    <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); copyText(p.affiliate_password!, `pw-${p.project_id}`, v => setCopiedPassword(v), true) }}
+                                    <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); handleCopyPassword(p.project_id) }}
                                       className="opacity-0 group-hover:opacity-100 shrink-0 p-0.5 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700"
                                       title="Copy (tự xóa sau 30s)">
                                       {copiedPassword === `pw-${p.project_id}` ? <Check size={11} className="text-green-500" /> : <Copy size={11} />}
