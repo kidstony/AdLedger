@@ -40,6 +40,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Some reverts failed', failed: failed.length }, { status: 500 })
   }
 
-  console.log(`[revert-batch] Deleted ${items.length} confirmed rows:`, items)
   return NextResponse.json({ success: true, count: items.length })
 }

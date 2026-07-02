@@ -2,6 +2,26 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCallerProfile } from '@/lib/require-role'
 
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const caller = await getCallerProfile(req)
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  if (caller.role === 'member') {
+    const { data } = await supabaseAdmin.from('master_projects').select('created_by').eq('id', id).single()
+    if (!data || data.created_by !== caller.user_id)
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  } else if (caller.role !== 'super_admin' && caller.role !== 'manager') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  // Unlink any projects pointing to this master_project before deleting
+  await supabaseAdmin.from('projects').update({ master_project_id: null }).eq('master_project_id', id)
+  const { error } = await supabaseAdmin.from('master_projects').delete().eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const caller = await getCallerProfile(req)

@@ -5,6 +5,7 @@ import { getCallerProfile, getOrgTeamIds } from '@/lib/require-role'
 // GET — list all discovered campaigns with current project mapping
 export async function GET(req: NextRequest) {
   const caller = await getCallerProfile(req)
+  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   let campaignsQuery = supabaseAdmin
     .from('campaign_discoveries')
@@ -109,7 +110,9 @@ export async function PATCH(req: NextRequest) {
 }
 
 // POST — backfill cid/mcc_id on all already-mapped projects from campaign_discoveries
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const caller = await getCallerProfile(req)
+  if (!caller || caller.role !== 'super_admin') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { data: mappedProjects, error: e1 } = await supabaseAdmin
     .from('projects')
     .select('project_id, google_campaign_id')

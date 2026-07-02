@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { checkRateLimit } from '@/lib/rate-limit'
+
+function secretMatches(received: string, expected: string): boolean {
+  try {
+    const a = Buffer.from(received)
+    const b = Buffer.from(expected)
+    return a.length === b.length && timingSafeEqual(a, b)
+  } catch {
+    return false
+  }
+}
 
 interface CampaignRecord {
   campaign_id: string
@@ -71,7 +82,7 @@ export async function POST(req: NextRequest) {
 
   if (matchedOrg) {
     organizationId = matchedOrg.id
-  } else if (incomingSecret !== process.env.ADS_SCRIPT_SECRET) {
+  } else if (!secretMatches(incomingSecret, process.env.ADS_SCRIPT_SECRET ?? '')) {
     await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: 'Invalid secret', organization_id: null })
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

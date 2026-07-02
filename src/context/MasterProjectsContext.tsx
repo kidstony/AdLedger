@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { supabase } from '@/lib/supabase'
 import { MasterProject } from '@/lib/types'
+// supabase anon client kept for getToken()
 import { useAuth } from '@/context/AuthContext'
 
 interface MasterProjectsContextValue {
@@ -65,10 +66,14 @@ export function MasterProjectsProvider({ children }: { children: ReactNode }) {
   }
 
   async function deleteMasterProject(id: string) {
-    await supabase.from('projects').update({ master_project_id: null }).eq('master_project_id', id)
+    const token = await getToken()
+    if (!token) return
     setMasterProjects(prev => prev.filter(x => x.id !== id))
-    const { error } = await supabase.from('master_projects').delete().eq('id', id)
-    if (error) { console.error(error); load() }
+    const res = await fetch(`/api/master-projects/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) { console.error(await res.text()); load() }
   }
 
   return (
