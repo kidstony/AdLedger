@@ -73,10 +73,23 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       .gte('date', fromStr)
       .lte('date', toStr)
 
+    // For cumulative projects: fetch the last pending value before `from` to compute delta
+    const prevCumulativePromise = project?.screen_revenue_type === 'cumulative'
+      ? supabase
+          .from('affiliate_revenue')
+          .select('amount')
+          .eq('project_id', id)
+          .eq('type', 'pending')
+          .lt('date', fromStr)
+          .order('date', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve({ data: null })
+
     const rgPromise  = fetch('/api/expenses/rental-groups').then(r => r.json()).catch(() => [])
     const ocPromise  = fetch(`/api/expenses/other?from=${fromStr}&to=${toStr}`).then(r => r.json()).catch(() => [])
 
-    Promise.all([spendPromise, revPromise, rgPromise, ocPromise]).then(([spendRes, revRes, rgRaw, ocRaw]) => {
+    Promise.all([spendPromise, revPromise, prevCumulativePromise, rgPromise, ocPromise]).then(([spendRes, revRes, prevCumRes, rgRaw, ocRaw]) => {
       const spendRows = (spendRes.data ?? []) as { date: string; spend: number }[]
       const revRows   = (revRes.data   ?? []) as { date: string; type: 'confirmed' | 'pending'; amount: number }[]
       const rentalGroups: RentalGroup[] = Array.isArray(rgRaw) ? rgRaw : []
@@ -85,13 +98,31 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       // Aggregate confirmed → revenue, pending → screen_revenue per date
       const revMap    = new Map<string, number>()
       const screenMap = new Map<string, number>()
-      revRows.forEach(r => {
-        if (r.type === 'confirmed') {
+
+      if (project?.screen_revenue_type === 'cumulative') {
+        // Pending entries store running totals — convert to per-entry deltas
+        const prevBaseline = (prevCumRes.data as { amount: number } | null)?.amount ?? 0
+        const pendingEntries = revRows
+          .filter(r => r.type === 'pending')
+          .sort((a, b) => a.date.localeCompare(b.date))
+        let prev = prevBaseline
+        pendingEntries.forEach(r => {
+          const delta = Math.max(0, r.amount - prev)
+          if (delta > 0) screenMap.set(r.date, (screenMap.get(r.date) ?? 0) + delta)
+          prev = r.amount
+        })
+        revRows.filter(r => r.type === 'confirmed').forEach(r => {
           revMap.set(r.date, (revMap.get(r.date) ?? 0) + r.amount)
-        } else {
-          screenMap.set(r.date, (screenMap.get(r.date) ?? 0) + r.amount)
-        }
-      })
+        })
+      } else {
+        revRows.forEach(r => {
+          if (r.type === 'confirmed') {
+            revMap.set(r.date, (revMap.get(r.date) ?? 0) + r.amount)
+          } else {
+            screenMap.set(r.date, (screenMap.get(r.date) ?? 0) + r.amount)
+          }
+        })
+      }
 
       // ─── Build daily rows ─────────────────────────────────────────────────
       if (spendRows.length === 0 && revRows.length === 0) {
@@ -102,7 +133,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         setDataSource('mock')
       } else {
         const spendMap = new Map(spendRows.map(r => [r.date, r.spend]))
-        const dates = [...new Set([...spendMap.keys(), ...revMap.keys()])].sort()
+        const dates = [...new Set([...spendMap.keys(), ...revMap.keys(), ...screenMap.keys()])].sort()
 
         const rows = dates.map(date => {
           const spend   = spendMap.get(date) ?? 0
