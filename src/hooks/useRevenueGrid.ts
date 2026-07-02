@@ -69,7 +69,7 @@ export function useRevenueGrid() {
   const [customFrom, setCustomFrom] = useState(() => addDays(today, -6))
   const [customTo,   setCustomTo]   = useState(today)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [activeTab, setActiveTab] = useState<RevenueTab>('revenue')
+  const [activeTab, setActiveTab] = useState<RevenueTab>('screen')
   const [isLoading, setIsLoading] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
 
