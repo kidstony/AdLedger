@@ -136,12 +136,8 @@ export default function RevenuePage() {
   // Projects with ≥1 pending cell in current range (screen tab, non-all)
   const pendingProjectIds = useMemo(() => {
     if (activeTab !== 'screen' || isReadOnlyGlobal) return new Set<string>()
-    return new Set(
-      filteredProjects
-        .filter(p => dates.some(d => (screenGrid.get(`${p.project_id}__${d}`) ?? 0) > 0))
-        .map(p => p.project_id)
-    )
-  }, [activeTab, isReadOnlyGlobal, filteredProjects, dates, screenGrid])
+    return new Set(filteredProjects.map(p => p.project_id))
+  }, [activeTab, isReadOnlyGlobal, filteredProjects])
 
   // All pending (project_id, date) pairs from checked projects
   const selectedPendingItems = useMemo(() => {
