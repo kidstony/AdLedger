@@ -247,7 +247,7 @@ export default function RevenuePage() {
 
   async function handleConfirmDirect(projectId: string, date: string, amount: number, projectName: string) {
     await flushSave()
-    await confirmCell(projectId, date)
+    await confirmCell(projectId, date, amount)
     refreshRevenue()
     startUndoCountdown({ items: [{ project_id: projectId, date }], total: amount, count: 1 })
   }
@@ -434,11 +434,22 @@ export default function RevenuePage() {
 
   // cumulative delta helper
   function getCumulativeDelta(projectId: string, date: string, di: number) {
-    const key       = `${projectId}__${date}`
+    const key        = `${projectId}__${date}`
     const cumulative = screenGrid.get(key) ?? 0
-    const prevDate  = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
-    const prevKey   = `${projectId}__${prevDate}`
-    const prev      = di === 0 ? (prevScreenMap.get(prevKey) ?? 0) : (screenGrid.get(prevKey) ?? 0)
+
+    let prev = 0
+    if (di === 0) {
+      prev = prevScreenMap.get(`${projectId}__${addDays(dates[0], -1)}`) ?? 0
+    } else {
+      // Scan backwards for the last non-undefined entry — gaps mean running total unchanged
+      let found = false
+      for (let i = di - 1; i >= 0; i--) {
+        const v = screenGrid.get(`${projectId}__${dates[i]}`)
+        if (v !== undefined) { prev = v; found = true; break }
+      }
+      if (!found) prev = prevScreenMap.get(`${projectId}__${addDays(dates[0], -1)}`) ?? 0
+    }
+
     return { delta: cumulative - prev, cumulative }
   }
 
@@ -765,8 +776,8 @@ export default function RevenuePage() {
                                 valueColorClass={delta < 0 ? 'text-red-600' : 'text-slate-700'}
                                 hasNote={hasNote}
                                 onNoteClick={() => setNoteModal({ projectId: project.project_id, date, current: noteMap.get(key) ?? '' })}
-                                onConfirmClick={(hasDelta && cumulative > 0)
-                                  ? () => handleConfirmDirect(project.project_id, date, cumulative, project.name)
+                                onConfirmClick={(hasDelta && delta > 0)
+                                  ? () => handleConfirmDirect(project.project_id, date, delta, project.name)
                                   : undefined}
                               />
                             </div>

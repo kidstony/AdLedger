@@ -532,10 +532,11 @@ export function useRevenueGrid() {
     return true
   }, [])
 
-  const confirmCell = useCallback(async (projectId: string, date: string) => {
-    const key = `${projectId}__${date}`
-    const amount = screenGridRef.current.get(key) ?? 0
-    const token = await getToken()
+  const confirmCell = useCallback(async (projectId: string, date: string, overrideAmount?: number) => {
+    const key    = `${projectId}__${date}`
+    // overrideAmount is the delta for cumulative projects; raw screenGrid value for daily
+    const amount = overrideAmount ?? (screenGridRef.current.get(key) ?? 0)
+    const token  = await getToken()
     const res = await fetch('/api/revenue/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
