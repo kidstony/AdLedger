@@ -349,6 +349,28 @@ function ProjectsPageInner() {
     setTimeout(() => setter(null), 1500)
   }
 
+  // Ctrl+Z undo last saved cell
+  useEffect(() => {
+    function onUndo(e: KeyboardEvent) {
+      if (!((e.ctrlKey || e.metaKey) && e.key === 'z')) return
+      if (editingCell) return
+      if (undoStack.current.size === 0) return
+      const entries = [...undoStack.current.entries()]
+      const [key, prevValue] = entries[entries.length - 1]
+      const [projectId, ...rest] = key.split('-')
+      const field = rest.join('-')
+      const project = projects.find(p => p.project_id === projectId)
+      if (!project) return
+      e.preventDefault()
+      undoStack.current.delete(key)
+      saveCell(project, field, prevValue ?? '')
+      toast.success('Đã khôi phục giá trị cũ')
+    }
+    document.addEventListener('keydown', onUndo)
+    return () => document.removeEventListener('keydown', onUndo)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingCell, projects])
+
   // ── inline status update ──
   const pendingStatusUpdate = useRef<ReturnType<typeof setTimeout> | null>(null)
   function handleStatusChange(project: Project, newStatuses: ProjectStatus[]) {
@@ -376,13 +398,41 @@ function ProjectsPageInner() {
     if (!res.ok) patchProjectLocal({ ...project })
   }
 
-  const CELL_ORDER = ['affiliate_url', 'affiliate_username', 'affiliate_password'] as const
+  const CELL_ORDER = ['affiliate_url', 'affiliate_username', 'affiliate_password', 'ref_link'] as const
   type EditableField = typeof CELL_ORDER[number]
   const [editPwVisible, setEditPwVisible] = useState(false)
+  const [savingCells, setSavingCells] = useState<Set<string>>(new Set())
+  const [errorCells, setErrorCells] = useState<Set<string>>(new Set())
+  const [pastedCells, setPastedCells] = useState<Set<string>>(new Set())
+  const undoStack = useRef<Map<string, string | null>>(new Map())
+
+  // ── Excel-style range selection across the 4 affiliate columns ──
+  // r = rowIndex trong `sorted`; c = colIndex 0..3 khớp CELL_ORDER
+  const [sel, setSel] = useState<{ a: { r: number; c: number }; f: { r: number; c: number } } | null>(null)
+  const draggingRef = useRef(false)
+  const selAnchorRef = useRef<{ r: number; c: number } | null>(null)
+  const selBounds = sel && {
+    minR: Math.min(sel.a.r, sel.f.r), maxR: Math.max(sel.a.r, sel.f.r),
+    minC: Math.min(sel.a.c, sel.f.c), maxC: Math.max(sel.a.c, sel.f.c),
+  }
+  const inSel = (r: number, c: number) =>
+    !!selBounds && r >= selBounds.minR && r <= selBounds.maxR && c >= selBounds.minC && c <= selBounds.maxC
+  function selMouseDown(r: number, c: number, shiftKey: boolean, preventDefault: () => void) {
+    if (!canEditCampFields) return
+    if (shiftKey && selAnchorRef.current) { preventDefault(); setSel({ a: selAnchorRef.current, f: { r, c } }) }
+    else { selAnchorRef.current = { r, c }; draggingRef.current = true; setSel(null) }
+  }
+  function selMouseEnter(r: number, c: number) {
+    if (canEditCampFields && draggingRef.current && selAnchorRef.current) setSel({ a: selAnchorRef.current, f: { r, c } })
+  }
+  const selCls = (r: number, c: number) => cn('select-none', inSel(r, c) && 'ring-2 ring-inset ring-blue-400 bg-blue-50')
 
   async function fetchDecryptedPassword(projectId: string): Promise<string | null> {
     const res = await authFetch(`/api/projects/${projectId}/password`)
-    if (!res.ok) return null
+    if (!res.ok) {
+      toast.error('Không thể giải mã mật khẩu')
+      return null
+    }
     const { password } = await res.json()
     if (password) setDecryptedPasswords(prev => new Map(prev).set(projectId, password))
     return password
@@ -393,10 +443,12 @@ function ProjectsPageInner() {
       setRevealedPasswords(prev => { const n = new Set(prev); n.delete(projectId); return n })
       return
     }
-    if (!decryptedPasswords.has(projectId)) {
-      await fetchDecryptedPassword(projectId)
+    let ok = decryptedPasswords.has(projectId)
+    if (!ok) {
+      const result = await fetchDecryptedPassword(projectId)
+      ok = result !== null
     }
-    setRevealedPasswords(prev => new Set(prev).add(projectId))
+    if (ok) setRevealedPasswords(prev => new Set(prev).add(projectId))
   }
 
   async function handleCopyPassword(projectId: string) {
@@ -405,46 +457,200 @@ function ProjectsPageInner() {
     if (pw) copyText(pw, `pw-${projectId}`, v => setCopiedPassword(v), true)
   }
 
-  async function saveCell(project: Project, field: string, value: string, nextField?: EditableField) {
-    // Empty affiliate_password = "keep existing", not "clear" — API handles this too
+  async function saveCell(project: Project, field: string, value: string, nextField?: EditableField, silent = false) {
     if (field === 'affiliate_password' && !value) {
-      setEditingCell(nextField ? { id: project.project_id, field: nextField } : null)
+      if (!silent) setEditingCell(nextField ? { id: project.project_id, field: nextField } : null)
       return
     }
+    const cellKey = `${project.project_id}-${field}`
+    const prevVal = project[field as keyof Project] as string | null
     const prev = { ...project }
     patchProjectLocal({ ...project, [field]: value || null })
-    // After saving a new password, cache the plaintext for reveal
     if (field === 'affiliate_password' && value) {
       setDecryptedPasswords(m => new Map(m).set(project.project_id, value))
     }
+    setSavingCells(s => new Set(s).add(cellKey))
     const res = await authFetch(`/api/projects/${project.project_id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [field]: value || null }),
     })
+    setSavingCells(s => { const n = new Set(s); n.delete(cellKey); return n })
     if (!res.ok) {
       patchProjectLocal(prev)
-      toast.error('Lưu thất bại')
+      setErrorCells(s => {
+        const n = new Set(s); n.add(cellKey)
+        setTimeout(() => setErrorCells(x => { const y = new Set(x); y.delete(cellKey); return y }), 3000)
+        return n
+      })
+      if (!silent) toast.error('Lưu thất bại')
       setEditingCell(null)
       return
     }
+    if ((value || null) !== prevVal) undoStack.current.set(cellKey, prevVal)
+    if (silent) return
     if (nextField) {
       setEditingCell({ id: project.project_id, field: nextField })
     } else {
-      const prevVal = prev[field as keyof Project] as string | null
-      const newVal = value || null
-      if (newVal !== prevVal) {
+      if ((value || null) !== prevVal) {
         toast.success('Đã lưu', {
-          action: {
-            label: 'Hoàn tác',
-            onClick: () => saveCell(prev, field, prevVal ?? ''),
-          },
+          action: { label: 'Hoàn tác', onClick: () => saveCell(prev, field, prevVal ?? '') },
           duration: 5000,
         })
       }
       setEditingCell(null)
     }
   }
+
+  async function handleMultiRowPaste(
+    e: React.ClipboardEvent<HTMLInputElement>,
+    rowIndex: number,
+    field: string,
+    project: Project,
+  ) {
+    const text = e.clipboardData.getData('text')
+    const lines = text.split(/\r?\n/).filter(l => l !== '')
+    if (lines.length <= 1) return
+    e.preventDefault()
+    const affectedRows = sorted.slice(rowIndex, rowIndex + lines.length)
+    if (!window.confirm(`Paste ${lines.length} giá trị vào ${affectedRows.length} dòng?`)) return
+    setEditingCell(null)
+    const keys = affectedRows.map(proj => `${proj.project_id}-${field}`)
+    await Promise.all(affectedRows.map((proj, i) => saveCell(proj, field, lines[i] ?? '', undefined, true)))
+    setPastedCells(new Set(keys))
+    setTimeout(() => setPastedCells(new Set()), 1200)
+    toast.success(`Đã paste ${affectedRows.length} giá trị`)
+  }
+
+  // ── range selection: copy + bulk delete ──────────────────────────────────
+  function fieldHasValue(p: Project, f: EditableField): boolean {
+    return f === 'affiliate_password' ? !!p.affiliate_password : !!(p[f as keyof Project])
+  }
+
+  // Persist a group of field→value changes for one project in a SINGLE patch,
+  // avoiding the whole-object clobber that per-field saveCell would cause.
+  async function patchProjectFields(project: Project, values: Record<string, string | null>) {
+    const prev = { ...project }
+    patchProjectLocal({ ...project, ...values })
+    for (const [f, v] of Object.entries(values)) {
+      if (f === 'affiliate_password') {
+        if (v) setDecryptedPasswords(m => new Map(m).set(project.project_id, v))
+        else {
+          setDecryptedPasswords(m => { const n = new Map(m); n.delete(project.project_id); return n })
+          setRevealedPasswords(s => { const n = new Set(s); n.delete(project.project_id); return n })
+        }
+      }
+    }
+    const res = await authFetch(`/api/projects/${project.project_id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(values),
+    })
+    if (!res.ok) { patchProjectLocal(prev); toast.error('Lưu thất bại'); return false }
+    return true
+  }
+
+  async function clearSelectedCells() {
+    const b = selBounds
+    if (!b) return
+    // Group selected non-empty cells by project
+    const groups = new Map<string, { project: Project; fields: EditableField[] }>()
+    for (let r = b.minR; r <= b.maxR; r++) {
+      const project = sorted[r]
+      if (!project) continue
+      for (let c = b.minC; c <= b.maxC; c++) {
+        const field = CELL_ORDER[c]
+        if (!fieldHasValue(project, field)) continue
+        const g = groups.get(project.project_id) ?? { project, fields: [] }
+        g.fields.push(field)
+        groups.set(project.project_id, g)
+      }
+    }
+    const list = [...groups.values()]
+    const total = list.reduce((s, g) => s + g.fields.length, 0)
+    if (total === 0) { setSel(null); return }
+    if (!window.confirm(`Xoá nội dung ${total} ô đã chọn?`)) return
+
+    // Snapshot previous values for undo (password needs plaintext)
+    const snapshots = await Promise.all(list.map(async ({ project, fields }) => {
+      const prev: Record<string, string | null> = {}
+      for (const f of fields) {
+        prev[f] = f === 'affiliate_password'
+          ? (decryptedPasswords.get(project.project_id) ?? await fetchDecryptedPassword(project.project_id))
+          : ((project[f as keyof Project] as string | null) ?? null)
+      }
+      return { project, prev }
+    }))
+
+    await Promise.all(list.map(({ project, fields }) =>
+      patchProjectFields(project, Object.fromEntries(fields.map(f => [f, null])))
+    ))
+    setSel(null)
+
+    toast.success(`Đã xoá ${total} ô`, {
+      action: {
+        label: 'Hoàn tác',
+        onClick: () => {
+          snapshots.forEach(({ project, prev }) => {
+            const restore = Object.fromEntries(
+              Object.entries(prev).filter(([, v]) => v != null && v !== '')
+            ) as Record<string, string>
+            if (Object.keys(restore).length > 0) patchProjectFields(project, restore)
+          })
+          toast.success('Đã khôi phục')
+        },
+      },
+      duration: 6000,
+    })
+  }
+
+  async function copySelectedCells() {
+    const b = selBounds
+    if (!b) return
+    const rows: string[] = []
+    for (let r = b.minR; r <= b.maxR; r++) {
+      const project = sorted[r]
+      if (!project) continue
+      const cols: string[] = []
+      for (let c = b.minC; c <= b.maxC; c++) {
+        const field = CELL_ORDER[c]
+        if (field === 'affiliate_password') {
+          cols.push(project.affiliate_password
+            ? (decryptedPasswords.get(project.project_id) ?? await fetchDecryptedPassword(project.project_id) ?? '')
+            : '')
+        } else {
+          cols.push((project[field as keyof Project] as string | null) ?? '')
+        }
+      }
+      rows.push(cols.join('\t'))
+    }
+    await navigator.clipboard.writeText(rows.join('\n'))
+    const count = (b.maxR - b.minR + 1) * (b.maxC - b.minC + 1)
+    toast.success(`Đã copy ${count} ô`)
+  }
+
+  // Range selection: end drag on mouseup; Delete clears, Ctrl+C copies, Escape deselects
+  useEffect(() => {
+    function onMouseUp() { draggingRef.current = false }
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement
+      const inInput = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement
+      if (inInput || !sel) return
+      if (e.key === 'Escape') { setSel(null); return }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) { e.preventDefault(); copySelectedCells(); return }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); clearSelectedCells(); return }
+    }
+    document.addEventListener('mouseup', onMouseUp)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mouseup', onMouseUp)
+      document.removeEventListener('keydown', onKey)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel])
+
+  // Clear selection when the row set/order changes (indices would be stale)
+  useEffect(() => { setSel(null) }, [tab, search, sortKey, sortDir, filterStatus, filterCategory, filterPerson, filterHasReminder, filterCampFrom, filterCampTo])
 
   function openNotePopover(p: Project, el: HTMLElement) {
     const r = el.getBoundingClientRect()
@@ -802,7 +1008,7 @@ function ProjectsPageInner() {
                       </tr>
                     </thead>
                     <tbody>
-                      {sorted.map(p => {
+                      {sorted.map((p, rowIndex) => {
                         const isSelected = selectedIds.has(p.project_id)
                         const bg = rowBg(p.statuses)
                         const isRevealed = revealedPasswords.has(p.project_id)
@@ -842,19 +1048,32 @@ function ProjectsPageInner() {
                               ) : <span className="text-slate-300 text-xs">—</span>}
                             </td>
                             {/* URL Affiliate */}
-                            <td className="px-4 py-3 max-w-[180px]">
+                            <td
+                              className={cn('px-4 py-3 max-w-[180px] transition-colors', canEditCampFields && 'cursor-text', selCls(rowIndex, 0), pastedCells.has(`${p.project_id}-affiliate_url`) && 'bg-yellow-50')}
+                              onMouseDown={e => selMouseDown(rowIndex, 0, e.shiftKey, () => e.preventDefault())}
+                              onMouseEnter={() => selMouseEnter(rowIndex, 0)}
+                              onClick={e => { if (canEditCampFields && !(e.target as HTMLElement).closest('a, button, input')) setEditingCell({ id: p.project_id, field: 'affiliate_url' }) }}
+                            >
                               <div className="relative">
                                 {canEditCampFields && editingCell?.id === p.project_id && editingCell.field === 'affiliate_url' && (
                                   <input autoFocus defaultValue={p.affiliate_url ?? ''}
-                                    className="absolute inset-0 text-xs px-2 outline-none border-2 border-blue-400 rounded bg-white z-10"
+                                    className={cn('absolute left-0 top-1/2 -translate-y-1/2 z-20 w-full px-2.5 py-2 text-sm outline-none border-2 rounded-md bg-white shadow-lg', errorCells.has(`${p.project_id}-affiliate_url`) ? 'border-red-400' : 'border-blue-400')}
+                                    onFocus={e => e.target.select()}
+                                    onPaste={e => handleMultiRowPaste(e, rowIndex, 'affiliate_url', p)}
                                     onBlur={e => { if (!e.relatedTarget) saveCell(p, 'affiliate_url', e.target.value) }}
                                     onKeyDown={e => {
                                       if (e.key === 'Escape') { setEditingCell(null); return }
                                       if (e.key === 'Enter') { e.currentTarget.blur(); return }
                                       if (e.key === 'Tab') {
                                         e.preventDefault()
-                                        const next = e.shiftKey ? undefined : CELL_ORDER[1]
-                                        saveCell(p, 'affiliate_url', e.currentTarget.value, next)
+                                        if (e.shiftKey) {
+                                          const prevRow = sorted[rowIndex - 1]
+                                          saveCell(p, 'affiliate_url', e.currentTarget.value, undefined, true)
+                                          if (prevRow) setEditingCell({ id: prevRow.project_id, field: 'ref_link' })
+                                          else setEditingCell(null)
+                                        } else {
+                                          saveCell(p, 'affiliate_url', e.currentTarget.value, CELL_ORDER[1])
+                                        }
                                       }
                                     }}
                                   />
@@ -888,11 +1107,18 @@ function ProjectsPageInner() {
                               </div>
                             </td>
                             {/* Username */}
-                            <td className="px-4 py-3 max-w-[120px]">
+                            <td
+                              className={cn('px-4 py-3 max-w-[120px] transition-colors', canEditCampFields && 'cursor-text', selCls(rowIndex, 1), pastedCells.has(`${p.project_id}-affiliate_username`) && 'bg-yellow-50')}
+                              onMouseDown={e => selMouseDown(rowIndex, 1, e.shiftKey, () => e.preventDefault())}
+                              onMouseEnter={() => selMouseEnter(rowIndex, 1)}
+                              onClick={e => { if (canEditCampFields && !(e.target as HTMLElement).closest('a, button, input')) setEditingCell({ id: p.project_id, field: 'affiliate_username' }) }}
+                            >
                               <div className="relative">
                                 {canEditCampFields && editingCell?.id === p.project_id && editingCell.field === 'affiliate_username' && (
                                   <input autoFocus defaultValue={p.affiliate_username ?? ''}
-                                    className="absolute inset-0 text-xs px-2 outline-none border-2 border-blue-400 rounded bg-white z-10"
+                                    className={cn('absolute left-0 top-1/2 -translate-y-1/2 z-20 w-full px-2.5 py-2 text-sm outline-none border-2 rounded-md bg-white shadow-lg', errorCells.has(`${p.project_id}-affiliate_username`) ? 'border-red-400' : 'border-blue-400')}
+                                    onFocus={e => e.target.select()}
+                                    onPaste={e => handleMultiRowPaste(e, rowIndex, 'affiliate_username', p)}
                                     onBlur={e => { if (!e.relatedTarget) saveCell(p, 'affiliate_username', e.target.value) }}
                                     onKeyDown={e => {
                                       if (e.key === 'Escape') { setEditingCell(null); return }
@@ -922,14 +1148,20 @@ function ProjectsPageInner() {
                               </div>
                             </td>
                             {/* Password */}
-                            <td className="px-4 py-3">
+                            <td
+                              className={cn('px-4 py-3 transition-colors', canEditCampFields && 'cursor-text', selCls(rowIndex, 2), pastedCells.has(`${p.project_id}-affiliate_password`) && 'bg-yellow-50')}
+                              onMouseDown={e => selMouseDown(rowIndex, 2, e.shiftKey, () => e.preventDefault())}
+                              onMouseEnter={() => selMouseEnter(rowIndex, 2)}
+                              onClick={e => { if (canEditCampFields && !(e.target as HTMLElement).closest('a, button, input')) setEditingCell({ id: p.project_id, field: 'affiliate_password' }) }}
+                            >
                               <div className="relative">
                                 {canEditCampFields && editingCell?.id === p.project_id && editingCell.field === 'affiliate_password' && (
-                                  <>
+                                  <div className="absolute left-0 top-1/2 -translate-y-1/2 z-20 w-full">
                                     <input autoFocus type={editPwVisible ? 'text' : 'password'}
                                       defaultValue=""
                                       placeholder={p.affiliate_password ? '••••••' : ''}
-                                      className="absolute inset-0 text-xs px-2 pr-7 outline-none border-2 border-blue-400 rounded bg-white z-10 font-mono"
+                                      className={cn('w-full px-2.5 py-2 pr-8 outline-none border-2 rounded-md bg-white shadow-lg text-sm font-mono', errorCells.has(`${p.project_id}-affiliate_password`) ? 'border-red-400' : 'border-blue-400')}
+                                      onPaste={e => handleMultiRowPaste(e, rowIndex, 'affiliate_password', p)}
                                       onBlur={e => {
                                         if (!e.relatedTarget) {
                                           saveCell(p, 'affiliate_password', e.target.value)
@@ -941,7 +1173,7 @@ function ProjectsPageInner() {
                                         if (e.key === 'Enter') { e.currentTarget.blur(); return }
                                         if (e.key === 'Tab') {
                                           e.preventDefault()
-                                          const next = e.shiftKey ? CELL_ORDER[1] : undefined
+                                          const next = e.shiftKey ? CELL_ORDER[1] : CELL_ORDER[3]
                                           saveCell(p, 'affiliate_password', e.currentTarget.value, next)
                                           setEditPwVisible(false)
                                         }
@@ -950,10 +1182,10 @@ function ProjectsPageInner() {
                                     <button type="button"
                                       onMouseDown={e => e.preventDefault()}
                                       onClick={() => setEditPwVisible(v => !v)}
-                                      className="absolute right-1 top-1/2 -translate-y-1/2 z-20 text-slate-400 hover:text-slate-600">
+                                      className="absolute right-2 top-1/2 -translate-y-1/2 z-20 text-slate-400 hover:text-slate-600">
                                       {editPwVisible ? <EyeOff size={11} /> : <Eye size={11} />}
                                     </button>
-                                  </>
+                                  </div>
                                 )}
                                 {p.affiliate_password ? (
                                   <div className="flex items-center gap-1 group"
@@ -980,15 +1212,33 @@ function ProjectsPageInner() {
                               </div>
                             </td>
                             {/* Link Ref */}
-                            <td className="px-4 py-3 max-w-[160px]">
+                            <td
+                              className={cn('px-4 py-3 max-w-[160px] transition-colors', canEditCampFields && 'cursor-text', selCls(rowIndex, 3), pastedCells.has(`${p.project_id}-ref_link`) && 'bg-yellow-50')}
+                              onMouseDown={e => selMouseDown(rowIndex, 3, e.shiftKey, () => e.preventDefault())}
+                              onMouseEnter={() => selMouseEnter(rowIndex, 3)}
+                              onClick={e => { if (canEditCampFields && !(e.target as HTMLElement).closest('a, button, input')) setEditingCell({ id: p.project_id, field: 'ref_link' }) }}
+                            >
                               <div className="relative">
                                 {canEditCampFields && editingCell?.id === p.project_id && editingCell.field === 'ref_link' && (
-                                  <input autoFocus type="url" defaultValue={p.ref_link ?? ''}
-                                    className="absolute inset-0 text-xs px-2 outline-none border-2 border-blue-400 rounded bg-white z-10"
+                                  <input autoFocus defaultValue={p.ref_link ?? ''}
+                                    className={cn('absolute left-0 top-1/2 -translate-y-1/2 z-20 w-full px-2.5 py-2 text-sm outline-none border-2 rounded-md bg-white shadow-lg', errorCells.has(`${p.project_id}-ref_link`) ? 'border-red-400' : 'border-blue-400')}
+                                    onFocus={e => e.target.select()}
+                                    onPaste={e => handleMultiRowPaste(e, rowIndex, 'ref_link', p)}
                                     onBlur={e => { if (!e.relatedTarget) saveCell(p, 'ref_link', e.target.value) }}
                                     onKeyDown={e => {
                                       if (e.key === 'Escape') { setEditingCell(null); return }
                                       if (e.key === 'Enter') { e.currentTarget.blur(); return }
+                                      if (e.key === 'Tab') {
+                                        e.preventDefault()
+                                        if (e.shiftKey) {
+                                          saveCell(p, 'ref_link', e.currentTarget.value, CELL_ORDER[2])
+                                        } else {
+                                          const nextRow = sorted[rowIndex + 1]
+                                          saveCell(p, 'ref_link', e.currentTarget.value, undefined, true)
+                                          if (nextRow) setEditingCell({ id: nextRow.project_id, field: 'affiliate_url' })
+                                          else setEditingCell(null)
+                                        }
+                                      }
                                     }}
                                   />
                                 )}

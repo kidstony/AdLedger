@@ -501,6 +501,34 @@ export function useRevenueGrid() {
     saveTimerRef.current = setTimeout(executeSave, 600)
   }, [activeTab, executeSave])
 
+  // Bulk-clear: remove many cells as a single history entry (Excel-style range delete)
+  const bulkClearCells = useCallback((cells: { projectId: string; date: string }[]) => {
+    const changes: HistoryChange[] = []
+    cells.forEach(({ projectId, date }) => {
+      const key = `${projectId}__${date}`
+      const tab = activeTab
+      const old = tab === 'revenue' ? revenueGridRef.current.get(key) : screenGridRef.current.get(key)
+      if (old === undefined) return // empty cell, nothing to clear
+      changes.push({ key, tab, old, val: undefined })
+      if (tab === 'revenue') {
+        clearedRevenueRef.current.add(key)
+        setRevenueGrid(prev => { const n = new Map(prev); n.delete(key); return n })
+        pendingRevenueKeysRef.current.add(key)
+      } else {
+        clearedScreenRef.current.add(key)
+        setScreenGrid(prev => { const n = new Map(prev); n.delete(key); return n })
+        pendingScreenKeysRef.current.add(key)
+      }
+    })
+    if (changes.length > 0) {
+      historyRef.current = [...historyRef.current.slice(-24), { changes }]
+      futureRef.current  = []
+      syncUndoRedoState()
+    }
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(executeSave, 600)
+  }, [activeTab, executeSave])
+
   const revertCells = useCallback(async (items: Array<{ project_id: string; date: string }>) => {
     const token = await getToken()
     const res = await fetch('/api/revenue/revert-batch', {
@@ -588,7 +616,7 @@ export function useRevenueGrid() {
     undo, redo,
     goBack, goForward, goToToday, switchMode,
     customFrom, customTo, setCustomRange, refreshRevenue,
-    updateCell, clearCell, bulkUpdateCells,
+    updateCell, clearCell, bulkUpdateCells, bulkClearCells,
     saveNote, savePayout, confirmCell, revertCells, flushSave,
     statusMap, confirmedAtMap,
   }

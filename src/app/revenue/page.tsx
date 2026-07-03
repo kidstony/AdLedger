@@ -9,6 +9,7 @@ import {
 import { useRevenueGrid } from '@/hooks/useRevenueGrid'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { useAuth } from '@/context/AuthContext'
+import { supabase } from '@/lib/supabase'
 import EditableCell from '@/components/revenue/EditableCell'
 import ProjectFilterDropdown, { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
 import RevenueSummaryCards from '@/components/revenue/RevenueSummaryCards'
@@ -71,7 +72,7 @@ export default function RevenuePage() {
     undo, redo,
     switchMode,
     customFrom, customTo, setCustomRange, refreshRevenue,
-    updateCell, clearCell, bulkUpdateCells,
+    updateCell, clearCell, bulkUpdateCells, bulkClearCells,
     saveNote, savePayout, confirmCell, revertCells, flushSave,
     statusMap, confirmedAtMap,
   } = useRevenueGrid()
@@ -103,6 +104,12 @@ export default function RevenuePage() {
   const [batchAllSelected,    setBatchAllSelected]    = useState<Set<string>>(new Set())
   const [batchAllLoading,     setBatchAllLoading]     = useState(false)
 
+  // ── Excel-style range selection for bulk delete ──
+  const [sel, setSel] = useState<{ a: { pi: number; di: number }; f: { pi: number; di: number } } | null>(null)
+  const draggingRef = useRef(false)
+  const anchorRef = useRef<{ pi: number; di: number } | null>(null)
+  const [clearSelModal, setClearSelModal] = useState<{ cells: { projectId: string; date: string }[]; projectCount: number } | null>(null)
+
   // Projects filtered by dropdown selection + inline search
   const filteredProjects = useMemo(() => {
     let result = projects
@@ -111,6 +118,14 @@ export default function RevenuePage() {
     if (q) result = result.filter(p => p.name.toLowerCase().includes(q))
     return result
   }, [projects, filterIds, searchQuery])
+
+  // Range-selection bounds + membership test (Excel-style bulk delete)
+  const selBounds = sel && {
+    minPi: Math.min(sel.a.pi, sel.f.pi), maxPi: Math.max(sel.a.pi, sel.f.pi),
+    minDi: Math.min(sel.a.di, sel.f.di), maxDi: Math.max(sel.a.di, sel.f.di),
+  }
+  const inSel = (pi: number, di: number) =>
+    !!selBounds && pi >= selBounds.minPi && pi <= selBounds.maxPi && di >= selBounds.minDi && di <= selBounds.maxDi
 
   // Date range display values (from dates array, works for all modes)
   const isReadOnlyGlobal = viewMode === 'all'
@@ -170,6 +185,9 @@ export default function RevenuePage() {
   // Clear checked when range/tab changes
   useEffect(() => { setCheckedProjectIds(new Set()) }, [dates, activeTab])
 
+  // Clear range-selection when the grid shape changes (row/col indices would be stale)
+  useEffect(() => { setSel(null) }, [dates, activeTab, filteredProjects])
+
   function toggleProject(pid: string) {
     setCheckedProjectIds(prev => { const n = new Set(prev); n.has(pid) ? n.delete(pid) : n.add(pid); return n })
   }
@@ -194,8 +212,10 @@ export default function RevenuePage() {
     const items = selectedPendingItems.map(i => ({ project_id: i.project_id, date: i.date, amount: i.amount }))
     const total = selectedPendingTotal
     const count = items.length
+    const { data: { session } } = await supabase.auth.getSession()
     const res = await fetch('/api/revenue/confirm-batch', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
       body: JSON.stringify({ items }),
     })
     setBatchConfirmLoading(false)
@@ -204,6 +224,8 @@ export default function RevenuePage() {
       setCheckedProjectIds(new Set())
       refreshRevenue()
       startUndoCountdown({ items, total, count })
+    } else {
+      showPageToast('Lỗi: Không thể xác nhận. Vui lòng thử lại.')
     }
   }
 
@@ -214,8 +236,10 @@ export default function RevenuePage() {
     const total = toConfirm.reduce((s, i) => s + i.confirmAmount, 0)
     const count = toConfirm.length
     setBatchAllLoading(true)
+    const { data: { session } } = await supabase.auth.getSession()
     const res = await fetch('/api/revenue/confirm-batch', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
       body: JSON.stringify({ items: toConfirm.map(i => ({ project_id: i.project_id, date: i.date, amount: i.confirmAmount })) }),
     })
     setBatchAllLoading(false)
@@ -224,6 +248,8 @@ export default function RevenuePage() {
       setBatchAllSelected(new Set())
       refreshRevenue()
       startUndoCountdown({ items: toConfirm.map(i => ({ project_id: i.project_id, date: i.date })), total, count })
+    } else {
+      showPageToast('Lỗi: Không thể xác nhận. Vui lòng thử lại.')
     }
   }
 
@@ -369,6 +395,48 @@ export default function RevenuePage() {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [undo, redo, showBatchAllConfirm])
+
+  // ── range-selection: end drag on mouseup, Delete clears, Escape deselects ────
+  useEffect(() => {
+    function onMouseUp() {
+      draggingRef.current = false
+    }
+    function onSelKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      const inInput = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+      if (inInput || !sel) return
+      if (e.key === 'Escape') { setSel(null); return }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        const b = {
+          minPi: Math.min(sel.a.pi, sel.f.pi), maxPi: Math.max(sel.a.pi, sel.f.pi),
+          minDi: Math.min(sel.a.di, sel.f.di), maxDi: Math.max(sel.a.di, sel.f.di),
+        }
+        const cells: { projectId: string; date: string }[] = []
+        const projSet = new Set<string>()
+        for (let p = b.minPi; p <= b.maxPi; p++) {
+          const project = filteredProjects[p]
+          if (!project) continue
+          for (let d = b.minDi; d <= b.maxDi; d++) {
+            const date = dates[d]
+            if (!date) continue
+            if ((gridData.get(`${project.project_id}__${date}`) ?? 0) > 0) {
+              cells.push({ projectId: project.project_id, date })
+              projSet.add(project.project_id)
+            }
+          }
+        }
+        if (cells.length === 0) { setSel(null); return }
+        setClearSelModal({ cells, projectCount: projSet.size })
+      }
+    }
+    document.addEventListener('mouseup', onMouseUp)
+    document.addEventListener('keydown', onSelKey)
+    return () => {
+      document.removeEventListener('mouseup', onMouseUp)
+      document.removeEventListener('keydown', onSelKey)
+    }
+  }, [sel, filteredProjects, dates, gridData])
 
   // ── totals (dynamic: only filtered projects) ─────────────────────────────────
   const dateTotals = useMemo(() =>
@@ -658,7 +726,7 @@ export default function RevenuePage() {
               <Loader2 size={20} className="animate-spin text-slate-400" />
             </div>
           )}
-          <table ref={tableRef} className="text-sm border-collapse w-full">
+          <table ref={tableRef} className="text-sm border-collapse w-full select-none">
             <thead className="sticky top-0 z-10 bg-slate-50">
               <tr>
                 <th className="sticky left-0 z-20 bg-slate-50 px-4 py-2.5 text-left text-xs font-medium border-b border-r border-slate-200 w-52 min-w-[208px]">
@@ -747,6 +815,7 @@ export default function RevenuePage() {
                       const isConfirmed = statusMap.get(key) === 'confirmed'
                       const confirmedAt = confirmedAtMap.get(key)
                       const tdCls       = cn('p-0 border-r border-slate-100', date === today && 'bg-blue-50/30')
+                      const selCls      = !isReadOnly && inSel(pi, di) ? 'ring-2 ring-inset ring-blue-400 bg-blue-100/50' : ''
 
                       // ── Cumulative screen tab (pending) ──────────────────────
                       if (isCumulative && !isReadOnly) {
@@ -754,7 +823,16 @@ export default function RevenuePage() {
                         const rawValue = screenGrid.get(key)
                         const hasDelta = rawValue !== undefined
                         return (
-                          <td key={date} className={tdCls}>
+                          <td
+                            key={date}
+                            className={cn(tdCls, selCls)}
+                            onMouseDown={e => {
+                              if (isReadOnly) return
+                              if (e.shiftKey && anchorRef.current) { e.preventDefault(); setSel({ a: anchorRef.current, f: { pi, di } }) }
+                              else { anchorRef.current = { pi, di }; draggingRef.current = true; setSel(null) }
+                            }}
+                            onMouseEnter={() => { if (!isReadOnly && draggingRef.current && anchorRef.current) setSel({ a: anchorRef.current, f: { pi, di } }) }}
+                          >
                             <div data-cell={key} className="h-11">
                               <EditableCell
                                 value={rawValue}
@@ -790,7 +868,16 @@ export default function RevenuePage() {
                         : undefined
 
                       return (
-                        <td key={date} className={tdCls}>
+                        <td
+                          key={date}
+                          className={cn(tdCls, selCls)}
+                          onMouseDown={e => {
+                            if (isReadOnly) return
+                            if (e.shiftKey && anchorRef.current) { e.preventDefault(); setSel({ a: anchorRef.current, f: { pi, di } }) }
+                            else { anchorRef.current = { pi, di }; draggingRef.current = true; setSel(null) }
+                          }}
+                          onMouseEnter={() => { if (!isReadOnly && draggingRef.current && anchorRef.current) setSel({ a: anchorRef.current, f: { pi, di } }) }}
+                        >
                           <div data-cell={key} className={confirmedSub ? 'h-11' : 'h-9'}>
                             {isReadOnly ? (
                               <div className="w-full h-full px-2 py-1.5 text-right font-mono text-xs font-medium text-slate-700">
@@ -934,6 +1021,37 @@ export default function RevenuePage() {
                 {batchConfirmLoading && <Loader2 size={10} className="animate-spin" />}
                 Đồng ý, xác nhận
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk-delete confirm (Excel-style range selection) ─────────────── */}
+      {clearSelModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-5 w-[340px]">
+            <h3 className="font-semibold text-slate-800 mb-2">Xoá doanh thu</h3>
+            <p className="text-sm text-slate-600 mb-4">
+              Xoá{' '}
+              <span className="font-semibold text-red-600">{clearSelModal.cells.length} ô</span>{' '}
+              doanh thu của{' '}
+              <span className="font-semibold">{clearSelModal.projectCount} dự án</span>?{' '}
+              Có thể hoàn tác bằng Ctrl+Z.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setClearSelModal(null)}
+                className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50"
+              >Hủy</button>
+              <button
+                onClick={() => {
+                  bulkClearCells(clearSelModal.cells)
+                  showPageToast(`Đã xoá ${clearSelModal.cells.length} ô — Ctrl+Z để hoàn tác`)
+                  setClearSelModal(null)
+                  setSel(null)
+                }}
+                className="px-4 py-1.5 text-xs bg-red-600 text-white rounded-md hover:bg-red-700"
+              >Xoá</button>
             </div>
           </div>
         </div>

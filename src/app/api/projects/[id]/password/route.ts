@@ -31,6 +31,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   if (!proj.affiliate_password) return NextResponse.json({ password: null })
 
-  const password = decrypt(proj.affiliate_password)
+  let password: string
+  try {
+    password = decrypt(proj.affiliate_password)
+  } catch {
+    return NextResponse.json({ error: 'Decrypt failed' }, { status: 500 })
+  }
   return NextResponse.json({ password })
 }
