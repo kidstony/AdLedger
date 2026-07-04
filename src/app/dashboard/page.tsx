@@ -1,6 +1,6 @@
 'use client'
 
-import { RefreshCw, Search, Zap, Database, AlertTriangle, Download } from 'lucide-react'
+import { RefreshCw, Search, Zap, Database, AlertTriangle, Download, Monitor, TrendingUp } from 'lucide-react'
 import { usePnlData } from '@/hooks/usePnlData'
 import SummaryCards from '@/components/dashboard/SummaryCards'
 import DateRangePicker from '@/components/ui/DateRangePicker'
@@ -10,7 +10,7 @@ import ProjectFilterDropdown from '@/components/revenue/ProjectFilterDropdown'
 import { cn, exportToCsv } from '@/lib/utils'
 
 export default function DashboardPage() {
-  const { data, allSummaries, totals, isLoading, dateRange, setDateRange, search, setSearch, selectedProjectIds, setSelectedProjectIds, filterProjectData, refresh, dataSource, lastSyncedAt, dailyChartData } = usePnlData()
+  const { data, allSummaries, totals, pnlView, setPnlView, isLoading, dateRange, setDateRange, search, setSearch, selectedProjectIds, setSelectedProjectIds, filterProjectData, refresh, dataSource, lastSyncedAt, dailyChartData } = usePnlData()
 
   function formatSyncTime(iso: string) {
     const d = new Date(iso)
@@ -44,21 +44,42 @@ export default function DashboardPage() {
             )}
           </p>
         </div>
+
+        {/* Toggle 2 góc nhìn P&L */}
+        <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+          <button
+            onClick={() => setPnlView('screen')}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+              pnlView === 'screen' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            )}
+          >
+            <Monitor size={14} /> Theo màn hình
+          </button>
+          <button
+            onClick={() => setPnlView('confirmed')}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+              pnlView === 'confirmed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            )}
+          >
+            <TrendingUp size={14} /> Thực nhận
+          </button>
+        </div>
       </div>
 
       <SummaryCards
+        view={pnlView}
         totalSpend={totals.spend + totals.rental + totals.other}
-        totalRevenue={totals.revenue}
-        totalProfit={totals.profit}
-        avgRoi={totals.avgRoi}
-        totalScreen={totals.screen_revenue}
-        totalPending={totals.pending}
-        estimatedRoi={(totals.spend + totals.rental + totals.other) > 0
-          ? ((totals.revenue + totals.screen_revenue - totals.spend - totals.rental - totals.other) / (totals.spend + totals.rental + totals.other)) * 100
-          : 0}
+        confirmedRevenue={totals.revenue}
+        confirmedProfit={totals.profit}
+        confirmedRoi={totals.avgRoi}
+        screenRevenue={totals.screen_revenue}
+        screenProfit={totals.screen_profit}
+        screenRoi={totals.screenRoi}
       />
 
-      <DailyPnlChart data={dailyChartData} />
+      <DailyPnlChart data={dailyChartData} view={pnlView} />
 
       <div className="flex items-center gap-3">
         <DateRangePicker
@@ -128,7 +149,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <PnlTable data={data} isLoading={isLoading} />
+      <PnlTable data={data} isLoading={isLoading} view={pnlView} />
     </div>
   )
 }

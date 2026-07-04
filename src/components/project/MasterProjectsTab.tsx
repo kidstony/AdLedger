@@ -11,9 +11,30 @@ import { Button } from '@/components/ui/button'
 import { MasterProject, PnlSummary } from '@/lib/types'
 import { formatVND, formatCid } from '@/lib/utils'
 import DateRangePicker from '@/components/ui/DateRangePicker'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 
 function formatRoi(roi: number) {
   return `${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%`
+}
+
+// Gộp 3 chi phí (QC / Thuê TK / CP khác) → 1 số Tổng CP, hover xem tách chi tiết
+function CostBreakdown({ spend, rental, other }: { spend: number; rental: number; other: number }) {
+  const total = spend + rental + other
+  if (total <= 0) return <span className="text-slate-300">—</span>
+  return (
+    <Tooltip>
+      <TooltipTrigger className="border-b border-dotted border-slate-300 cursor-help">
+        {formatVND(total)}
+      </TooltipTrigger>
+      <TooltipContent>
+        <div className="flex flex-col gap-0.5 text-left min-w-[120px]">
+          <div className="flex justify-between gap-4"><span>QC</span><span className="font-mono">{formatVND(spend)}</span></div>
+          <div className="flex justify-between gap-4"><span>Thuê TK</span><span className="font-mono">{rental > 0 ? formatVND(rental) : '—'}</span></div>
+          <div className="flex justify-between gap-4"><span>CP khác</span><span className="font-mono">{other > 0 ? formatVND(other) : '—'}</span></div>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 export default function MasterProjectsTab() {
@@ -67,6 +88,8 @@ export default function MasterProjectsTab() {
           total_profit: 0,
           avg_roi: 0,
           total_screen_revenue: 0,
+          screen_profit: 0,
+          screen_roi: 0,
           total_pending: 0,
         }))
       const children = [...pnlChildren, ...zeroPnlChildren]
@@ -192,7 +215,7 @@ export default function MasterProjectsTab() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Thương hiệu', 'Chiến dịch', 'Chi phí QC', 'Thuê TK', 'CP Khác', 'Doanh thu', 'Chờ TT', 'Lợi nhuận', 'ROI', ''].map(h => (
+                {['Thương hiệu', 'Chiến dịch', 'Tổng CP', 'Doanh thu', 'Chờ TT', 'Lợi nhuận', 'ROI', ''].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -200,7 +223,7 @@ export default function MasterProjectsTab() {
             <tbody>
               {visibleMasterRows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="py-10 text-center text-sm text-slate-400">
+                  <td colSpan={8} className="py-10 text-center text-sm text-slate-400">
                     Chưa có Tổng Dự Án nào. Tạo mới và gán chiến dịch vào.
                   </td>
                 </tr>
@@ -221,9 +244,9 @@ export default function MasterProjectsTab() {
                       <td className="px-4 py-3">
                         <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full">{row.children.length} CID</span>
                       </td>
-                      <td className="px-4 py-3 text-slate-700">{formatVND(row.total_spend)}</td>
-                      <td className="px-4 py-3 text-slate-500">{row.total_rental > 0 ? formatVND(row.total_rental) : <span className="text-slate-300">—</span>}</td>
-                      <td className="px-4 py-3 text-slate-500">{row.total_other > 0 ? formatVND(row.total_other) : <span className="text-slate-300">—</span>}</td>
+                      <td className="px-4 py-3 text-slate-700">
+                        <CostBreakdown spend={row.total_spend} rental={row.total_rental} other={row.total_other} />
+                      </td>
                       <td className="px-4 py-3 text-slate-700">{formatVND(row.total_revenue)}</td>
                       <td className={`px-4 py-3 ${row.total_pending > 0 ? 'text-amber-500' : 'text-slate-300'}`}>
                         {row.total_pending > 0 ? formatVND(row.total_pending) : '—'}
@@ -254,12 +277,8 @@ export default function MasterProjectsTab() {
                         <tr key={child.project_id} className={`border-b border-slate-50 text-xs ${childProfit ? 'bg-slate-50/50' : 'bg-red-50/50'}`}>
                           <td className="px-4 py-2.5 pl-10 text-slate-600">{child.name}</td>
                           <td className="px-4 py-2.5 font-mono text-slate-400">{formatCid(child.cid)}</td>
-                          <td className="px-4 py-2.5 text-slate-500">{formatVND(child.total_spend)}</td>
-                          <td className="px-4 py-2.5 text-slate-400">
-                            {(child.total_rental ?? 0) > 0 ? formatVND(child.total_rental) : <span className="text-slate-300">—</span>}
-                          </td>
-                          <td className="px-4 py-2.5 text-slate-400">
-                            {(child.total_other ?? 0) > 0 ? formatVND(child.total_other) : <span className="text-slate-300">—</span>}
+                          <td className="px-4 py-2.5 text-slate-500">
+                            <CostBreakdown spend={child.total_spend} rental={child.total_rental ?? 0} other={child.total_other ?? 0} />
                           </td>
                           <td className="px-4 py-2.5 text-slate-500">{formatVND(child.total_revenue)}</td>
                           <td className={`px-4 py-2.5 ${(child.total_pending ?? 0) > 0 ? 'text-amber-500' : 'text-slate-300'}`}>

@@ -57,6 +57,7 @@ type RevenueRow = {
   payout_start_date?: string | null
   payout_end_date?: string | null
   confirmed_at?: string | null
+  cycle_end?: boolean | null
 }
 
 export function useRevenueGrid() {
@@ -88,6 +89,8 @@ export function useRevenueGrid() {
   useEffect(() => { screenGridRef.current  = screenGrid  }, [screenGrid])
 
   const [prevScreenMap, setPrevScreenMap] = useState<Map<string, number>>(new Map())
+  const [prevCycleEndMap, setPrevCycleEndMap] = useState<Map<string, boolean>>(new Map())
+  const [cycleEndMap,    setCycleEndMap]   = useState<Map<string, boolean>>(new Map())
   const [noteMap,        setNoteMap]       = useState<Map<string, string>>(new Map())
   const [payoutMap,      setPayoutMap]     = useState<Map<string, { start: string; end: string }>>(new Map())
   const [statusMap,      setStatusMap]     = useState<Map<string, 'pending' | 'confirmed'>>(new Map())
@@ -304,10 +307,12 @@ export function useRevenueGrid() {
       const nextPayouts     = new Map<string, { start: string; end: string }>()
       const nextStatus      = new Map<string, 'pending' | 'confirmed'>()
       const nextConfirmedAt = new Map<string, string>()
+      const nextCycleEnd    = new Map<string, boolean>()
       rows.forEach(r => {
         const k = `${r.project_id}__${r.date}`
         if (r.type === 'pending') {
           if (r.note) nextNotes.set(k, r.note)
+          if (r.cycle_end) nextCycleEnd.set(k, true)
         }
         if (r.type === 'confirmed') {
           if (r.payout_start_date && r.payout_end_date) nextPayouts.set(k, { start: r.payout_start_date, end: r.payout_end_date })
@@ -319,15 +324,23 @@ export function useRevenueGrid() {
       setPayoutMap(nextPayouts)
       setStatusMap(nextStatus)
       setConfirmedAtMap(nextConfirmedAt)
+      setCycleEndMap(nextCycleEnd)
 
       if (viewMode !== 'all') {
         const prevDate = addDays(dateList[0], -1)
         const prevRes  = await fetch(`/api/revenue?from=${prevDate}&to=${prevDate}`, { headers })
         if (prevRes.ok) {
           const prevRows: RevenueRow[] = await prevRes.json()
-          const nextPrev = new Map<string, number>()
-          prevRows.forEach(r => { if (r.type === 'pending') nextPrev.set(`${r.project_id}__${r.date}`, r.amount) })
+          const nextPrev     = new Map<string, number>()
+          const nextPrevCE   = new Map<string, boolean>()
+          prevRows.forEach(r => {
+            if (r.type === 'pending') {
+              nextPrev.set(`${r.project_id}__${r.date}`, r.amount)
+              if (r.cycle_end) nextPrevCE.set(`${r.project_id}__${r.date}`, true)
+            }
+          })
           setPrevScreenMap(nextPrev)
+          setPrevCycleEndMap(nextPrevCE)
         }
       }
     } finally {
@@ -529,56 +542,6 @@ export function useRevenueGrid() {
     saveTimerRef.current = setTimeout(executeSave, 600)
   }, [activeTab, executeSave])
 
-  const revertCells = useCallback(async (items: Array<{ project_id: string; date: string }>) => {
-    const token = await getToken()
-    const res = await fetch('/api/revenue/revert-batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ items }),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      console.error('[revertCells] API error:', res.status, body)
-      return false
-    }
-    // Immediate local state removal
-    setStatusMap(prev => {
-      const n = new Map(prev)
-      items.forEach(({ project_id, date }) => n.delete(`${project_id}__${date}`))
-      return n
-    })
-    setConfirmedAtMap(prev => {
-      const n = new Map(prev)
-      items.forEach(({ project_id, date }) => n.delete(`${project_id}__${date}`))
-      return n
-    })
-    setRevenueGrid(prev => {
-      const n = new Map(prev)
-      items.forEach(({ project_id, date }) => n.delete(`${project_id}__${date}`))
-      return n
-    })
-    return true
-  }, [])
-
-  const confirmCell = useCallback(async (projectId: string, date: string, overrideAmount?: number) => {
-    const key    = `${projectId}__${date}`
-    // overrideAmount is the delta for cumulative projects; raw screenGrid value for daily
-    const amount = overrideAmount ?? (screenGridRef.current.get(key) ?? 0)
-    const token  = await getToken()
-    const res = await fetch('/api/revenue/confirm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ project_id: projectId, date, amount }),
-    })
-    if (!res.ok) return
-    const { confirmed_at } = await res.json()
-    const ts = confirmed_at || new Date().toISOString()
-
-    setStatusMap(prev => { const n = new Map(prev); n.set(key, 'confirmed'); return n })
-    setConfirmedAtMap(prev => { const n = new Map(prev); n.set(key, ts); return n })
-    setRevenueGrid(prev => { const n = new Map(prev); n.set(key, amount); return n })
-  }, [])
-
   const saveNote = useCallback(async (projectId: string, date: string, note: string) => {
     const key = `${projectId}__${date}`
     setNoteMap(prev => { const n = new Map(prev); if (note) n.set(key, note); else n.delete(key); return n })
@@ -605,6 +568,18 @@ export function useRevenueGrid() {
     })
   }, [])
 
+  // "Chốt kỳ": đánh dấu ngày cuối kỳ trên dòng pending → delta luỹ kế ngày kế reset về 0
+  const toggleCycleEnd = useCallback(async (projectId: string, date: string, value: boolean) => {
+    const key = `${projectId}__${date}`
+    setCycleEndMap(prev => { const n = new Map(prev); if (value) n.set(key, true); else n.delete(key); return n })
+    const token = await getToken()
+    await fetch('/api/revenue', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ project_id: projectId, date, type: 'pending', cycle_end: value }),
+    })
+  }, [])
+
   return {
     projects, today, viewMode, anchorDate, selectedDate,
     activeTab, setActiveTab,
@@ -617,7 +592,8 @@ export function useRevenueGrid() {
     goBack, goForward, goToToday, switchMode,
     customFrom, customTo, setCustomRange, refreshRevenue,
     updateCell, clearCell, bulkUpdateCells, bulkClearCells,
-    saveNote, savePayout, confirmCell, revertCells, flushSave,
+    saveNote, savePayout, flushSave,
     statusMap, confirmedAtMap,
+    cycleEndMap, prevCycleEndMap, toggleCycleEnd,
   }
 }

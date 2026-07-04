@@ -199,9 +199,11 @@ export interface PnlSummary {
   total_rental: number         // thuê tài khoản
   total_other: number          // chi phí khác
   total_revenue: number
-  total_profit: number         // revenue - (spend + rental + other)
+  total_profit: number         // confirmed revenue - (spend + rental + other)
   avg_roi: number              // profit / total_cost * 100
   total_screen_revenue: number
+  screen_profit: number        // screen revenue - (spend + rental + other)
+  screen_roi: number           // screen_profit / total_cost * 100
   total_pending: number
   share_access_level?: ShareAccessLevel | null  // set for member role
   effective_permissions?: SharePermissions | null  // respects custom overrides

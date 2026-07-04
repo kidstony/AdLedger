@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from('affiliate_revenue')
-    .select('project_id, date, type, amount, note, payout_start_date, payout_end_date, confirmed_at')
+    .select('*')
     .gte('date', from)
     .lte('date', to)
 
@@ -75,7 +75,7 @@ export async function PATCH(req: NextRequest) {
   const caller = await getCallerProfile(req)
   if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { project_id, date, type = 'pending', note, payout_start_date, payout_end_date } = await req.json()
+  const { project_id, date, type = 'pending', note, payout_start_date, payout_end_date, cycle_end } = await req.json()
 
   if (!project_id || !date) return NextResponse.json({ error: 'project_id and date required' }, { status: 400 })
 
@@ -84,10 +84,11 @@ export async function PATCH(req: NextRequest) {
     if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const fields: Record<string, string | null> = {}
+  const fields: Record<string, string | boolean | null> = {}
   if (note !== undefined) fields.note = note ?? null
   if (payout_start_date !== undefined) fields.payout_start_date = payout_start_date ?? null
   if (payout_end_date !== undefined) fields.payout_end_date = payout_end_date ?? null
+  if (cycle_end !== undefined) fields.cycle_end = !!cycle_end
 
   if (Object.keys(fields).length === 0) return NextResponse.json({ success: true })
 

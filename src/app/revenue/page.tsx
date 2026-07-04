@@ -3,13 +3,11 @@
 import { useRef, useMemo, useState, useEffect, useCallback } from 'react'
 import {
   Loader2, Banknote, Monitor,
-  Search, Keyboard, CheckCircle2, Cloud, SlidersHorizontal, CircleCheck,
-  RotateCcw, X,
+  Search, Keyboard, CheckCircle2, Cloud, SlidersHorizontal,
 } from 'lucide-react'
 import { useRevenueGrid } from '@/hooks/useRevenueGrid'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { useAuth } from '@/context/AuthContext'
-import { supabase } from '@/lib/supabase'
 import EditableCell from '@/components/revenue/EditableCell'
 import ProjectFilterDropdown, { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
 import RevenueSummaryCards from '@/components/revenue/RevenueSummaryCards'
@@ -28,23 +26,6 @@ function addDays(date: string, n: number): string {
 
 type NoteModal    = { projectId: string; date: string; current: string }
 type PayoutModal  = { projectId: string; date: string; start: string; end: string }
-type UndoToast    = { items: Array<{ project_id: string; date: string }>; total: number; count: number; secondsLeft: number }
-
-function Checkbox({ checked, indeterminate }: { checked: boolean; indeterminate?: boolean }) {
-  return (
-    <div className={cn(
-      'w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors select-none',
-      checked ? 'bg-emerald-500 border-emerald-500' : indeterminate ? 'bg-white border-blue-400' : 'bg-white border-slate-300'
-    )}>
-      {checked && (
-        <svg width="8" height="6" fill="none" viewBox="0 0 8 6">
-          <path d="M1 3L3 5.5 7 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      )}
-      {indeterminate && !checked && <div className="w-2 h-0.5 bg-blue-400 rounded" />}
-    </div>
-  )
-}
 
 // ── keyboard shortcut list ───────────────────────────────────────────────────
 const SHORTCUTS = [
@@ -71,10 +52,11 @@ export default function RevenuePage() {
     canUndo, canRedo, toast, setToast,
     undo, redo,
     switchMode,
-    customFrom, customTo, setCustomRange, refreshRevenue,
+    customFrom, customTo, setCustomRange,
     updateCell, clearCell, bulkUpdateCells, bulkClearCells,
-    saveNote, savePayout, confirmCell, revertCells, flushSave,
+    saveNote, savePayout,
     statusMap, confirmedAtMap,
+    cycleEndMap, prevCycleEndMap, toggleCycleEnd,
   } = useRevenueGrid()
 
   // Members chỉ nhập được dự án có effective input_revenue = true
@@ -93,16 +75,7 @@ export default function RevenuePage() {
   const [filterIds,         setFilterIds]         = useState<Set<string>>(new Set())
   const [noteModal,         setNoteModal]         = useState<NoteModal | null>(null)
   const [payoutModal,       setPayoutModal]       = useState<PayoutModal | null>(null)
-  const [batchConfirmModal, setBatchConfirmModal] = useState(false)
-  const [batchConfirmLoading, setBatchConfirmLoading] = useState(false)
   const [showShortcuts,     setShowShortcuts]     = useState(false)
-  const [checkedProjectIds, setCheckedProjectIds] = useState<Set<string>>(new Set())
-  const [undoToast,         setUndoToast]         = useState<UndoToast | null>(null)
-  const undoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const [showBatchAllConfirm, setShowBatchAllConfirm] = useState(false)
-  const [batchAllSelected,    setBatchAllSelected]    = useState<Set<string>>(new Set())
-  const [batchAllLoading,     setBatchAllLoading]     = useState(false)
 
   // ── Excel-style range selection for bulk delete ──
   const [sel, setSel] = useState<{ a: { pi: number; di: number }; f: { pi: number; di: number } } | null>(null)
@@ -149,143 +122,12 @@ export default function RevenuePage() {
     setCustomRange(from > v ? v : from, v) // auto-clamp: if new to < from, collapse from = to
   }
 
-  // Projects with ≥1 pending cell in current range (screen tab, non-all)
-  const pendingProjectIds = useMemo(() => {
-    if (activeTab !== 'screen' || isReadOnlyGlobal) return new Set<string>()
-    return new Set(filteredProjects.map(p => p.project_id))
-  }, [activeTab, isReadOnlyGlobal, filteredProjects])
-
-  // All pending (project_id, date) pairs from checked projects
-  const selectedPendingItems = useMemo(() => {
-    const items: Array<{ project_id: string; date: string; amount: number }> = []
-    checkedProjectIds.forEach(pid => {
-      dates.forEach(d => {
-        const key = `${pid}__${d}`
-        const sv = screenGrid.get(key) ?? 0
-        if (sv > 0) items.push({ project_id: pid, date: d, amount: sv })
-      })
-    })
-    return items
-  }, [checkedProjectIds, dates, screenGrid])
-
-  const selectedPendingTotal = useMemo(
-    () => selectedPendingItems.reduce((s, i) => s + i.amount, 0),
-    [selectedPendingItems]
-  )
-
-  const selectedDateRange = useMemo(() => {
-    if (selectedPendingItems.length === 0) return ''
-    const ds = selectedPendingItems.map(i => i.date).sort()
-    const from = ds[0], to = ds[ds.length - 1]
-    const f = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
-    if (from === to) return `ngày ${f(from)}`
-    return `từ ${f(from)} đến ${f(to)}`
-  }, [selectedPendingItems])
-
-  // Clear checked when range/tab changes
-  useEffect(() => { setCheckedProjectIds(new Set()) }, [dates, activeTab])
-
   // Clear range-selection when the grid shape changes (row/col indices would be stale)
   useEffect(() => { setSel(null) }, [dates, activeTab, filteredProjects])
-
-  function toggleProject(pid: string) {
-    setCheckedProjectIds(prev => { const n = new Set(prev); n.has(pid) ? n.delete(pid) : n.add(pid); return n })
-  }
-  function toggleAllProjects() {
-    const allChecked = [...pendingProjectIds].every(pid => checkedProjectIds.has(pid))
-    setCheckedProjectIds(allChecked ? new Set() : new Set(pendingProjectIds))
-  }
-
-  function startUndoCountdown(data: Omit<UndoToast, 'secondsLeft'>) {
-    if (undoIntervalRef.current) clearInterval(undoIntervalRef.current)
-    setUndoToast({ ...data, secondsLeft: 10 })
-    undoIntervalRef.current = setInterval(() => {
-      setUndoToast(prev => {
-        if (!prev || prev.secondsLeft <= 1) { clearInterval(undoIntervalRef.current!); return null }
-        return { ...prev, secondsLeft: prev.secondsLeft - 1 }
-      })
-    }, 1000)
-  }
-
-  async function handleBatchConfirm() {
-    setBatchConfirmLoading(true)
-    const items = selectedPendingItems.map(i => ({ project_id: i.project_id, date: i.date, amount: i.amount }))
-    const total = selectedPendingTotal
-    const count = items.length
-    const { data: { session } } = await supabase.auth.getSession()
-    const res = await fetch('/api/revenue/confirm-batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
-      body: JSON.stringify({ items }),
-    })
-    setBatchConfirmLoading(false)
-    setBatchConfirmModal(false)
-    if (res.ok) {
-      setCheckedProjectIds(new Set())
-      refreshRevenue()
-      startUndoCountdown({ items, total, count })
-    } else {
-      showPageToast('Lỗi: Không thể xác nhận. Vui lòng thử lại.')
-    }
-  }
-
-  async function handleBatchAllConfirm() {
-    const toConfirm = batchAllSelected.size > 0
-      ? batchAllItems.filter(i => batchAllSelected.has(i.key))
-      : batchAllItems
-    const total = toConfirm.reduce((s, i) => s + i.confirmAmount, 0)
-    const count = toConfirm.length
-    setBatchAllLoading(true)
-    const { data: { session } } = await supabase.auth.getSession()
-    const res = await fetch('/api/revenue/confirm-batch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
-      body: JSON.stringify({ items: toConfirm.map(i => ({ project_id: i.project_id, date: i.date, amount: i.confirmAmount })) }),
-    })
-    setBatchAllLoading(false)
-    if (res.ok) {
-      setShowBatchAllConfirm(false)
-      setBatchAllSelected(new Set())
-      refreshRevenue()
-      startUndoCountdown({ items: toConfirm.map(i => ({ project_id: i.project_id, date: i.date })), total, count })
-    } else {
-      showPageToast('Lỗi: Không thể xác nhận. Vui lòng thử lại.')
-    }
-  }
 
   function showPageToast(msg: string) {
     setToast(msg)
     setTimeout(() => setToast(null), 3000)
-  }
-
-  async function handleUndo() {
-    if (!undoToast) return
-    clearInterval(undoIntervalRef.current!)
-    const items = undoToast.items
-    setUndoToast(null)
-    const ok = await revertCells(items)
-    if (ok) {
-      showPageToast('Đã hoàn tác xác nhận')
-    } else {
-      showPageToast('Lỗi: Không thể hoàn tác. Vui lòng thử lại.')
-    }
-  }
-
-  async function handleConfirmDirect(projectId: string, date: string, amount: number, projectName: string) {
-    await flushSave()
-    await confirmCell(projectId, date, amount)
-    refreshRevenue()
-    startUndoCountdown({ items: [{ project_id: projectId, date }], total: amount, count: 1 })
-  }
-
-  async function handleRevertDirect(projectId: string, date: string, amount: number) {
-    const ok = await revertCells([{ project_id: projectId, date }])
-    if (ok) {
-      refreshRevenue()
-      showPageToast(`Đã hoàn tác ${formatVND(amount)}`)
-    } else {
-      showPageToast('Lỗi: Không thể hoàn tác. Vui lòng thử lại.')
-    }
   }
 
   // Data for filter dropdown: compute per-project totals in current period
@@ -303,75 +145,15 @@ export default function RevenuePage() {
       const total = dates.reduce((sum, d, di) => {
         const key = `${p.project_id}__${d}`
         if (viewMode !== 'all' && activeTab === 'screen' && p.screen_revenue_type === 'cumulative') {
-          const currRaw = screenGrid.get(key)
-          if (currRaw === undefined) return sum
-          const prevDate = di === 0 ? addDays(dates[0], -1) : dates[di - 1]
-          const prevKey  = `${p.project_id}__${prevDate}`
-          const prev     = di === 0 ? (prevScreenMap.get(prevKey) ?? 0) : (screenGrid.get(prevKey) ?? 0)
-          return sum + (currRaw - prev)
+          if (screenGrid.get(key) === undefined) return sum
+          return sum + getCumulativeDelta(p.project_id, d, di).delta
         }
         return sum + (gridData.get(key) ?? 0)
       }, 0)
       return { project_id: p.project_id, name: p.name, total }
     }),
-    [filteredProjects, dates, gridData, screenGrid, prevScreenMap, activeTab, viewMode]
+    [filteredProjects, dates, gridData, screenGrid, prevScreenMap, activeTab, viewMode, cycleEndMap, prevCycleEndMap]
   )
-
-  // Pending / confirmed split for summary cards (screen tab only)
-  const { pendingTotal, confirmedTotal } = useMemo(() => {
-    if (activeTab !== 'screen') return { pendingTotal: undefined, confirmedTotal: undefined }
-    let pending = 0, confirmed = 0
-    filteredProjects.forEach(p => {
-      dates.forEach((d, di) => {
-        const key = `${p.project_id}__${d}`
-        const isConfirmed = statusMap.get(key) === 'confirmed'
-        let amount = 0
-        if (p.screen_revenue_type === 'cumulative' && viewMode !== 'all') {
-          if (screenGrid.get(key) === undefined) return
-          amount = getCumulativeDelta(p.project_id, d, di).delta
-        } else {
-          amount = screenGrid.get(key) ?? 0
-        }
-        if (isConfirmed) confirmed += amount
-        else pending += amount
-      })
-    })
-    return { pendingTotal: pending, confirmedTotal: confirmed }
-  }, [activeTab, filteredProjects, dates, screenGrid, prevScreenMap, statusMap, viewMode])
-
-  // Confirm items for the "Xác nhận hàng loạt" dialog.
-  // Cumulative projects use delta (curr − prev) so the total equals the latest
-  // running total, not a sum of every day's stored cumulative value.
-  type BatchAllItem = {
-    key: string; project_id: string; project_name: string; date: string
-    rawAmount: number; confirmAmount: number; is_cumulative: boolean
-  }
-  const batchAllItems = useMemo((): BatchAllItem[] => {
-    if (!showBatchAllConfirm) return []
-    const prevDate = dates.length > 0 ? addDays(dates[0], -1) : ''
-    return projects.flatMap(project => {
-      const isCumulative = project.screen_revenue_type === 'cumulative'
-      const entries = dates
-        .map(d => ({ date: d, amount: screenGrid.get(`${project.project_id}__${d}`) ?? 0 }))
-        .filter(e => e.amount > 0)
-      if (entries.length === 0) return []
-      const prevAmount = prevDate
-        ? (prevScreenMap.get(`${project.project_id}__${prevDate}`) ?? 0)
-        : 0
-      return entries.map((e, i) => {
-        const prev = isCumulative ? (i === 0 ? prevAmount : entries[i - 1].amount) : 0
-        return {
-          key: `${project.project_id}__${e.date}`,
-          project_id: project.project_id,
-          project_name: project.name,
-          date: e.date,
-          rawAmount: e.amount,
-          confirmAmount: isCumulative ? Math.max(0, e.amount - prev) : e.amount,
-          is_cumulative: isCumulative,
-        }
-      })
-    })
-  }, [showBatchAllConfirm, projects, dates, screenGrid, prevScreenMap])
 
   // ── keyboard shortcuts (global) ─────────────────────────────────────────────
   useEffect(() => {
@@ -383,9 +165,6 @@ export default function RevenuePage() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' &&  e.shiftKey) { e.preventDefault(); redo(); return }
 
-      // Close batch confirm dialog on Escape
-      if (e.key === 'Escape' && showBatchAllConfirm) { setShowBatchAllConfirm(false); return }
-
       // Search shortcut `/`
       if (e.key === '/' && !inInput) { e.preventDefault(); searchRef.current?.focus(); return }
       if (e.key === 'Escape' && document.activeElement === searchRef.current) {
@@ -394,7 +173,7 @@ export default function RevenuePage() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [undo, redo, showBatchAllConfirm])
+  }, [undo, redo])
 
   // ── range-selection: end drag on mouseup, Delete clears, Escape deselects ────
   useEffect(() => {
@@ -452,7 +231,7 @@ export default function RevenuePage() {
         return sum + (gridData.get(key) ?? 0)
       }, 0)
     ),
-    [dates, filteredProjects, gridData, screenGrid, prevScreenMap, activeTab, viewMode]
+    [dates, filteredProjects, gridData, screenGrid, prevScreenMap, activeTab, viewMode, cycleEndMap, prevCycleEndMap]
   )
 
   // ── navigation ──────────────────────────────────────────────────────────────
@@ -498,17 +277,28 @@ export default function RevenuePage() {
     const cumulative = screenGrid.get(key) ?? 0
 
     let prev = 0
+    let prevIsCycleEnd = false
     if (di === 0) {
-      prev = prevScreenMap.get(`${projectId}__${addDays(dates[0], -1)}`) ?? 0
+      const pk = `${projectId}__${addDays(dates[0], -1)}`
+      prev = prevScreenMap.get(pk) ?? 0
+      prevIsCycleEnd = prevCycleEndMap.get(pk) ?? false
     } else {
       // Scan backwards for the last non-undefined entry — gaps mean running total unchanged
       let found = false
       for (let i = di - 1; i >= 0; i--) {
-        const v = screenGrid.get(`${projectId}__${dates[i]}`)
-        if (v !== undefined) { prev = v; found = true; break }
+        const pk = `${projectId}__${dates[i]}`
+        const v = screenGrid.get(pk)
+        if (v !== undefined) { prev = v; prevIsCycleEnd = cycleEndMap.get(pk) ?? false; found = true; break }
       }
-      if (!found) prev = prevScreenMap.get(`${projectId}__${addDays(dates[0], -1)}`) ?? 0
+      if (!found) {
+        const pk = `${projectId}__${addDays(dates[0], -1)}`
+        prev = prevScreenMap.get(pk) ?? 0
+        prevIsCycleEnd = prevCycleEndMap.get(pk) ?? false
+      }
     }
+
+    // Ngày baseline đã "chốt kỳ" (đã thanh toán) → platform reset bộ đếm, đếm lại từ 0
+    if (prevIsCycleEnd) prev = 0
 
     return { delta: cumulative - prev, cumulative }
   }
@@ -672,31 +462,10 @@ export default function RevenuePage() {
         dates={dates}
         viewMode={viewMode}
         anchorDate={anchorDate}
-        pendingTotal={pendingTotal}
-        confirmedTotal={confirmedTotal}
       />
 
       {/* ── Search + Table ─────────────────────────────────────────────────── */}
       <div className="relative border border-slate-200 rounded-lg overflow-hidden">
-        {/* Batch confirm banner */}
-        {activeTab === 'screen' && !isReadOnlyGlobal && checkedProjectIds.size > 0 && (
-          <div className="bg-emerald-600 text-white px-4 py-2.5 flex items-center gap-3">
-            <span className="text-sm font-semibold">{selectedPendingItems.length} khoản đã chọn</span>
-            <span className="text-emerald-300 text-sm">·</span>
-            <span className="text-sm font-bold">{formatVND(selectedPendingTotal)}</span>
-            <button
-              onClick={() => setCheckedProjectIds(new Set())}
-              className="text-xs text-emerald-200 hover:text-white ml-1 transition-colors"
-            >Bỏ chọn</button>
-            <div className="flex-1" />
-            <button
-              onClick={() => setBatchConfirmModal(true)}
-              disabled={selectedPendingItems.length === 0}
-              className="px-3 py-1.5 text-xs font-semibold bg-white text-emerald-700 rounded-md hover:bg-emerald-50 transition-colors disabled:opacity-50"
-            >Xác nhận hàng loạt</button>
-          </div>
-        )}
-
         {/* Search bar above table */}
         <div className="sticky top-0 z-20 bg-white border-b border-slate-100 px-3 py-2 flex items-center gap-2">
           <Search size={13} className="text-slate-400 shrink-0" />
@@ -710,14 +479,6 @@ export default function RevenuePage() {
           {searchQuery && (
             <span className="text-xs text-slate-400">{filteredProjects.length}/{projects.length} dự án</span>
           )}
-          {activeTab === 'screen' && !isReadOnlyGlobal && (
-            <button
-              onClick={() => { setShowBatchAllConfirm(true); setBatchAllSelected(new Set()) }}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors shrink-0"
-            >
-              <CircleCheck size={11} /> Xác nhận hàng loạt
-            </button>
-          )}
         </div>
 
         <div className="overflow-auto max-h-[calc(100vh-290px)]">
@@ -730,17 +491,7 @@ export default function RevenuePage() {
             <thead className="sticky top-0 z-10 bg-slate-50">
               <tr>
                 <th className="sticky left-0 z-20 bg-slate-50 px-4 py-2.5 text-left text-xs font-medium border-b border-r border-slate-200 w-52 min-w-[208px]">
-                  <div className="flex items-center gap-2">
-                    {activeTab === 'screen' && !isReadOnlyGlobal && pendingProjectIds.size > 0 && (
-                      <div onClick={toggleAllProjects} className="cursor-pointer shrink-0">
-                        <Checkbox
-                          checked={[...pendingProjectIds].every(pid => checkedProjectIds.has(pid))}
-                          indeterminate={checkedProjectIds.size > 0 && ![...pendingProjectIds].every(pid => checkedProjectIds.has(pid))}
-                        />
-                      </div>
-                    )}
-                    <span className="text-slate-500 uppercase tracking-wide text-[10px]">Dự án</span>
-                  </div>
+                  <span className="text-slate-500 uppercase tracking-wide text-[10px]">Dự án</span>
                 </th>
                 {dates.map(d => (
                   <th
@@ -767,23 +518,11 @@ export default function RevenuePage() {
               {filteredProjects.map((project, pi) => {
                 const isCumulative = activeTab === 'screen' && project.screen_revenue_type === 'cumulative'
                 const isReadOnly   = viewMode === 'all'
-                const hasPending   = pendingProjectIds.has(project.project_id)
 
                 return (
                   <tr key={project.project_id} className="border-b border-slate-100 hover:bg-slate-50/40">
                     <td className="sticky left-0 bg-white border-r border-slate-200 px-3 py-0 z-10">
                       <div className="flex items-center gap-1.5 py-2">
-                        {activeTab === 'screen' && !isReadOnly && (
-                          <div
-                            className="shrink-0 cursor-pointer"
-                            onClick={e => { e.stopPropagation(); if (hasPending) toggleProject(project.project_id) }}
-                          >
-                            {hasPending
-                              ? <Checkbox checked={checkedProjectIds.has(project.project_id)} />
-                              : <div className="w-4 h-4" />
-                            }
-                          </div>
-                        )}
                         <div className="flex flex-col min-w-0 flex-1">
                           <Tooltip>
                             <TooltipTrigger className="font-medium text-slate-700 text-xs truncate text-left leading-tight">
@@ -841,14 +580,13 @@ export default function RevenuePage() {
                                 onNavigate={dir => navigate(pi, di, dir)}
                                 onFocus={() => { focusedCellRef.current = { pi, di } }}
                                 onPaste={handlePaste}
-                                displayValue={hasDelta && delta !== 0 ? delta : undefined}
-                                valueSubtitle={hasDelta && delta !== 0 ? `${formatVND(cumulative)} cộng dồn` : undefined}
-                                valueColorClass={delta < 0 ? 'text-red-600' : 'text-slate-700'}
+                                displayValue={isConfirmed ? 0 : (hasDelta && delta !== 0 ? delta : undefined)}
+                                valueSubtitle={isConfirmed ? '✓ đã nhận' : (hasDelta && delta !== 0 ? `${formatVND(cumulative)} cộng dồn` : undefined)}
+                                valueColorClass={isConfirmed ? 'text-slate-300' : (delta < 0 ? 'text-red-600' : 'text-slate-700')}
                                 hasNote={hasNote}
                                 onNoteClick={() => setNoteModal({ projectId: project.project_id, date, current: noteMap.get(key) ?? '' })}
-                                onConfirmClick={(hasDelta && delta > 0)
-                                  ? () => handleConfirmDirect(project.project_id, date, delta, project.name)
-                                  : undefined}
+                                isCycleEnd={cycleEndMap.get(key) ?? false}
+                                onCycleEndClick={hasDelta ? () => toggleCycleEnd(project.project_id, date, !(cycleEndMap.get(key) ?? false)) : undefined}
                               />
                             </div>
                           </td>
@@ -897,12 +635,6 @@ export default function RevenuePage() {
                                   const ex = payoutMap.get(key)
                                   setPayoutModal({ projectId: project.project_id, date, start: ex?.start ?? '', end: ex?.end ?? date })
                                 } : undefined}
-                                onConfirmClick={(!isRevTab && !isConfirmed && (cellValue ?? 0) > 0)
-                                  ? () => handleConfirmDirect(project.project_id, date, cellValue ?? 0, project.name)
-                                  : undefined}
-                                onRevertClick={(isRevTab && isConfirmed && (cellValue ?? 0) > 0)
-                                  ? () => handleRevertDirect(project.project_id, date, cellValue ?? 0)
-                                  : undefined}
                               />
                             )}
                           </div>
@@ -996,36 +728,6 @@ export default function RevenuePage() {
         </div>
       )}
 
-      {/* ── Batch confirm modal ────────────────────────────────────────────── */}
-      {batchConfirmModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-5 w-[340px]">
-            <h3 className="font-semibold text-slate-800 mb-2">Xác nhận thanh toán</h3>
-            <p className="text-sm text-slate-600 mb-4">
-              Xác nhận{' '}
-              <span className="font-semibold">{selectedPendingItems.length} khoản</span>, tổng{' '}
-              <span className="font-semibold text-emerald-700">{formatVND(selectedPendingTotal)}</span>{' '}
-              {selectedDateRange} đã được thanh toán?
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setBatchConfirmModal(false)}
-                disabled={batchConfirmLoading}
-                className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50"
-              >Hủy</button>
-              <button
-                onClick={handleBatchConfirm}
-                disabled={batchConfirmLoading}
-                className="flex items-center gap-1.5 px-4 py-1.5 text-xs bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-60"
-              >
-                {batchConfirmLoading && <Loader2 size={10} className="animate-spin" />}
-                Đồng ý, xác nhận
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── Bulk-delete confirm (Excel-style range selection) ─────────────── */}
       {clearSelModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -1057,158 +759,6 @@ export default function RevenuePage() {
         </div>
       )}
 
-      {/* ── Batch all confirm dialog ──────────────────────────────────────── */}
-      {showBatchAllConfirm && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-[580px] max-h-[80vh] flex flex-col">
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-              <div>
-                <h3 className="font-semibold text-slate-800">Xác nhận hàng loạt</h3>
-                {dates.length > 0 && (
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {fmtShort(dates[0])} – {fmtShort(dates[dates.length - 1])}
-                  </p>
-                )}
-              </div>
-              <button onClick={() => setShowBatchAllConfirm(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
-                <X size={16} />
-              </button>
-            </div>
-
-            {/* Select all row */}
-            {batchAllItems.length > 0 && (
-              <div className="px-5 py-2.5 border-b border-slate-100 flex items-center gap-2.5">
-                <div
-                  onClick={() => {
-                    const allSelected = batchAllItems.every(i => batchAllSelected.has(i.key))
-                    setBatchAllSelected(allSelected ? new Set() : new Set(batchAllItems.map(i => i.key)))
-                  }}
-                  className="cursor-pointer"
-                >
-                  <Checkbox
-                    checked={batchAllItems.length > 0 && batchAllItems.every(i => batchAllSelected.has(i.key))}
-                    indeterminate={batchAllSelected.size > 0 && !batchAllItems.every(i => batchAllSelected.has(i.key))}
-                  />
-                </div>
-                <span className="text-xs text-slate-500">Chọn tất cả</span>
-                <span className="ml-auto text-xs text-slate-400">{batchAllItems.length} khoản chờ xác nhận</span>
-              </div>
-            )}
-
-            {/* Item list */}
-            <div className="overflow-y-auto flex-1">
-              {batchAllItems.length === 0 ? (
-                <div className="py-16 text-center text-sm text-slate-400">
-                  Không có khoản nào chờ xác nhận trong khoảng thời gian này
-                </div>
-              ) : (
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-slate-50 border-b border-slate-100">
-                    <tr>
-                      <th className="w-10" />
-                      <th className="text-left px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide">Dự án</th>
-                      <th className="text-center px-3 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide">Ngày</th>
-                      <th className="text-right px-4 py-2.5 text-[10px] font-medium text-slate-400 uppercase tracking-wide">Số tiền</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {batchAllItems.map(item => (
-                      <tr
-                        key={item.key}
-                        onClick={() => setBatchAllSelected(prev => {
-                          const n = new Set(prev); n.has(item.key) ? n.delete(item.key) : n.add(item.key); return n
-                        })}
-                        className="border-t border-slate-50 hover:bg-slate-50 cursor-pointer transition-colors"
-                      >
-                        <td className="pl-4 py-2.5"><Checkbox checked={batchAllSelected.has(item.key)} /></td>
-                        <td className="px-4 py-2.5 text-slate-700">
-                          <div className="font-medium">{item.project_name}</div>
-                          {item.is_cumulative && (
-                            <div className="text-[10px] text-slate-400 mt-0.5">
-                              Tổng tích lũy: {formatVND(item.rawAmount)}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-3 py-2.5 text-center text-slate-500">
-                          {new Date(item.date + 'T00:00:00').toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}
-                        </td>
-                        <td className="px-4 py-2.5 text-right">
-                          <span className="font-semibold text-slate-800">{formatVND(item.confirmAmount)}</span>
-                          {item.is_cumulative && (
-                            <span className="ml-1 text-[10px] font-normal text-blue-500 align-middle">Δ</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between">
-              <div className="text-sm">
-                <span className="text-slate-500 text-xs">Tổng: </span>
-                <span className="font-semibold text-slate-800">
-                  {formatVND(
-                    (batchAllSelected.size > 0
-                      ? batchAllItems.filter(i => batchAllSelected.has(i.key))
-                      : batchAllItems
-                    ).reduce((s, i) => s + i.confirmAmount, 0)
-                  )}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setShowBatchAllConfirm(false)}
-                  disabled={batchAllLoading}
-                  className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50"
-                >Hủy</button>
-                <button
-                  onClick={handleBatchAllConfirm}
-                  disabled={batchAllLoading || batchAllItems.length === 0}
-                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-60 transition-colors"
-                >
-                  {batchAllLoading && <Loader2 size={10} className="animate-spin" />}
-                  {batchAllSelected.size > 0
-                    ? `Xác nhận ${batchAllSelected.size} khoản đã chọn`
-                    : `Xác nhận tất cả (${batchAllItems.length} khoản)`
-                  }
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Undo toast (10s countdown) ────────────────────────────────────── */}
-      {undoToast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-800 text-white text-xs rounded-xl shadow-xl overflow-hidden w-72">
-          <div className="px-4 py-3 flex items-center gap-3">
-            <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
-            <div className="flex-1">
-              <div className="font-semibold">Đã xác nhận {undoToast.count} khoản</div>
-              <div className="text-slate-300 text-[11px]">{formatVND(undoToast.total)}</div>
-            </div>
-            <button
-              onClick={handleUndo}
-              className="px-2.5 py-1.5 text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-white rounded-md shrink-0 transition-colors"
-            >↩ Hoàn tác ({undoToast.secondsLeft}s)</button>
-            <button
-              onClick={() => { clearInterval(undoIntervalRef.current!); setUndoToast(null) }}
-              className="text-slate-400 hover:text-white transition-colors shrink-0"
-            ><X size={12} /></button>
-          </div>
-          {/* Progress bar */}
-          <div className="h-0.5 bg-slate-700">
-            <div
-              className="h-full bg-amber-500 transition-all"
-              style={{ width: `${(undoToast.secondsLeft / 10) * 100}%` }}
-            />
-          </div>
-        </div>
-      )}
     </div>
   )
 }

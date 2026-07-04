@@ -17,9 +17,6 @@ interface Props {
   dates: string[]
   viewMode: ViewMode
   anchorDate: string
-  // Status breakdown (screen tab only)
-  pendingTotal?: number
-  confirmedTotal?: number
 }
 
 function periodLabel(viewMode: ViewMode, anchorDate: string, dates: string[]): string {
@@ -33,7 +30,7 @@ function periodLabel(viewMode: ViewMode, anchorDate: string, dates: string[]): s
   return ''
 }
 
-export default function RevenueSummaryCards({ projectTotals, totalProjectCount, dates, viewMode, anchorDate, pendingTotal, confirmedTotal }: Props) {
+export default function RevenueSummaryCards({ projectTotals, totalProjectCount, dates, viewMode, anchorDate }: Props) {
   const { grandTotal, topProject, avgPerDay, activeCount, filteredCount } = useMemo(() => {
     const grand = projectTotals.reduce((s, p) => s + p.total, 0)
     const sorted = [...projectTotals].sort((a, b) => b.total - a.total)
@@ -48,7 +45,7 @@ export default function RevenueSummaryCards({ projectTotals, totalProjectCount, 
 
   return (
     <div className="grid grid-cols-4 gap-2.5 mb-3">
-      {/* Card 1: Total (or pending/confirmed split when in screen tab) */}
+      {/* Card 1: Total */}
       <div className="bg-white border border-blue-200 rounded-xl px-4 py-3 shadow-sm">
         <div className="flex items-center gap-1.5 text-[11px] text-blue-500 font-medium mb-1.5">
           <TrendingUp size={11} />
@@ -57,30 +54,8 @@ export default function RevenueSummaryCards({ projectTotals, totalProjectCount, 
             <span className="ml-1 text-blue-400">({filteredCount} dự án)</span>
           )}
         </div>
-        {pendingTotal !== undefined && confirmedTotal !== undefined ? (
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-amber-600 font-medium">⏳ Chờ xác nhận</span>
-              <span className="text-sm font-bold text-amber-700">
-                {pendingTotal > 0
-                  ? formatVND(pendingTotal)
-                  : pendingTotal < 0
-                    ? <span className="text-red-600">-{formatVND(Math.abs(pendingTotal))}</span>
-                    : <span className="opacity-30">$0.00</span>
-                }
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-blue-600 font-medium">✓ Đã xác nhận</span>
-              <span className="text-sm font-bold text-blue-700">{confirmedTotal > 0 ? formatVND(confirmedTotal) : <span className="opacity-30">$0.00</span>}</span>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="text-xl font-bold text-blue-600">{grandTotal > 0 ? formatVND(grandTotal) : <span className="opacity-30">$0.00</span>}</div>
-            <div className="text-[11px] text-slate-400 mt-1">{activeCount} dự án đang hoạt động</div>
-          </>
-        )}
+        <div className="text-xl font-bold text-blue-600">{grandTotal > 0 ? formatVND(grandTotal) : <span className="opacity-30">$0.00</span>}</div>
+        <div className="text-[11px] text-slate-400 mt-1">{activeCount} dự án đang hoạt động</div>
       </div>
 
       {/* Card 2: Top project */}

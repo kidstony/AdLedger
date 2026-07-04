@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, KeyboardEvent, ClipboardEvent } from 'react'
-import { Pencil, CheckCircle2, RotateCcw } from 'lucide-react'
+import { Pencil, Flag } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -22,9 +22,9 @@ interface Props {
   // Billing period indicator (double-click to tag)
   hasPayout?: boolean
   onDoubleClick?: () => void
-  // Payment confirmation / revert
-  onConfirmClick?: () => void
-  onRevertClick?: () => void
+  // "Chốt kỳ" — mark cycle end (reset cumulative baseline) on this pending cell
+  isCycleEnd?: boolean
+  onCycleEndClick?: () => void
 }
 
 export default function EditableCell({
@@ -32,7 +32,7 @@ export default function EditableCell({
   displayValue, valueSubtitle, valueColorClass,
   hasNote, onNoteClick,
   hasPayout, onDoubleClick,
-  onConfirmClick, onRevertClick,
+  isCycleEnd, onCycleEndClick,
 }: Props) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -148,27 +148,20 @@ export default function EditableCell({
         </button>
       )}
 
-      {/* Confirm payment button */}
-      {onConfirmClick && !editing && (mainValue ?? 0) > 0 && (
+      {/* "Chốt kỳ" toggle — mark cycle end (reset cumulative baseline next day) */}
+      {onCycleEndClick && !editing && (
         <button
-          onClick={e => { e.stopPropagation(); onConfirmClick() }}
-          className="absolute bottom-0.5 right-0.5 p-0.5 rounded text-emerald-400 hover:text-emerald-600 transition-colors"
-          title="Xác nhận đã nhận thanh toán"
+          onClick={e => { e.stopPropagation(); onCycleEndClick() }}
+          className={cn(
+            'absolute bottom-0.5 right-0.5 p-0.5 rounded transition-colors',
+            isCycleEnd ? 'text-purple-600 hover:text-purple-700' : 'text-slate-300 hover:text-slate-500'
+          )}
+          title={isCycleEnd ? 'Đã chốt kỳ (kỳ sau tính lại từ 0) — bấm để bỏ' : 'Chốt kỳ: đã thanh toán, reset mốc luỹ kế'}
         >
-          <CheckCircle2 size={11} />
+          <Flag size={9} className={isCycleEnd ? 'fill-purple-600' : ''} />
         </button>
       )}
 
-      {/* Revert confirmation button */}
-      {onRevertClick && !editing && (
-        <button
-          onClick={e => { e.stopPropagation(); onRevertClick() }}
-          className="absolute bottom-0.5 right-0.5 p-0.5 rounded text-amber-400 hover:text-amber-600 transition-colors"
-          title="Hoàn tác xác nhận"
-        >
-          <RotateCcw size={11} />
-        </button>
-      )}
     </div>
     </div>
   )

@@ -13,18 +13,16 @@ import { useAuth } from '@/context/AuthContext'
 interface Props {
   data: PnlSummary[]
   isLoading: boolean
+  view: 'screen' | 'confirmed'
 }
 
 const columns: { key: string; label: string; sortable: boolean; align: string; icon?: boolean }[] = [
   { key: 'name',                 label: 'Tên dự án',      sortable: true,  align: 'text-left' },
   { key: 'cid',                  label: 'CID',             sortable: false, align: 'text-left' },
-  { key: 'total_spend',          label: 'Chi phí QC',      sortable: true,  align: 'text-right' },
-  { key: 'total_rental',         label: 'Thuê TK',         sortable: true,  align: 'text-right' },
-  { key: 'total_other',          label: 'CP Khác',         sortable: true,  align: 'text-right' },
+  { key: 'total_cost',           label: 'Tổng CP',         sortable: true,  align: 'text-right' },
   { key: 'total_revenue',        label: 'Doanh thu',       sortable: true,  align: 'text-right' },
   { key: 'total_screen_revenue', label: 'DT Màn hình',     sortable: false, align: 'text-right', icon: true },
   { key: 'total_profit',         label: 'Lợi nhuận',       sortable: true,  align: 'text-right' },
-  { key: 'est_profit',           label: 'LN ước tính',     sortable: false, align: 'text-right', icon: true },
   { key: 'avg_roi',              label: 'ROI%',            sortable: true,  align: 'text-right' },
 ]
 
@@ -52,11 +50,12 @@ function SortIcon({ col, sortCol, sortDir }: { col: string; sortCol: string; sor
     : <ArrowDown size={12} className="text-slate-600" />
 }
 
-const nonSortable = new Set(['cid', 'total_screen_revenue', 'est_profit'])
+const nonSortable = new Set(['cid', 'total_screen_revenue'])
 
-export default function PnlTable({ data, isLoading }: Props) {
+export default function PnlTable({ data, isLoading, view }: Props) {
   const router = useRouter()
   const { role } = useAuth()
+  const isScreen = view === 'screen'
 
   // Per-column visibility checks — respect effective_permissions custom overrides
   function fallback(row: (typeof data)[0]): boolean {
@@ -77,14 +76,16 @@ export default function PnlTable({ data, isLoading }: Props) {
     if (row.effective_permissions) return row.effective_permissions.view_profit
     return fallback(row)
   }
-  const [sortCol, setSortCol] = useState<SortColumn>('avg_roi')
+  const [sortCol, setSortCol] = useState<SortColumn | 'total_cost'>('avg_roi')
   const [sortDir, setSortDir] = useState<SortDirection>('desc')
   const [filter, setFilter] = useState<FilterKey>('all')
   const [topN, setTopN] = useState<number | null>(null)
 
+  const costOf = (s: PnlSummary) => s.total_spend + s.total_rental + s.total_other
+
   function handleSort(col: string) {
     if (nonSortable.has(col)) return
-    const c = col as SortColumn
+    const c = col as SortColumn | 'total_cost'
     if (c === sortCol) {
       setSortDir(d => d === 'asc' ? 'desc' : 'asc')
     } else {
@@ -94,8 +95,8 @@ export default function PnlTable({ data, isLoading }: Props) {
   }
 
   const sorted = useMemo(() => [...data].sort((a, b) => {
-    const av = a[sortCol]
-    const bv = b[sortCol]
+    const av = sortCol === 'total_cost' ? costOf(a) : a[sortCol]
+    const bv = sortCol === 'total_cost' ? costOf(b) : b[sortCol]
     if (typeof av === 'string' && typeof bv === 'string') {
       return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av)
     }
@@ -196,34 +197,31 @@ export default function PnlTable({ data, isLoading }: Props) {
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-slate-400">{formatCid(row.cid)}</td>
                 <td className="px-4 py-3 text-right font-mono text-slate-700">
-                  {canSeeSpend(row) ? formatVND(row.total_spend) : '****'}
+                  {!canSeeSpend(row) ? '****' : costOf(row) > 0 ? (
+                    <Tooltip>
+                      <TooltipTrigger className="border-b border-dotted border-slate-300 cursor-help">
+                        {formatVND(costOf(row))}
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <div className="flex flex-col gap-0.5 text-left min-w-[120px]">
+                          <div className="flex justify-between gap-4"><span>QC</span><span className="font-mono">{formatVND(row.total_spend)}</span></div>
+                          <div className="flex justify-between gap-4"><span>Thuê TK</span><span className="font-mono">{row.total_rental > 0 ? formatVND(row.total_rental) : '—'}</span></div>
+                          <div className="flex justify-between gap-4"><span>CP khác</span><span className="font-mono">{row.total_other > 0 ? formatVND(row.total_other) : '—'}</span></div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : <span className="text-slate-300">—</span>}
                 </td>
-                <td className="px-4 py-3 text-right font-mono text-slate-500">
-                  {!canSeeSpend(row) ? '****' : row.total_rental > 0 ? formatVND(row.total_rental) : <span className="text-slate-300">—</span>}
-                </td>
-                <td className="px-4 py-3 text-right font-mono text-slate-500">
-                  {!canSeeSpend(row) ? '****' : row.total_other > 0 ? formatVND(row.total_other) : <span className="text-slate-300">—</span>}
-                </td>
-                <td className="px-4 py-3 text-right font-mono text-slate-700">
+                <td className={cn('px-4 py-3 text-right font-mono', isScreen ? 'text-slate-300' : 'text-slate-700 font-medium')}>
                   {canSeeRevenue(row) ? formatVND(row.total_revenue) : '****'}
                 </td>
-                <td className="px-4 py-3 text-right font-mono text-amber-500">
+                <td className={cn('px-4 py-3 text-right font-mono', isScreen ? 'text-amber-500 font-medium' : 'text-amber-300')}>
                   {!canSeeRevenue(row) ? '****' : row.total_screen_revenue > 0 ? formatVND(row.total_screen_revenue) : <span className="text-slate-300">—</span>}
                 </td>
-                <td className={cn('px-4 py-3 text-right font-mono font-medium', !canSeeProfit(row) ? 'text-slate-400' : getProfitTextClass(row.total_profit))}>
+                <td className={cn('px-4 py-3 text-right font-mono font-medium', !canSeeProfit(row) ? 'text-slate-400' : isScreen ? (row.total_profit >= 0 ? 'text-amber-500' : 'text-red-500') : getProfitTextClass(row.total_profit))}>
                   {canSeeProfit(row) ? (row.total_profit >= 0 ? '+' : '') + formatVND(row.total_profit) : '****'}
                 </td>
-                {(() => {
-                  const totalCost = row.total_spend + row.total_rental + row.total_other
-                  const est = row.total_revenue + row.total_screen_revenue - totalCost
-                  const visible = canSeeProfit(row) && canSeeRevenue(row)
-                  return (
-                    <td className={cn('px-4 py-3 text-right font-mono font-medium', !visible ? 'text-slate-400' : row.total_screen_revenue > 0 ? (est >= 0 ? 'text-amber-500' : 'text-red-500') : 'text-slate-300')}>
-                      {!visible ? '****' : row.total_screen_revenue > 0 ? (est >= 0 ? '+' : '') + formatVND(est) : '—'}
-                    </td>
-                  )
-                })()}
-                <td className={cn('px-4 py-3 text-right font-mono text-xs', !canSeeProfit(row) ? 'text-slate-400' : getRoiTextClass(row.avg_roi))}>
+                <td className={cn('px-4 py-3 text-right font-mono text-xs', !canSeeProfit(row) ? 'text-slate-400' : isScreen ? (row.avg_roi >= 0 ? 'text-amber-500' : 'text-red-500') : getRoiTextClass(row.avg_roi))}>
                   {canSeeProfit(row) ? formatROI(row.avg_roi) : '****'}
                 </td>
               </tr>

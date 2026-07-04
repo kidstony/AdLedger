@@ -29,6 +29,7 @@ interface RevenueRow {
   date: string
   type: 'confirmed' | 'pending'
   amount: number
+  cycle_end?: boolean | null
 }
 
 export function usePnlData() {
@@ -36,6 +37,7 @@ export function usePnlData() {
   const { dateRange, setDateRange } = useDateRange()
   const { role } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
+  const [pnlView, setPnlView] = useState<'screen' | 'confirmed'>('screen')
   const [search, setSearch] = useState('')
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set())
   const [adSpendRows, setAdSpendRows] = useState<AdSpendRow[] | null>(null)
@@ -85,7 +87,7 @@ export function usePnlData() {
     const to = range.to.toISOString().split('T')[0]
     const { data } = await supabase
       .from('affiliate_revenue')
-      .select('project_id, date, type, amount')
+      .select('*')
       .gte('date', from)
       .lte('date', to)
     setRevenueRows((data ?? []) as RevenueRow[])
@@ -149,14 +151,16 @@ export function usePnlData() {
     }
     supabase
       .from('affiliate_revenue')
-      .select('project_id, amount')
+      .select('*')
       .in('project_id', cumulativePids)
       .eq('type', 'pending')
       .lt('date', from)
       .order('date', { ascending: false })
       .then(({ data }) => {
         const prevMap = new Map<string, number>()
-        data?.forEach(r => { if (!prevMap.has(r.project_id)) prevMap.set(r.project_id, r.amount) })
+        // If the last entry before the range is a cycle_end (đã chốt kỳ), the effective
+        // baseline is 0 — the next cycle starts fresh.
+        data?.forEach(r => { if (!prevMap.has(r.project_id)) prevMap.set(r.project_id, r.cycle_end ? 0 : r.amount) })
         setPrevCumulativeMap(prevMap)
       })
   }, [dateRange, cumulativePids]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -203,27 +207,32 @@ export function usePnlData() {
       )
       const revenueByProject = new Map<string, number>()
       const screenByProject  = new Map<string, number>()
-      const latestPendingCumulative = new Map<string, { amount: number; date: string }>()
+      const cumulativeRowsByPid = new Map<string, RevenueRow[]>()
 
       revenueRows.forEach(r => {
         if (r.type === 'confirmed') {
           revenueByProject.set(r.project_id, (revenueByProject.get(r.project_id) ?? 0) + r.amount)
         } else if (cumulativePidSet.has(r.project_id)) {
           // Pending cumulative entries store the running total, not per-day earnings.
-          // Track only the latest value in the date range; delta is computed below.
-          const existing = latestPendingCumulative.get(r.project_id)
-          if (!existing || r.date > existing.date) {
-            latestPendingCumulative.set(r.project_id, { amount: r.amount, date: r.date })
-          }
+          // Collect rows; per-day deltas (honoring cycle_end resets) are summed below.
+          const arr = cumulativeRowsByPid.get(r.project_id) ?? []
+          arr.push(r)
+          cumulativeRowsByPid.set(r.project_id, arr)
         } else {
           screenByProject.set(r.project_id, (screenByProject.get(r.project_id) ?? 0) + r.amount)
         }
       })
-      // Convert latest cumulative value to delta: earned = latest_in_range - last_before_range
-      latestPendingCumulative.forEach(({ amount }, pid) => {
-        const prev  = prevCumulativeMap.get(pid) ?? 0
-        const delta = Math.max(0, amount - prev)
-        screenByProject.set(pid, (screenByProject.get(pid) ?? 0) + delta)
+      // Sum per-day deltas. A day marked cycle_end (đã chốt kỳ) resets the baseline to 0
+      // for the following day, matching the Revenue page's getCumulativeDelta.
+      cumulativeRowsByPid.forEach((rows, pid) => {
+        rows.sort((a, b) => a.date.localeCompare(b.date))
+        let prev = prevCumulativeMap.get(pid) ?? 0
+        let total = 0
+        rows.forEach(r => {
+          total += r.amount - prev
+          prev = r.cycle_end ? 0 : r.amount
+        })
+        screenByProject.set(pid, (screenByProject.get(pid) ?? 0) + total)
       })
 
       const map = new Map<string, PnlSummary>()
@@ -245,6 +254,8 @@ export function usePnlData() {
             total_profit: 0,
             avg_roi: 0,
             total_screen_revenue: 0,
+            screen_profit: 0,
+            screen_roi: 0,
             total_pending: 0,
             share_access_level: project.share_access_level ?? null,
             effective_permissions: project.effective_permissions ?? null,
@@ -273,7 +284,7 @@ export function usePnlData() {
           mcc_id:     campaignInfo?.mcc_id ?? project.mcc_id ?? null,
           total_spend: 0, total_rental: 0, total_other: 0,
           total_revenue: 0, total_profit: 0, avg_roi: 0,
-          total_screen_revenue: 0, total_pending: 0,
+          total_screen_revenue: 0, screen_profit: 0, screen_roi: 0, total_pending: 0,
           share_access_level:    project.share_access_level ?? null,
           effective_permissions: project.effective_permissions ?? null,
         })
@@ -287,8 +298,10 @@ export function usePnlData() {
         s.total_other          = otherByProject.get(s.project_id) ?? 0
         const totalCost        = s.total_spend + s.total_rental + s.total_other
         s.total_profit         = s.total_revenue - totalCost
+        s.screen_profit        = s.total_screen_revenue - totalCost
         s.total_pending        = s.total_screen_revenue
         s.avg_roi              = totalCost > 0 ? (s.total_profit / totalCost) * 100 : 0
+        s.screen_roi           = totalCost > 0 ? (s.screen_profit / totalCost) * 100 : 0
       })
 
       return Array.from(map.values())
@@ -335,6 +348,8 @@ export function usePnlData() {
         total_pending:        p.view_revenue  ? s.total_pending        : 0,
         total_profit:         p.view_profit   ? s.total_profit         : 0,
         avg_roi:              p.view_profit   ? s.avg_roi              : 0,
+        screen_profit:        p.view_profit   ? s.screen_profit        : 0,
+        screen_roi:           p.view_profit   ? s.screen_roi           : 0,
       }
     })
   }, [allSummaries, role])
@@ -357,13 +372,25 @@ export function usePnlData() {
         revenue:        acc.revenue + s.total_revenue,
         profit:         acc.profit  + s.total_profit,
         screen_revenue: acc.screen_revenue + s.total_screen_revenue,
+        screen_profit:  acc.screen_profit + s.screen_profit,
         pending:        acc.pending + s.total_pending,
       }),
-      { spend: 0, rental: 0, other: 0, revenue: 0, profit: 0, screen_revenue: 0, pending: 0 }
+      { spend: 0, rental: 0, other: 0, revenue: 0, profit: 0, screen_revenue: 0, screen_profit: 0, pending: 0 }
     )
   }, [filtered])
 
-  const avgRoi = totals.spend > 0 ? (totals.profit / totals.spend) * 100 : 0
+  const totalCost = totals.spend + totals.rental + totals.other
+  const avgRoi    = totalCost > 0 ? (totals.profit / totalCost) * 100 : 0
+  const screenRoi = totalCost > 0 ? (totals.screen_profit / totalCost) * 100 : 0
+
+  // Table rows resolved to the active view: override profit/ROI so PnlTable's
+  // sort, filter and row-coloring (which read total_profit/avg_roi) follow the toggle.
+  const viewData = useMemo(() =>
+    pnlView === 'screen'
+      ? filtered.map(s => ({ ...s, total_profit: s.screen_profit, avg_roi: s.screen_roi }))
+      : filtered,
+    [filtered, pnlView]
+  )
 
   const refresh = useCallback(async () => {
     setIsLoading(true)
@@ -374,6 +401,7 @@ export function usePnlData() {
   const dailyChartData = useMemo(() => {
     if (dataSource !== 'real' || !adSpendRows?.length) return []
     const projectIds = selectedProjectIds.size > 0 ? selectedProjectIds : null
+    const cumulativePidSet = new Set(cumulativePids)
     const byDate = new Map<string, { date: string; spend: number; revenue: number }>()
     adSpendRows.forEach(row => {
       const project = projectByCampaignId.get(row.campaign_id)
@@ -383,22 +411,58 @@ export function usePnlData() {
       e.spend += row.spend
       byDate.set(row.date, e)
     })
+
+    // Screen (pending) revenue per date. Daily-mode: sum directly.
+    // Cumulative-mode: per-day delta vs previous entry (baseline before range = prevCumulativeMap).
+    const screenByDate = new Map<string, number>()
+    const cumulativeRows = new Map<string, RevenueRow[]>()
     revenueRows.forEach(r => {
-      if (r.type !== 'confirmed') return
       if (projectIds && !projectIds.has(r.project_id)) return
-      const e = byDate.get(r.date) ?? { date: r.date, spend: 0, revenue: 0 }
-      e.revenue += r.amount
-      byDate.set(r.date, e)
+      if (r.type === 'confirmed') {
+        const e = byDate.get(r.date) ?? { date: r.date, spend: 0, revenue: 0 }
+        e.revenue += r.amount
+        byDate.set(r.date, e)
+      } else if (cumulativePidSet.has(r.project_id)) {
+        const arr = cumulativeRows.get(r.project_id) ?? []
+        arr.push(r)
+        cumulativeRows.set(r.project_id, arr)
+      } else {
+        screenByDate.set(r.date, (screenByDate.get(r.date) ?? 0) + r.amount)
+      }
     })
-    return Array.from(byDate.values())
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map(d => ({ date: d.date, spend: d.spend, revenue: d.revenue, profit: d.revenue - d.spend }))
-  }, [dataSource, adSpendRows, revenueRows, selectedProjectIds, projectByCampaignId])
+    cumulativeRows.forEach((rows, pid) => {
+      rows.sort((a, b) => a.date.localeCompare(b.date))
+      let prev = prevCumulativeMap.get(pid) ?? 0
+      rows.forEach(r => {
+        screenByDate.set(r.date, (screenByDate.get(r.date) ?? 0) + (r.amount - prev))
+        // Ngày đã "chốt kỳ" → reset mốc về 0 cho ngày kế (platform reset sau thanh toán)
+        prev = r.cycle_end ? 0 : r.amount
+      })
+    })
+
+    const dates = new Set([...byDate.keys(), ...screenByDate.keys()])
+    return Array.from(dates)
+      .sort((a, b) => a.localeCompare(b))
+      .map(date => {
+        const e = byDate.get(date) ?? { date, spend: 0, revenue: 0 }
+        const screenRevenue = screenByDate.get(date) ?? 0
+        return {
+          date,
+          spend: e.spend,
+          revenue: e.revenue,
+          screenRevenue,
+          profit: e.revenue - e.spend,
+          screenProfit: screenRevenue - e.spend,
+        }
+      })
+  }, [dataSource, adSpendRows, revenueRows, selectedProjectIds, projectByCampaignId, cumulativePids, prevCumulativeMap])
 
   return {
-    data: filtered as PnlSummary[],
+    data: viewData as PnlSummary[],
     allSummaries,
-    totals: { ...totals, avgRoi },
+    totals: { ...totals, avgRoi, screenRoi },
+    pnlView,
+    setPnlView,
     isLoading,
     dateRange,
     setDateRange,
