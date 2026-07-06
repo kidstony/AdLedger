@@ -84,6 +84,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         'affiliate_network', 'statuses', 'camp_start_date', 'person_in_charge', 'note',
         'name', 'cid', 'mcc_id', 'ref_link', 'email_ref', 'bank_account_id',
         'master_project_id', 'screen_revenue_type', 'team_id', 'google_campaign_id',
+        // Attribution: tách chi phí QC theo link ref
+        'attribution_type', 'attribution_device', 'attribution_ad_group_id',
+        'attribution_from', 'attribution_to', 'attribution_weight',
       ]
 
   const update: Record<string, unknown> = {}

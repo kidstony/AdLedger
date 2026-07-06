@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { cn, formatVND } from '@/lib/utils'
 import StatusPicker from '@/components/project/StatusPicker'
 import ReminderModal from '@/components/project/ReminderModal'
+import AttributionFields from '@/components/projects/AttributionFields'
 import { useAuth } from '@/context/AuthContext'
 import { useMasterProjectsContext } from '@/context/MasterProjectsContext'
 
@@ -187,6 +188,20 @@ export default function ProjectDetailDrawer({
     if (res.ok) {
       const updated = await res.json()
       onProjectUpdated?.({ ...project, ...updated })
+    }
+  }
+
+  const handleAttributionChange = async (patch: Partial<Project>) => {
+    if (!project) return
+    onProjectUpdated?.({ ...project, ...patch }) // echo lạc quan để UI phản hồi ngay
+    const res = await authFetch(`/api/projects/${project.project_id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+    if (res.ok) {
+      const updated = await res.json()
+      onProjectUpdated?.({ ...project, ...patch, ...updated })
     }
   }
 
@@ -398,6 +413,9 @@ export default function ProjectDetailDrawer({
                   )}
                 </div>
               )}
+
+              {/* Tách chi phí QC theo link ref (nhiều ref chung 1 CID/campaign) */}
+              <AttributionFields value={project} onChange={handleAttributionChange} disabled={!canEdit} />
 
               {/* Note */}
               <Section label="Note">
