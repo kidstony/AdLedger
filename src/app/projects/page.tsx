@@ -15,6 +15,7 @@ import StatusPicker from '@/components/project/StatusPicker'
 import CategorySelect from '@/components/project/CategorySelect'
 import ReminderModal from '@/components/project/ReminderModal'
 import ProjectDetailDrawer from '@/components/project/ProjectDetailDrawer'
+import AttributionBadge from '@/components/projects/AttributionBadge'
 import UserSelect, { UserAvatar } from '@/components/project/UserSelect'
 import NetworkSelect from '@/components/project/NetworkSelect'
 import {
@@ -949,6 +950,7 @@ function ProjectsPageInner() {
                                     onClick={() => !dragSnapshot.isDragging && setDrawerProject(p)}
                                   >
                                     <p className="text-xs font-medium text-slate-800 mb-1">{p.name}</p>
+                                    <AttributionBadge project={p} className="mb-1" />
                                     {p.category_id && (
                                       <span className="text-[10px] px-1.5 py-0.5 rounded-full"
                                         style={{ backgroundColor: (categories.find(c => c.id === p.category_id)?.color ?? '#6b7280') + '20', color: categories.find(c => c.id === p.category_id)?.color ?? '#6b7280' }}>
@@ -1028,6 +1030,7 @@ function ProjectsPageInner() {
                                 {p.name}
                               </button>
                               <div className="text-[10px] text-slate-400 font-mono mt-0.5">{p.project_id}</div>
+                              <AttributionBadge project={p} className="mt-1" />
                             </td>
                             {/* Category */}
                             <td className="px-4 py-3">
