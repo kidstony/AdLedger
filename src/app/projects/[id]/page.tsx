@@ -3,15 +3,17 @@
 import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
-import { ArrowLeft, Zap, Database, Monitor, Calendar } from 'lucide-react'
+import { ArrowLeft, Zap, Database, Monitor, Calendar, Banknote } from 'lucide-react'
 import { MOCK_PNL_DAILY } from '@/lib/mock-data'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
 import ProfitChart from '@/components/project-detail/ProfitChart'
 import DateRangePicker from '@/components/ui/DateRangePicker'
-import { formatVNDFull, formatROI, formatVND, getProfitTextClass, getRoiTextClass, formatCid } from '@/lib/utils'
-import { PnlDaily, RentalGroup, OtherCost, STATUS_CONFIG } from '@/lib/types'
-import { computeCidCost } from '@/lib/costs'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { formatVNDFull, formatROI, formatVND, getProfitTextClass, getRoiTextClass, formatCid, cn } from '@/lib/utils'
+import { AdDevice, PnlDaily, RentalGroup, OtherCost, STATUS_CONFIG } from '@/lib/types'
+import { computeCidCostForDay } from '@/lib/costs'
+import { allocateSpendRow, splitSpend } from '@/lib/attribution'
 import { useAuth } from '@/context/AuthContext'
 import ShareTab from '@/components/project/ShareTab'
 import { useSharePermissions } from '@/hooks/useSharePermissions'
@@ -24,6 +26,9 @@ function defaultFrom(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
 }
+
+// Dòng bảng theo ngày kèm tổng chi phí đã tách QC / Thuê TK / CP khác
+type ViewRow = PnlDaily & { cost: number; rentalDay: number; otherDay: number }
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -45,6 +50,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   const [isLoading, setIsLoading]   = useState(true)
   const [dataSource, setDataSource] = useState<'real' | 'mock'>('mock')
   const [teamUsers, setTeamUsers] = useState<{ user_id: string; full_name: string }[]>([])
+  const [dataView, setDataView] = useState<'screen' | 'confirmed'>('screen')
+  const [rentalByDate, setRentalByDate] = useState<Map<string, number>>(new Map())
+  const [otherByDate, setOtherByDate]   = useState<Map<string, number>>(new Map())
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -61,9 +69,23 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     if (projects.length === 0) return
     setIsLoading(true)
 
+    // Các ref-link project chung campaign / chung CID (để tách đúng slice chi phí).
+    const campSiblings = project?.google_campaign_id
+      ? projects.filter(p => p.google_campaign_id === project.google_campaign_id)
+      : project ? [project] : []
+    const cidSiblings = project?.cid
+      ? projects.filter(p => p.cid === project.cid)
+      : project ? [project] : []
+
     const spendPromise = project?.google_campaign_id
-      ? supabase.from('ad_spend').select('date, spend').eq('campaign_id', project.google_campaign_id).gte('date', fromStr).lte('date', toStr)
-      : Promise.resolve({ data: [] as { date: string; spend: number }[] })
+      ? supabase.from('ad_spend').select('campaign_id, date, spend, device, ad_group_id').eq('campaign_id', project.google_campaign_id).gte('date', fromStr).lte('date', toStr)
+      : Promise.resolve({ data: [] as { campaign_id: string; date: string; spend: number; device: AdDevice; ad_group_id: string }[] })
+
+    // Doanh thu của các sibling (chỉ khi chung campaign/CID) để làm cơ sở chia tay.
+    const siblingIds = [...new Set([...campSiblings, ...cidSiblings].map(p => p.project_id))]
+    const siblingRevPromise = siblingIds.length > 1
+      ? supabase.from('affiliate_revenue').select('project_id, type, amount').in('project_id', siblingIds).gte('date', fromStr).lte('date', toStr)
+      : Promise.resolve({ data: [] as { project_id: string; type: 'confirmed' | 'pending'; amount: number }[] })
 
     // affiliate_revenue table columns: project_id, date, type ('confirmed'|'pending'), amount
     const revPromise = supabase
@@ -86,14 +108,28 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           .maybeSingle()
       : Promise.resolve({ data: null })
 
-    const rgPromise  = fetch('/api/expenses/rental-groups').then(r => r.json()).catch(() => [])
-    const ocPromise  = fetch(`/api/expenses/other?from=${fromStr}&to=${toStr}`).then(r => r.json()).catch(() => [])
+    // These API routes require a Bearer token (getCallerProfile) — attach the session token
+    const authFetch = (url: string) => supabase.auth.getSession().then(({ data: { session } }) =>
+      fetch(url, { headers: session ? { Authorization: `Bearer ${session.access_token}` } : {} }).then(r => r.json())
+    ).catch(() => [])
+    const rgPromise  = authFetch('/api/expenses/rental-groups')
+    const ocPromise  = authFetch(`/api/expenses/other?from=${fromStr}&to=${toStr}`)
 
-    Promise.all([spendPromise, revPromise, prevCumulativePromise, rgPromise, ocPromise]).then(([spendRes, revRes, prevCumRes, rgRaw, ocRaw]) => {
-      const spendRows = (spendRes.data ?? []) as { date: string; spend: number }[]
+    Promise.all([spendPromise, revPromise, prevCumulativePromise, rgPromise, ocPromise, siblingRevPromise]).then(([spendRes, revRes, prevCumRes, rgRaw, ocRaw, sibRevRes]) => {
+      const spendRows = (spendRes.data ?? []) as { campaign_id: string; date: string; spend: number; device: AdDevice; ad_group_id: string }[]
       const revRows   = (revRes.data   ?? []) as { date: string; type: 'confirmed' | 'pending'; amount: number }[]
       const rentalGroups: RentalGroup[] = Array.isArray(rgRaw) ? rgRaw : []
       const otherCosts: OtherCost[]     = Array.isArray(ocRaw) ? ocRaw : []
+
+      // Cơ sở chia sibling (screen ưu tiên): tổng amount theo project_id.
+      const sibRevRows = (sibRevRes.data ?? []) as { project_id: string; type: 'confirmed' | 'pending'; amount: number }[]
+      const revenueBasis = new Map<string, number>()
+      const confirmedBasis = new Map<string, number>()
+      sibRevRows.forEach(r => {
+        const m = r.type === 'pending' ? revenueBasis : confirmedBasis
+        m.set(r.project_id, (m.get(r.project_id) ?? 0) + r.amount)
+      })
+      confirmedBasis.forEach((v, pid) => { if (!revenueBasis.get(pid)) revenueBasis.set(pid, v) })
 
       // Aggregate confirmed → revenue, pending → screen_revenue per date
       const revMap    = new Map<string, number>()
@@ -124,6 +160,45 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         })
       }
 
+      // QC theo ngày = slice của project này (qua resolver device/ad_group/date_window;
+      // fallback chia theo doanh thu khi nhiều ref chung campaign).
+      const spendMap = new Map<string, number>()
+      spendRows.forEach(row => {
+        const portion = allocateSpendRow(row, campSiblings, revenueBasis).get(id) ?? 0
+        if (portion) spendMap.set(row.date, (spendMap.get(row.date) ?? 0) + portion)
+      })
+
+      // ─── CP khác theo ngày ───────────────────────────────────────────────
+      const projOther = otherCosts.filter(c => c.project_id === id)
+      const otherMap = new Map<string, number>()
+      projOther.forEach(c => otherMap.set(c.date, (otherMap.get(c.date) ?? 0) + c.amount))
+      const other = projOther.reduce((s, c) => s + c.amount, 0)
+
+      // ─── Thuê TK theo ngày — quy chi phí thuê thật về từng ngày lịch ──────
+      const rentalByDateMap = new Map<string, number>()
+      const rangeEnd = new Date(toStr + 'T00:00:00')
+      for (let d = new Date(fromStr + 'T00:00:00'); d <= rangeEnd; d.setDate(d.getDate() + 1)) {
+        const ds = localStr(d)
+        const daySpend = new Map([[project?.cid ?? '', spendMap.get(ds) ?? 0]])
+        let rd = 0
+        rentalGroups.forEach(rg => {
+          rg.rental_group_cids?.forEach(ce => {
+            const dayCost = computeCidCostForDay(ce.cid, rg, ds, daySpend)
+            if (!dayCost) return
+            if (ce.project_id === id) {
+              rd += dayCost
+            } else if (!ce.project_id && ce.cid === project?.cid) {
+              // Không gán cụ thể: chia đều/theo doanh thu giữa các ref chung CID.
+              rd += cidSiblings.length > 1
+                ? (splitSpend(dayCost, cidSiblings, revenueBasis).get(id) ?? 0)
+                : dayCost
+            }
+          })
+        })
+        if (rd > 0) rentalByDateMap.set(ds, rd)
+      }
+      const rental = [...rentalByDateMap.values()].reduce((s, v) => s + v, 0)
+
       // ─── Build daily rows ─────────────────────────────────────────────────
       if (spendRows.length === 0 && revRows.length === 0) {
         const mockDays = MOCK_PNL_DAILY.filter(d => d.project_id === id && d.date >= fromStr && d.date <= toStr)
@@ -132,8 +207,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         setQcSpend(mockDays.reduce((s, d) => s + d.spend, 0))
         setDataSource('mock')
       } else {
-        const spendMap = new Map(spendRows.map(r => [r.date, r.spend]))
-        const dates = [...new Set([...spendMap.keys(), ...revMap.keys(), ...screenMap.keys()])].sort()
+        const dates = [...new Set([...spendMap.keys(), ...revMap.keys(), ...screenMap.keys(), ...otherMap.keys(), ...rentalByDateMap.keys()])].sort()
 
         const rows = dates.map(date => {
           const spend   = spendMap.get(date) ?? 0
@@ -155,25 +229,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         setDataSource('real')
       }
 
-      // ─── Rental cost for this project ────────────────────────────────────
-      const adSpendByCid = new Map<string, number>()
-      if (project?.cid) {
-        adSpendByCid.set(project.cid, spendRows.reduce((s, r) => s + r.spend, 0))
-      }
-      let rental = 0
-      rentalGroups.forEach(rg => {
-        rg.rental_group_cids?.forEach(cidEntry => {
-          if (cidEntry.project_id === id || (!cidEntry.project_id && cidEntry.cid === project?.cid)) {
-            rental += computeCidCost(cidEntry.cid, rg, fromStr, toStr, adSpendByCid)
-          }
-        })
-      })
+      setRentalByDate(rentalByDateMap)
+      setOtherByDate(otherMap)
       setRentalCost(rental)
-
-      // ─── Other costs for this project ─────────────────────────────────────
-      const other = otherCosts
-        .filter(c => c.project_id === id)
-        .reduce((s, c) => s + c.amount, 0)
       setOtherCost(other)
 
       setIsLoading(false)
@@ -181,13 +239,20 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
   }, [projects, project, id, fromStr, toStr])
 
   const totalSpend      = qcSpend + rentalCost + otherCost
-  const totalRevenue    = daily.reduce((s, d) => s + d.revenue, 0)
-  const totalScreen     = [...screenByDate.values()].reduce((s, v) => s + v, 0)
-  const totalProfit     = totalRevenue - totalSpend
-  const roi             = totalSpend > 0 ? (totalProfit / totalSpend) * 100 : 0
-  const hasScreen       = totalScreen > 0
-  const estimatedProfit = totalRevenue + totalScreen - totalSpend
-  const estimatedRoi    = totalSpend > 0 ? (estimatedProfit / totalSpend) * 100 : 0
+  const isScreen        = dataView === 'screen'
+  // Per-day rows: tổng chi phí = QC + Thuê TK + CP khác (thật theo ngày);
+  // LN/ROI tính lại theo tổng chi phí; doanh thu đổi theo tab đang chọn.
+  const viewRows: ViewRow[] = daily.map(r => {
+    const rentalDay = rentalByDate.get(r.date) ?? 0
+    const otherDay  = otherByDate.get(r.date) ?? 0
+    const cost      = r.spend + rentalDay + otherDay
+    const revenue   = isScreen ? (screenByDate.get(r.date) ?? 0) : r.revenue
+    return { ...r, revenue, cost, rentalDay, otherDay,
+      profit: revenue - cost, roi: cost > 0 ? ((revenue - cost) / cost) * 100 : 0 }
+  })
+  const viewRevenue     = viewRows.reduce((s, r) => s + r.revenue, 0)
+  const viewProfit      = viewRevenue - totalSpend
+  const viewRoi         = totalSpend > 0 ? (viewProfit / totalSpend) * 100 : 0
   const canShare        = role === 'super_admin' || (role === 'manager' && project?.team_id === userTeamId)
   const activeTab: 'info' | 'share' = (searchParams.get('tab') === 'share' && canShare) ? 'share' : 'info'
   function setActiveTab(tab: 'info' | 'share') {
@@ -301,12 +366,30 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       )}
 
       {(!canShare || activeTab === 'info') && (<>
-      {/* Date range picker */}
-      <DateRangePicker
-        from={fromStr}
-        to={toStr}
-        onApply={(f, t) => { setFromStr(f); setToStr(t) }}
-      />
+      {/* Date range picker + revenue-source switcher */}
+      <div className="flex flex-wrap items-center gap-3">
+        <DateRangePicker
+          from={fromStr}
+          to={toStr}
+          onApply={(f, t) => { setFromStr(f); setToStr(t) }}
+        />
+        <div className="ml-auto flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
+          <button
+            onClick={() => setDataView('screen')}
+            className={cn('flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
+              isScreen ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
+          >
+            <Monitor size={12} /> Tiền màn hình
+          </button>
+          <button
+            onClick={() => setDataView('confirmed')}
+            className={cn('flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
+              !isScreen ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
+          >
+            <Banknote size={12} /> Doanh thu thực
+          </button>
+        </div>
+      </div>
 
       {/* Stats cards */}
       {isLoading ? (
@@ -344,44 +427,28 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           </div>
 
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Tổng Doanh thu</p>
-            <p className="text-lg font-semibold text-blue-600">{canViewRevenue ? formatVNDFull(totalRevenue) : '****'}</p>
-            {canViewRevenue && hasScreen && (
-              <div className="mt-1.5 flex items-center justify-between text-xs">
-                <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Chờ về</span>
-                <span className="text-amber-500 font-medium">+{formatVNDFull(totalScreen)}</span>
-              </div>
-            )}
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+              {isScreen ? 'Tiền màn hình' : 'Doanh thu thực'}
+            </p>
+            <p className={`text-lg font-semibold ${isScreen ? 'text-amber-500' : 'text-blue-600'}`}>
+              {canViewRevenue ? formatVNDFull(viewRevenue) : '****'}
+            </p>
           </div>
 
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Lợi nhuận</p>
-            <p className={`text-lg font-semibold ${canViewProfit ? getProfitTextClass(totalProfit) : 'text-slate-400'}`}>
-              {canViewProfit ? formatVNDFull(totalProfit) : '****'}
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+              {isScreen ? 'LN màn hình' : 'Lợi nhuận'}
             </p>
-            {canViewProfit && hasScreen && (
-              <div className="mt-1.5 flex items-center justify-between text-xs">
-                <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Ước tính</span>
-                <span className={`font-medium ${estimatedProfit >= 0 ? 'text-amber-500' : 'text-red-400'}`}>
-                  {estimatedProfit >= 0 ? '+' : ''}{formatVNDFull(estimatedProfit)}
-                </span>
-              </div>
-            )}
+            <p className={`text-lg font-semibold ${canViewProfit ? (isScreen ? 'text-amber-500' : getProfitTextClass(viewProfit)) : 'text-slate-400'}`}>
+              {canViewProfit ? (viewProfit >= 0 ? '+' : '') + formatVNDFull(viewProfit) : '****'}
+            </p>
           </div>
 
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">ROI</p>
-            <p className={`text-lg font-semibold ${canViewProfit ? getRoiTextClass(roi) : 'text-slate-400'}`}>
-              {canViewProfit ? formatROI(roi) : '****'}
+            <p className={`text-lg font-semibold ${canViewProfit ? (isScreen ? 'text-amber-500' : getRoiTextClass(viewRoi)) : 'text-slate-400'}`}>
+              {canViewProfit ? formatROI(viewRoi) : '****'}
             </p>
-            {hasScreen && (
-              <div className="mt-1.5 flex items-center justify-between text-xs">
-                <span className="text-slate-400 flex items-center gap-1"><Monitor size={10} /> Ước tính</span>
-                <span className={`font-medium ${estimatedRoi >= 0 ? 'text-amber-500' : 'text-red-400'}`}>
-                  {canViewProfit ? formatROI(estimatedRoi) : '****'}
-                </span>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -394,7 +461,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         ) : daily.length === 0 ? (
           <p className="text-slate-400 text-sm text-center py-16">Chưa có dữ liệu trong khoảng thời gian này.</p>
         ) : (
-          <ProfitChart data={daily} />
+          <ProfitChart data={viewRows.map(r => ({ ...r, spend: r.cost }))} />
         )}
       </div>
 
@@ -405,44 +472,41 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
                 <tr>
-                  {['Ngày', 'Chi phí QC', 'Doanh thu', 'DT Màn hình', 'Lợi nhuận', 'LN ước tính', 'ROI%'].map(h => (
+                  {(isScreen
+                    ? ['Ngày', 'Tổng chi phí', 'Tiền màn hình', 'LN màn hình', 'ROI%']
+                    : ['Ngày', 'Tổng chi phí', 'Doanh thu', 'Lợi nhuận', 'ROI%']
+                  ).map(h => (
                     <th key={h} className="px-4 py-2.5 text-right first:text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {[...daily].reverse().map(row => (
+                {[...viewRows].reverse().map(row => (
                   <tr key={row.date} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-2.5 text-xs text-slate-600 font-mono">{row.date}</td>
                     <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-600">
-                      {canViewAdspend ? formatVND(row.spend) : '****'}
+                      {!canViewAdspend ? '****' : row.cost > 0 ? (
+                        <Tooltip>
+                          <TooltipTrigger className="border-b border-dotted border-slate-300 cursor-help">
+                            {formatVND(row.cost)}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <div className="flex flex-col gap-0.5 text-left min-w-[120px]">
+                              <div className="flex justify-between gap-4"><span>QC</span><span className="font-mono">{formatVND(row.spend)}</span></div>
+                              <div className="flex justify-between gap-4"><span>Thuê TK</span><span className="font-mono">{row.rentalDay > 0 ? formatVND(row.rentalDay) : '—'}</span></div>
+                              <div className="flex justify-between gap-4"><span>CP khác</span><span className="font-mono">{row.otherDay > 0 ? formatVND(row.otherDay) : '—'}</span></div>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : <span className="text-slate-300">—</span>}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-600">
+                    <td className={`px-4 py-2.5 text-right font-mono text-xs ${isScreen ? 'text-amber-500' : 'text-slate-600'}`}>
                       {canViewRevenue ? formatVND(row.revenue) : '****'}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs text-amber-500">
-                      {canViewRevenue
-                        ? (screenByDate.get(row.date) ?? 0) > 0
-                          ? formatVND(screenByDate.get(row.date)!)
-                          : <span className="text-slate-300">—</span>
-                        : '****'}
-                    </td>
-                    <td className={`px-4 py-2.5 text-right font-mono text-xs font-medium ${canViewProfit ? getProfitTextClass(row.profit) : 'text-slate-400'}`}>
+                    <td className={`px-4 py-2.5 text-right font-mono text-xs font-medium ${canViewProfit ? (isScreen ? 'text-amber-500' : getProfitTextClass(row.profit)) : 'text-slate-400'}`}>
                       {canViewProfit ? (row.profit >= 0 ? '+' : '') + formatVND(row.profit) : '****'}
                     </td>
-                    {(() => {
-                      const screen = screenByDate.get(row.date) ?? 0
-                      const est = row.revenue + screen - row.spend
-                      if (!canViewProfit) return <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-400">****</td>
-                      return screen > 0 ? (
-                        <td className={`px-4 py-2.5 text-right font-mono text-xs font-medium ${est >= 0 ? 'text-amber-500' : 'text-red-500'}`}>
-                          {est >= 0 ? '+' : ''}{formatVND(est)}
-                        </td>
-                      ) : (
-                        <td className="px-4 py-2.5 text-right font-mono text-xs text-slate-300">—</td>
-                      )
-                    })()}
-                    <td className={`px-4 py-2.5 text-right font-mono text-xs ${canViewProfit ? getRoiTextClass(row.roi) : 'text-slate-400'}`}>
+                    <td className={`px-4 py-2.5 text-right font-mono text-xs ${canViewProfit ? (isScreen ? 'text-amber-500' : getRoiTextClass(row.roi)) : 'text-slate-400'}`}>
                       {canViewProfit ? formatROI(row.roi) : '****'}
                     </td>
                   </tr>

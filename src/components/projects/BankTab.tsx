@@ -8,6 +8,16 @@ import { Bank, BankAccount, Project } from '@/lib/types'
 import { toast } from 'sonner'
 import TableSkeleton from '@/components/ui/TableSkeleton'
 import EmptyState from '@/components/ui/EmptyState'
+import { supabase } from '@/lib/supabase'
+
+// API routes require an Authorization: Bearer <token> header (getCallerProfile).
+// Without it every request 401s and the page renders as empty.
+async function authHeaders(json = false): Promise<Record<string, string>> {
+  const { data: { session } } = await supabase.auth.getSession()
+  const headers: Record<string, string> = { Authorization: `Bearer ${session?.access_token ?? ''}` }
+  if (json) headers['Content-Type'] = 'application/json'
+  return headers
+}
 
 // ─── Crypto constants ─────────────────────────────────────────────────────────
 
@@ -103,11 +113,12 @@ function InlineAccountTable({ bank, projects }: { bank: Bank; projects: Project[
   const [deleteError, setDeleteError] = useState('')
   const [usagePopup, setUsagePopup] = useState<{ account: BankAccount; list: Project[] } | null>(null)
 
-  function load() {
-    fetch(`/api/bank-accounts?bank_id=${bank.id}`)
-      .then(r => r.json())
-      .then(d => { if (Array.isArray(d)) setAccounts(d) })
-      .finally(() => setLoading(false))
+  async function load() {
+    try {
+      const res = await fetch(`/api/bank-accounts?bank_id=${bank.id}`, { headers: await authHeaders() })
+      const d = await res.json()
+      if (Array.isArray(d)) setAccounts(d)
+    } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [bank.id])
 
@@ -151,13 +162,13 @@ function InlineAccountTable({ bank, projects }: { bank: Bank; projects: Project[
         ? { bank_id: bank.id, owner_name: form.owner_name, note: form.note || null, coin_type: form.coin_type, network: form.network, wallet_address: form.wallet_address, account_identifier: null }
         : { bank_id: bank.id, account_identifier: form.account_identifier, owner_name: form.owner_name, note: form.note || null, coin_type: null, network: null, wallet_address: null }
       if (dialog?.mode === 'add') {
-        const res = await fetch('/api/bank-accounts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        const res = await fetch('/api/bank-accounts', { method: 'POST', headers: await authHeaders(true), body: JSON.stringify(payload) })
         const created = await res.json()
         if (!res.ok) { setSaveError(created.error ?? 'Lỗi lưu tài khoản'); return }
         setAccounts(prev => [...prev, created])
         toast.success('Đã thêm tài khoản')
       } else if (dialog?.data) {
-        const res = await fetch('/api/bank-accounts', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: dialog.data.id, ...payload }) })
+        const res = await fetch('/api/bank-accounts', { method: 'PUT', headers: await authHeaders(true), body: JSON.stringify({ id: dialog.data.id, ...payload }) })
         const updated = await res.json()
         if (!res.ok) { setSaveError(updated.error ?? 'Lỗi cập nhật tài khoản'); return }
         setAccounts(prev => prev.map(a => a.id === updated.id ? updated : a))
@@ -169,7 +180,7 @@ function InlineAccountTable({ bank, projects }: { bank: Bank; projects: Project[
 
   async function handleDelete(acc: BankAccount) {
     setDeleteError('')
-    const res = await fetch(`/api/bank-accounts?id=${acc.id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/bank-accounts?id=${acc.id}`, { method: 'DELETE', headers: await authHeaders() })
     const json = await res.json()
     if (!res.ok) { setDeleteError(json.error ?? 'Lỗi xóa'); return }
     setAccounts(prev => prev.filter(a => a.id !== acc.id))
@@ -450,8 +461,12 @@ function BankList({ projects }: Props) {
   const [confirmDelete, setConfirmDelete] = useState<Bank | null>(null)
   const [deleteError, setDeleteError] = useState('')
 
-  function load() {
-    fetch('/api/banks').then(r => r.json()).then(d => { if (Array.isArray(d)) setBanks(d) }).finally(() => setLoading(false))
+  async function load() {
+    try {
+      const res = await fetch('/api/banks', { headers: await authHeaders() })
+      const d = await res.json()
+      if (Array.isArray(d)) setBanks(d)
+    } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
 
@@ -472,13 +487,13 @@ function BankList({ projects }: Props) {
     setSaveError('')
     try {
       if (dialog?.mode === 'add') {
-        const res = await fetch('/api/banks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
+        const res = await fetch('/api/banks', { method: 'POST', headers: await authHeaders(true), body: JSON.stringify(form) })
         const created = await res.json()
         if (!res.ok) { setSaveError(created.error ?? 'Lỗi lưu bank'); return }
         setBanks(prev => [...prev, { ...created, bank_accounts: [{ count: 0 }] }])
         toast.success('Đã thêm bank')
       } else if (dialog?.data) {
-        const res = await fetch('/api/banks', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: dialog.data.id, ...form }) })
+        const res = await fetch('/api/banks', { method: 'PUT', headers: await authHeaders(true), body: JSON.stringify({ id: dialog.data.id, ...form }) })
         const updated = await res.json()
         if (!res.ok) { setSaveError(updated.error ?? 'Lỗi cập nhật bank'); return }
         setBanks(prev => prev.map(b => b.id === updated.id ? { ...b, ...updated } : b))
@@ -490,7 +505,7 @@ function BankList({ projects }: Props) {
 
   async function handleDelete(bank: Bank) {
     setDeleteError('')
-    const res = await fetch(`/api/banks?id=${bank.id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/banks?id=${bank.id}`, { method: 'DELETE', headers: await authHeaders() })
     const json = await res.json()
     if (!res.ok) { setDeleteError(json.error ?? 'Lỗi xóa'); return }
     setBanks(prev => prev.filter(b => b.id !== bank.id))

@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import {
   Project, MasterProject, Bank, BankAccount,
   ProjectCategory, ProjectStatus, STATUS_CONFIG,
+  AttributionType, AdDevice,
 } from '@/lib/types'
 import { supabase } from '@/lib/supabase'
 import { cn } from '@/lib/utils'
@@ -366,6 +367,71 @@ export default function ProjectFormDialog({ mode, initialData, existingIds, mast
                   <Input type="email" value={form.email_ref ?? ''} placeholder="partner@..."
                     onChange={e => setForm(f => ({ ...f, email_ref: e.target.value || null }))} />
                 </div>
+              </div>
+
+              {/* ── Tách chi phí QC theo link ref (khi nhiều ref chung 1 CID/campaign) ── */}
+              <div className="border border-slate-100 rounded-lg p-3 space-y-3 bg-slate-50">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tách chi phí QC (nhiều ref chung campaign)</p>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-600">Cách quy chi phí</label>
+                  <select value={form.attribution_type ?? 'campaign'}
+                    onChange={e => setForm(f => ({ ...f, attribution_type: e.target.value as AttributionType }))}
+                    className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300 bg-white">
+                    <option value="campaign">Cả campaign (mặc định)</option>
+                    <option value="device">Theo thiết bị (mobile / PC)</option>
+                    <option value="ad_group">Theo ad group</option>
+                    <option value="date_window">Theo khoảng thời gian</option>
+                    <option value="manual_pct">Chia tay theo %</option>
+                  </select>
+                </div>
+
+                {form.attribution_type === 'device' && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-600">Thiết bị</label>
+                    <select value={form.attribution_device ?? ''}
+                      onChange={e => setForm(f => ({ ...f, attribution_device: (e.target.value || null) as AdDevice | null }))}
+                      className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300 bg-white">
+                      <option value="">— Chọn thiết bị —</option>
+                      <option value="MOBILE">Mobile</option>
+                      <option value="DESKTOP">Desktop (PC)</option>
+                      <option value="TABLET">Tablet</option>
+                    </select>
+                  </div>
+                )}
+
+                {form.attribution_type === 'ad_group' && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-600">Ad group ID</label>
+                    <Input value={form.attribution_ad_group_id ?? ''} placeholder="vd: 123456789"
+                      onChange={e => setForm(f => ({ ...f, attribution_ad_group_id: e.target.value || null }))} />
+                  </div>
+                )}
+
+                {form.attribution_type === 'date_window' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-slate-600">Từ ngày</label>
+                      <input type="date" value={form.attribution_from ?? ''}
+                        onChange={e => setForm(f => ({ ...f, attribution_from: e.target.value || null }))}
+                        className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300 bg-white" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-slate-600">Đến ngày</label>
+                      <input type="date" value={form.attribution_to ?? ''}
+                        onChange={e => setForm(f => ({ ...f, attribution_to: e.target.value || null }))}
+                        className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300 bg-white" />
+                    </div>
+                  </div>
+                )}
+
+                {form.attribution_type === 'manual_pct' && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-600">Trọng số (%)</label>
+                    <Input type="number" value={form.attribution_weight ?? ''} placeholder="vd: 60"
+                      onChange={e => setForm(f => ({ ...f, attribution_weight: e.target.value === '' ? null : Number(e.target.value) }))} />
+                    <p className="text-[11px] text-slate-400">Chi phí chung được chia theo tỷ lệ trọng số giữa các ref chung campaign.</p>
+                  </div>
+                )}
               </div>
 
               {/* ── Bank nhận ── */}

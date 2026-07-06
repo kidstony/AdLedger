@@ -78,45 +78,72 @@ function buildDiscoverScript(secret: string, webhookUrl: string) {
 }`
 }
 
+// Đoạn helper GAQL dùng chung cho cả spend hằng ngày lẫn backfill: quét chi phí
+// theo campaign × ngày × device × ad_group để tách được chi phí cho từng link ref.
+function gaqlScanFn() {
+  return `  function mapDevice(d) {
+    d = String(d || '').toUpperCase();
+    return (d === 'MOBILE' || d === 'DESKTOP' || d === 'TABLET') ? d : 'ALL';
+  }
+
+  function flush() {
+    for (var i = 0; i < records.length; i += BATCH) {
+      UrlFetchApp.fetch(WEBHOOK, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ secret: SECRET, type: 'spend', records: records.slice(i, i + BATCH) })
+      });
+    }
+    sent += records.length;
+    records = [];
+  }
+
+  function scanAccount(customerId) {
+    var query =
+      'SELECT campaign.id, campaign.name, ad_group.id, ' +
+      'segments.date, segments.device, metrics.cost_micros ' +
+      'FROM ad_group ' +
+      "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' " +
+      'AND metrics.cost_micros > 0';
+    var rows = AdsApp.search(query);
+    while (rows.hasNext()) {
+      var r = rows.next();
+      records.push({
+        campaign_id:   String(r.campaign.id),
+        campaign_name: r.campaign.name,
+        customer_id:   customerId,
+        mcc_id:        mccId,
+        mcc_name:      mccName,
+        date:          r.segments.date,
+        device:        mapDevice(r.segments.device),
+        ad_group_id:   String(r.adGroup.id),
+        spend:         Number(r.metrics.costMicros) / 1e6
+      });
+      if (records.length >= 5000) flush(); // giải phóng bộ nhớ định kỳ
+    }
+  }`
+}
+
 function buildBackfillScript(secret: string, webhookUrl: string) {
   return `function main() {
   var SECRET     = '${secret}';
   var WEBHOOK    = '${webhookUrl}';
+  var START_DATE = '2025-01-01'; // ĐỔI: ngày bắt đầu backfill (yyyy-MM-dd)
+  var BATCH      = 1000;
+
   var mccName = AdsApp.currentAccount().getName();
   var mccId   = AdsApp.currentAccount().getCustomerId().replace(/-/g, '');
+  var tz = AdsApp.currentAccount().getTimeZone();
 
-  var end   = new Date();
-  end.setDate(end.getDate() - 1);          // hôm qua
-  var start = new Date(end);
-  start.setFullYear(start.getFullYear() - 1); // 1 năm trước
-
-  var tz       = AdsApp.currentAccount().getTimeZone();
-  var startStr = Utilities.formatDate(start, tz, 'yyyyMMdd');
-  var endStr   = Utilities.formatDate(end,   tz, 'yyyyMMdd');
+  var end = new Date();
+  end.setDate(end.getDate() - 1); // đến hôm qua
+  var fromStr = START_DATE;
+  var toStr   = Utilities.formatDate(end, tz, 'yyyy-MM-dd');
 
   var records = [];
+  var sent = 0;
 
-  function scanAccount(customerId) {
-    var report = AdsApp.report(
-      'SELECT CampaignId, CampaignName, Date, Cost ' +
-      'FROM CAMPAIGN_PERFORMANCE_REPORT ' +
-      'DURING ' + startStr + ',' + endStr
-    );
-    var rows = report.rows();
-    while (rows.hasNext()) {
-      var row = rows.next();
-      var spend = parseFloat(row['Cost'].replace(/,/g, ''));
-      if (spend > 0) records.push({
-        campaign_id:   row['CampaignId'],
-        campaign_name: row['CampaignName'],
-        customer_id:   customerId,
-        mcc_id:        mccId,
-        mcc_name:      mccName,
-        date:          row['Date'],
-        spend:         spend
-      });
-    }
-  }
+${gaqlScanFn()}
 
   if (typeof MccApp !== 'undefined') {
     var accountIt = MccApp.accounts().get();
@@ -124,57 +151,40 @@ function buildBackfillScript(secret: string, webhookUrl: string) {
       var account = accountIt.next();
       MccApp.select(account);
       scanAccount(account.getCustomerId().replace(/-/g, ''));
+      flush(); // gửi & giải phóng sau mỗi tài khoản
     }
   } else {
     mccId = null;
     mccName = null;
     scanAccount(AdsApp.currentAccount().getCustomerId().replace(/-/g, ''));
+    flush();
   }
 
-  var BATCH = 500;
-  for (var i = 0; i < records.length; i += BATCH) {
-    UrlFetchApp.fetch(WEBHOOK, {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify({ secret: SECRET, type: 'spend', records: records.slice(i, i + BATCH) })
-    });
-  }
-  Logger.log('Done: ' + records.length + ' records sent');
+  Logger.log('Backfill done: ' + sent + ' records sent (' + fromStr + ' → ' + toStr + ')');
 }`
 }
 
 function buildSpendScript(secret: string, webhookUrl: string) {
   return `function main() {
-  var SECRET  = '${secret}';
-  var WEBHOOK = '${webhookUrl}';
-
-  var tz = AdsApp.currentAccount().getTimeZone();
-
-  var yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  var dateForAds = Utilities.formatDate(yesterday, tz, 'yyyyMMdd');  // YYYYMMDD cho getStatsFor
-  var dateStr    = Utilities.formatDate(yesterday, tz, 'yyyy-MM-dd'); // YYYY-MM-DD cho webhook
+  var SECRET    = '${secret}';
+  var WEBHOOK   = '${webhookUrl}';
+  var DAYS_BACK = 3;    // đồng bộ 3 ngày gần nhất để cập nhật chi phí chốt muộn
+  var BATCH     = 1000;
 
   var mccName = AdsApp.currentAccount().getName();
   var mccId   = AdsApp.currentAccount().getCustomerId().replace(/-/g, '');
+  var tz = AdsApp.currentAccount().getTimeZone();
+
+  var to   = new Date();
+  var from = new Date();
+  from.setDate(from.getDate() - (DAYS_BACK - 1));
+  var fromStr = Utilities.formatDate(from, tz, 'yyyy-MM-dd');
+  var toStr   = Utilities.formatDate(to,   tz, 'yyyy-MM-dd');
 
   var records = [];
+  var sent = 0;
 
-  function scanAccount(customerId) {
-    var campaignIt = AdsApp.campaigns().get();
-    while (campaignIt.hasNext()) {
-      var c = campaignIt.next();
-      var spend = c.getStatsFor(dateForAds, dateForAds).getCost();
-      if (spend > 0) records.push({
-        campaign_id:   c.getId().toString(),
-        campaign_name: c.getName(),
-        customer_id:   customerId,
-        mcc_id:        mccId,
-        mcc_name:      mccName,
-        date: dateStr, spend: spend
-      });
-    }
-  }
+${gaqlScanFn()}
 
   if (typeof MccApp !== 'undefined') {
     var accountIt = MccApp.accounts().get();
@@ -182,18 +192,16 @@ function buildSpendScript(secret: string, webhookUrl: string) {
       var account = accountIt.next();
       MccApp.select(account);
       scanAccount(account.getCustomerId().replace(/-/g, ''));
+      flush(); // gửi & giải phóng sau mỗi tài khoản
     }
   } else {
     mccId = null;
     mccName = null;
     scanAccount(AdsApp.currentAccount().getCustomerId().replace(/-/g, ''));
+    flush();
   }
 
-  UrlFetchApp.fetch(WEBHOOK, {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify({ secret: SECRET, type: 'spend', records: records })
-  });
+  Logger.log('Spend sync done: ' + sent + ' records (' + fromStr + ' → ' + toStr + ')');
 }`
 }
 

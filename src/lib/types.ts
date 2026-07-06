@@ -129,6 +129,13 @@ export interface Project {
   google_campaign_id?: string | null
   screen_revenue_type?: 'daily' | 'cumulative'
   ref_link?: string | null
+  // ── Attribution: tách chi phí QC theo link ref khi nhiều ref chung 1 CID/campaign ──
+  attribution_type?:        AttributionType
+  attribution_device?:      AdDevice | null
+  attribution_ad_group_id?: string | null
+  attribution_from?:        string | null
+  attribution_to?:          string | null
+  attribution_weight?:      number | null
   email_ref?: string | null
   bank_account_id?: string | null
   team_id?: string | null
@@ -161,11 +168,23 @@ export interface CampaignDiscovery {
   project_name?: string | null
 }
 
+export type AdDevice = 'ALL' | 'MOBILE' | 'DESKTOP' | 'TABLET'
+
 export interface AdSpend {
   campaign_id: string
   date: string
   spend: number
+  device: AdDevice      // 'ALL' cho row cũ / không segment theo thiết bị
+  ad_group_id: string   // 'ALL' cho row cũ / không segment theo ad group
 }
+
+// Quy tắc quy chi phí QC của một campaign về từng ref-link project (sub-project).
+export type AttributionType =
+  | 'campaign'    // nhận toàn bộ chi phí campaign (mặc định)
+  | 'device'      // chỉ nhận spend của device tương ứng
+  | 'ad_group'    // chỉ nhận spend của ad_group_id tương ứng
+  | 'date_window' // chỉ nhận spend trong [attribution_from, attribution_to]
+  | 'manual_pct'  // chia theo trọng số % thủ công giữa các sibling
 
 export interface AffiliateRevenue {
   project_id: string
@@ -188,6 +207,21 @@ export interface PnlDaily {
   revenue: number
   profit: number
   roi: number
+}
+
+// Dashboard per-date row: org-wide daily P&L incl. full cost breakdown (QC + Thuê TK + CP khác).
+export interface DailyPnlRow {
+  date: string
+  spend: number         // QC (ad spend)
+  rentalDay: number     // Thuê TK
+  otherDay: number      // CP khác
+  cost: number          // spend + rentalDay + otherDay
+  revenue: number       // confirmed revenue
+  screenRevenue: number
+  profit: number        // revenue - cost
+  screenProfit: number  // screenRevenue - cost
+  roi: number
+  screenRoi: number
 }
 
 export interface PnlSummary {

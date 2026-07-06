@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowUp, ArrowDown, ArrowUpDown, Monitor } from 'lucide-react'
+import { ArrowUp, ArrowDown, ArrowUpDown, Monitor, Search, Download } from 'lucide-react'
 import { PnlSummary, SortColumn, SortDirection } from '@/lib/types'
 import { formatVND, formatROI, getPerformanceRowClass, getProfitTextClass, getRoiTextClass, cn, formatCid } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -14,6 +14,9 @@ interface Props {
   data: PnlSummary[]
   isLoading: boolean
   view: 'screen' | 'confirmed'
+  search?: string
+  onSearchChange?: (v: string) => void
+  onExport?: () => void
 }
 
 const columns: { key: string; label: string; sortable: boolean; align: string; icon?: boolean }[] = [
@@ -52,7 +55,7 @@ function SortIcon({ col, sortCol, sortDir }: { col: string; sortCol: string; sor
 
 const nonSortable = new Set(['cid', 'total_screen_revenue'])
 
-export default function PnlTable({ data, isLoading, view }: Props) {
+export default function PnlTable({ data, isLoading, view, search, onSearchChange, onExport }: Props) {
   const router = useRouter()
   const { role } = useAuth()
   const isScreen = view === 'screen'
@@ -138,6 +141,18 @@ export default function PnlTable({ data, isLoading, view }: Props) {
           ))}
         </div>
         <div className="ml-auto flex items-center gap-3">
+          {onSearchChange && (
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Tìm dự án..."
+                value={search ?? ''}
+                onChange={e => onSearchChange(e.target.value)}
+                className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-md bg-white outline-none focus:ring-2 focus:ring-slate-300 w-44"
+              />
+            </div>
+          )}
           <select
             value={topN ?? ''}
             onChange={e => setTopN(e.target.value ? Number(e.target.value) : null)}
@@ -153,6 +168,14 @@ export default function PnlTable({ data, isLoading, view }: Props) {
               : <>{data.length} dự án</>
             }
           </span>
+          {onExport && (
+            <button
+              onClick={onExport}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              <Download size={13} /> Export CSV
+            </button>
+          )}
         </div>
       </div>
 

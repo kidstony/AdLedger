@@ -24,6 +24,8 @@ interface CampaignRecord {
 interface SpendRecord extends CampaignRecord {
   date: string
   spend: number
+  device?: string       // MOBILE | DESKTOP | TABLET (mặc định 'ALL' nếu script chưa segment)
+  ad_group_id?: string  // id ad group (mặc định 'ALL' nếu script chưa segment)
 }
 
 type Body =
@@ -144,15 +146,22 @@ export async function POST(req: NextRequest) {
     .upsert(discoveryRows, { onConflict: 'campaign_id' })
   await backfillProjectCidMcc(records.map(r => r.campaign_id))
 
-  // Upsert spend
+  // Upsert spend. Granularity mịn: (campaign_id, date, device, ad_group_id).
+  // Script cũ chưa gửi device/ad_group_id → mặc định 'ALL' (giữ nguyên hành vi).
+  const normDevice = (d?: string) => {
+    const u = (d ?? '').toUpperCase()
+    return u === 'MOBILE' || u === 'DESKTOP' || u === 'TABLET' ? u : 'ALL'
+  }
   const spendRows = records.map(r => ({
     campaign_id: r.campaign_id,
     date:        r.date,
+    device:      normDevice(r.device),
+    ad_group_id: r.ad_group_id?.trim() ? r.ad_group_id.trim() : 'ALL',
     spend:       Number(r.spend),
   }))
   const { error } = await supabaseAdmin
     .from('ad_spend')
-    .upsert(spendRows, { onConflict: 'campaign_id,date' })
+    .upsert(spendRows, { onConflict: 'campaign_id,date,device,ad_group_id' })
 
   if (error) {
     await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: error.message, organization_id: organizationId })

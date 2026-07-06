@@ -170,6 +170,13 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
       person_in_charge: p.person_in_charge ?? null,
       note: p.note ?? null,
       created_by: user?.id ?? null,
+      // Attribution: tách chi phí QC theo link ref
+      attribution_type: p.attribution_type ?? 'campaign',
+      attribution_device: p.attribution_device ?? null,
+      attribution_ad_group_id: p.attribution_ad_group_id ?? null,
+      attribution_from: p.attribution_from ?? null,
+      attribution_to: p.attribution_to ?? null,
+      attribution_weight: p.attribution_weight ?? null,
     })
     if (error) {
       console.error('Lỗi thêm dự án:', error)
@@ -202,6 +209,13 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
         camp_start_date: updated.camp_start_date ?? null,
         person_in_charge: updated.person_in_charge ?? null,
         note: updated.note ?? null,
+        // Attribution: tách chi phí QC theo link ref
+        attribution_type: updated.attribution_type ?? 'campaign',
+        attribution_device: updated.attribution_device ?? null,
+        attribution_ad_group_id: updated.attribution_ad_group_id ?? null,
+        attribution_from: updated.attribution_from ?? null,
+        attribution_to: updated.attribution_to ?? null,
+        attribution_weight: updated.attribution_weight ?? null,
       })
       .eq('project_id', updated.project_id)
     if (error) {

@@ -3,18 +3,21 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { MOCK_PNL_DAILY } from '@/lib/mock-data'
 import { aggregatePnl } from '@/lib/utils'
-import { DateRange, PnlSummary, RentalGroup, OtherCost } from '@/lib/types'
+import { AdDevice, DateRange, PnlSummary, Project, RentalGroup, OtherCost, DailyPnlRow } from '@/lib/types'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { useDateRange } from '@/context/DateRangeContext'
 import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
-import { computeCidCost } from '@/lib/costs'
+import { computeCidCost, computeCidCostForDay } from '@/lib/costs'
+import { allocateSpendRow, buildSiblingsByCampaign, splitSpend } from '@/lib/attribution'
 import { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
 
 interface AdSpendRow {
   campaign_id: string
   date: string
   spend: number
+  device: AdDevice
+  ad_group_id: string
 }
 
 interface CampaignInfo {
@@ -48,20 +51,31 @@ export function usePnlData() {
   const [campaignInfoByProjectId, setCampaignInfoByProjectId] = useState<Map<string, CampaignInfo>>(new Map())
   const [prevCumulativeMap, setPrevCumulativeMap] = useState<Map<string, number>>(new Map())
 
-  // Map google_campaign_id → project
-  const projectByCampaignId = useMemo(
-    () => new Map(
-      projects
-        .filter(p => p.google_campaign_id)
-        .map(p => [p.google_campaign_id!, p])
-    ),
-    [projects]
-  )
+  // Map google_campaign_id → các ref-link project chung campaign (siblings)
+  const siblingsByCampaign = useMemo(() => buildSiblingsByCampaign(projects), [projects])
 
-  const projectNameMap = useMemo(
-    () => new Map(projects.map(p => [p.project_id, p.name])),
-    [projects]
-  )
+  // Map google_campaign_id → cid (các sibling chung campaign ⇒ chung ad account)
+  const cidByCampaign = useMemo(() => {
+    const m = new Map<string, string>()
+    siblingsByCampaign.forEach((sibs, campId) => {
+      const cid = sibs.find(s => s.cid)?.cid
+      if (cid) m.set(campId, cid)
+    })
+    return m
+  }, [siblingsByCampaign])
+
+  // Map cid → các project dùng chung ad account (để chia thuê TK giữa các sibling)
+  const projectsByCidFull = useMemo(() => {
+    const m = new Map<string, Project[]>()
+    projects.forEach(p => {
+      if (!p.cid) return
+      const arr = m.get(p.cid) ?? []
+      arr.push(p)
+      m.set(p.cid, arr)
+    })
+    return m
+  }, [projects])
+
   const activeProjectIds = useMemo(
     () => new Set(projects.map(p => p.project_id)),
     [projects]
@@ -74,12 +88,12 @@ export function usePnlData() {
   async function fetchAdSpend(range: DateRange) {
     const from = range.from.toISOString().split('T')[0]
     const to = range.to.toISOString().split('T')[0]
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('ad_spend')
-      .select('campaign_id, date, spend')
+      .select('campaign_id, date, spend, device, ad_group_id')
       .gte('date', from)
       .lte('date', to)
-    setAdSpendRows(data ?? [])
+    setAdSpendRows((data ?? []) as AdSpendRow[])
   }
 
   async function fetchRevenue(range: DateRange) {
@@ -167,31 +181,16 @@ export function usePnlData() {
 
   const dataSource: 'real' | 'mock' = (adSpendRows && adSpendRows.length > 0) ? 'real' : 'mock'
 
-  // Build CID → project_id mapping (for rental groups without explicit project_id)
-  const projectByCid = useMemo(
-    () => new Map(projects.filter(p => p.cid).map(p => [p.cid, p.project_id])),
-    [projects]
-  )
-
   const allSummaries = useMemo(() => {
     const fromStr = dateRange.from.toISOString().split('T')[0]
     const toStr   = dateRange.to.toISOString().split('T')[0]
 
-    // adSpendByCid: needed for percentage rental rate calculation
+    // adSpendByCid: needed for percentage rental rate calculation. Tổng theo CID
+    // không đổi bởi cách chia sibling (các sibling chung campaign ⇒ chung cid).
     const adSpendByCid = new Map<string, number>()
     adSpendRows?.forEach(row => {
-      const p = projectByCampaignId.get(row.campaign_id)
-      if (p?.cid) adSpendByCid.set(p.cid, (adSpendByCid.get(p.cid) ?? 0) + row.spend)
-    })
-
-    // Rental cost per project
-    const rentalByProject = new Map<string, number>()
-    rentalGroups.forEach(rg => {
-      rg.rental_group_cids?.forEach(cidEntry => {
-        const cost = computeCidCost(cidEntry.cid, rg, fromStr, toStr, adSpendByCid)
-        const pid = cidEntry.project_id ?? projectByCid.get(cidEntry.cid)
-        if (pid) rentalByProject.set(pid, (rentalByProject.get(pid) ?? 0) + cost)
-      })
+      const cid = cidByCampaign.get(row.campaign_id)
+      if (cid) adSpendByCid.set(cid, (adSpendByCid.get(cid) ?? 0) + row.spend)
     })
 
     // Other cost per project (only those linked to a project)
@@ -235,45 +234,54 @@ export function usePnlData() {
         screenByProject.set(pid, (screenByProject.get(pid) ?? 0) + total)
       })
 
-      const map = new Map<string, PnlSummary>()
-      adSpendRows.forEach(row => {
-        const project = projectByCampaignId.get(row.campaign_id)
-        if (!project) return
-        const campaignInfo = campaignInfoByProjectId.get(project.project_id)
-        const existing = map.get(project.project_id)
-        if (!existing) {
-          map.set(project.project_id, {
-            project_id: project.project_id,
-            cid: campaignInfo?.customer_id ?? project.cid,
-            name: project.name,
-            mcc_id: campaignInfo?.mcc_id ?? project.mcc_id,
-            total_spend: row.spend,
-            total_rental: 0,
-            total_other: 0,
-            total_revenue: 0,
-            total_profit: 0,
-            avg_roi: 0,
-            total_screen_revenue: 0,
-            screen_profit: 0,
-            screen_roi: 0,
-            total_pending: 0,
-            share_access_level: project.share_access_level ?? null,
-            effective_permissions: project.effective_permissions ?? null,
-          })
-        } else {
-          existing.total_spend += row.spend
-        }
+      // Cơ sở chia sibling khi không tách được ở nguồn: ưu tiên doanh thu màn hình
+      // (screen) để có tín hiệu sớm, fallback doanh thu đã xác nhận.
+      const revenueBasis = new Map<string, number>()
+      new Set([...revenueByProject.keys(), ...screenByProject.keys()]).forEach(pid => {
+        revenueBasis.set(pid, (screenByProject.get(pid) || revenueByProject.get(pid)) ?? 0)
       })
 
-      // Include projects that have revenue/costs but no ad spend in this date range
+      // Chi phí QC per project qua resolver (device / ad_group / date_window /
+      // fallback chia theo doanh thu khi nhiều ref-link project chung 1 campaign).
+      const spendByProject = new Map<string, number>()
+      adSpendRows.forEach(row => {
+        const sibs = siblingsByCampaign.get(row.campaign_id)
+        if (!sibs?.length) return
+        allocateSpendRow(row, sibs, revenueBasis).forEach((portion, pid) => {
+          spendByProject.set(pid, (spendByProject.get(pid) ?? 0) + portion)
+        })
+      })
+
+      // Rental cost per project — chia giữa các sibling chung 1 CID.
+      const rentalByProject = new Map<string, number>()
+      rentalGroups.forEach(rg => {
+        rg.rental_group_cids?.forEach(cidEntry => {
+          const cost = computeCidCost(cidEntry.cid, rg, fromStr, toStr, adSpendByCid)
+          if (!cost) return
+          if (cidEntry.project_id) {
+            rentalByProject.set(cidEntry.project_id, (rentalByProject.get(cidEntry.project_id) ?? 0) + cost)
+            return
+          }
+          const sibs = projectsByCidFull.get(cidEntry.cid) ?? []
+          if (sibs.length > 1) {
+            splitSpend(cost, sibs, revenueBasis).forEach((v, pid) =>
+              rentalByProject.set(pid, (rentalByProject.get(pid) ?? 0) + v))
+          } else if (sibs[0]) {
+            rentalByProject.set(sibs[0].project_id, (rentalByProject.get(sibs[0].project_id) ?? 0) + cost)
+          }
+        })
+      })
+
+      // Build a summary entry for every project that has spend/revenue/cost.
       const projectById = new Map(projects.map(p => [p.project_id, p]))
+      const map = new Map<string, PnlSummary>()
       for (const pid of new Set([
+        ...spendByProject.keys(),
         ...revenueByProject.keys(),
         ...screenByProject.keys(),
         ...rentalByProject.keys(),
         ...otherByProject.keys(),
       ])) {
-        if (map.has(pid)) continue
         const project = projectById.get(pid)
         if (!project) continue
         const campaignInfo = campaignInfoByProjectId.get(pid)
@@ -282,7 +290,8 @@ export function usePnlData() {
           cid:        campaignInfo?.customer_id ?? project.cid ?? null,
           name:       project.name,
           mcc_id:     campaignInfo?.mcc_id ?? project.mcc_id ?? null,
-          total_spend: 0, total_rental: 0, total_other: 0,
+          total_spend: spendByProject.get(pid) ?? 0,
+          total_rental: 0, total_other: 0,
           total_revenue: 0, total_profit: 0, avg_roi: 0,
           total_screen_revenue: 0, screen_profit: 0, screen_roi: 0, total_pending: 0,
           share_access_level:    project.share_access_level ?? null,
@@ -320,7 +329,7 @@ export function usePnlData() {
       s.effective_permissions = p?.effective_permissions ?? null
     })
     return summaries
-  }, [dataSource, adSpendRows, revenueRows, rentalGroups, otherCosts, projectByCampaignId, projectByCid, projectNameMap, activeProjectIds, dateRange, campaignInfoByProjectId, prevCumulativeMap, projects])
+  }, [dataSource, adSpendRows, revenueRows, rentalGroups, otherCosts, siblingsByCampaign, cidByCampaign, projectsByCidFull, activeProjectIds, dateRange, campaignInfoByProjectId, prevCumulativeMap, projects])
 
   const filterProjectData = useMemo<FilterProject[]>(() =>
     allSummaries.map(s => ({
@@ -398,18 +407,32 @@ export function usePnlData() {
     setIsLoading(false)
   }, [dateRange]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const dailyChartData = useMemo(() => {
+  const dailyChartData = useMemo<DailyPnlRow[]>(() => {
     if (dataSource !== 'real' || !adSpendRows?.length) return []
+    const fromStr = dateRange.from.toISOString().split('T')[0]
+    const toStr   = dateRange.to.toISOString().split('T')[0]
     const projectIds = selectedProjectIds.size > 0 ? selectedProjectIds : null
     const cumulativePidSet = new Set(cumulativePids)
+    // Cơ sở chia sibling: tái dùng doanh thu đã tính ở allSummaries (screen ưu tiên).
+    const revenueBasis = new Map(allSummaries.map(s => [s.project_id, s.total_screen_revenue || s.total_revenue]))
     const byDate = new Map<string, { date: string; spend: number; revenue: number }>()
+    // daySpendByCid: chi phí QC theo ngày theo cid (dùng cho rental rate_type 'percentage')
+    const daySpendByCid = new Map<string, Map<string, number>>()
     adSpendRows.forEach(row => {
-      const project = projectByCampaignId.get(row.campaign_id)
-      if (!project) return
-      if (projectIds && !projectIds.has(project.project_id)) return
-      const e = byDate.get(row.date) ?? { date: row.date, spend: 0, revenue: 0 }
-      e.spend += row.spend
-      byDate.set(row.date, e)
+      const sibs = siblingsByCampaign.get(row.campaign_id)
+      if (!sibs?.length) return
+      const cid = cidByCampaign.get(row.campaign_id)
+      allocateSpendRow(row, sibs, revenueBasis).forEach((portion, pid) => {
+        if (projectIds && !projectIds.has(pid)) return
+        const e = byDate.get(row.date) ?? { date: row.date, spend: 0, revenue: 0 }
+        e.spend += portion
+        byDate.set(row.date, e)
+        if (cid) {
+          const m = daySpendByCid.get(row.date) ?? new Map<string, number>()
+          m.set(cid, (m.get(cid) ?? 0) + portion)
+          daySpendByCid.set(row.date, m)
+        }
+      })
     })
 
     // Screen (pending) revenue per date. Daily-mode: sum directly.
@@ -440,22 +463,67 @@ export function usePnlData() {
       })
     })
 
-    const dates = new Set([...byDate.keys(), ...screenByDate.keys()])
+    // Chi phí thuê TK (rental) + CP khác (other) theo từng ngày lịch trong khoảng.
+    // Cộng theo tất cả ngày ≡ tổng ở summary cards (per-day sum == range-level cost).
+    const rentalByDate = new Map<string, number>()
+    for (let d = new Date(fromStr + 'T00:00:00Z'); d.toISOString().split('T')[0] <= toStr; d.setUTCDate(d.getUTCDate() + 1)) {
+      const day = d.toISOString().split('T')[0]
+      const daySpend = daySpendByCid.get(day) ?? new Map<string, number>()
+      let total = 0
+      rentalGroups.forEach(rg => {
+        rg.rental_group_cids?.forEach(cidEntry => {
+          const dayCost = computeCidCostForDay(cidEntry.cid, rg, day, daySpend)
+          if (!dayCost) return
+          if (cidEntry.project_id) {
+            if (!projectIds || projectIds.has(cidEntry.project_id)) total += dayCost
+            return
+          }
+          const sibs = projectsByCidFull.get(cidEntry.cid) ?? []
+          if (sibs.length > 1) {
+            splitSpend(dayCost, sibs, revenueBasis).forEach((v, pid) => {
+              if (!projectIds || projectIds.has(pid)) total += v
+            })
+          } else if (sibs[0]) {
+            if (!projectIds || projectIds.has(sibs[0].project_id)) total += dayCost
+          }
+        })
+      })
+      if (total > 0) rentalByDate.set(day, total)
+    }
+
+    const otherByDate = new Map<string, number>()
+    otherCosts.forEach(c => {
+      if (!c.project_id) return
+      if (projectIds && !projectIds.has(c.project_id)) return
+      otherByDate.set(c.date, (otherByDate.get(c.date) ?? 0) + c.amount)
+    })
+
+    const dates = new Set([...byDate.keys(), ...screenByDate.keys(), ...rentalByDate.keys(), ...otherByDate.keys()])
     return Array.from(dates)
       .sort((a, b) => a.localeCompare(b))
       .map(date => {
         const e = byDate.get(date) ?? { date, spend: 0, revenue: 0 }
+        const rentalDay = rentalByDate.get(date) ?? 0
+        const otherDay  = otherByDate.get(date) ?? 0
+        const cost = e.spend + rentalDay + otherDay
         const screenRevenue = screenByDate.get(date) ?? 0
+        const profit = e.revenue - cost
+        const screenProfit = screenRevenue - cost
         return {
           date,
           spend: e.spend,
+          rentalDay,
+          otherDay,
+          cost,
           revenue: e.revenue,
           screenRevenue,
-          profit: e.revenue - e.spend,
-          screenProfit: screenRevenue - e.spend,
+          profit,
+          screenProfit,
+          roi: cost > 0 ? (profit / cost) * 100 : 0,
+          screenRoi: cost > 0 ? (screenProfit / cost) * 100 : 0,
         }
       })
-  }, [dataSource, adSpendRows, revenueRows, selectedProjectIds, projectByCampaignId, cumulativePids, prevCumulativeMap])
+  }, [dataSource, adSpendRows, revenueRows, selectedProjectIds, siblingsByCampaign, cidByCampaign, projectsByCidFull, cumulativePids, prevCumulativeMap, rentalGroups, otherCosts, dateRange, allSummaries])
 
   return {
     data: viewData as PnlSummary[],
