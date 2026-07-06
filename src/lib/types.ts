@@ -170,7 +170,9 @@ export interface CampaignDiscovery {
   project_name?: string | null
 }
 
-export type AdDevice = 'ALL' | 'MOBILE' | 'DESKTOP' | 'TABLET'
+// 'ALL' = tổng legacy (script cũ không gửi chiều device).
+// 'OTHER' = thiết bị khác (Connected TV / Unknown) từ script mới.
+export type AdDevice = 'ALL' | 'MOBILE' | 'DESKTOP' | 'TABLET' | 'OTHER'
 
 export interface AdSpend {
   campaign_id: string

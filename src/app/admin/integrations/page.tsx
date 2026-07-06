@@ -84,7 +84,7 @@ function buildDiscoverScript(secret: string, webhookUrl: string) {
 function gaqlScanFn() {
   return `  function mapDevice(d) {
     d = String(d || '').toUpperCase();
-    return (d === 'MOBILE' || d === 'DESKTOP' || d === 'TABLET') ? d : 'ALL';
+    return (d === 'MOBILE' || d === 'DESKTOP' || d === 'TABLET') ? d : 'OTHER';
   }
 
   function flush() {

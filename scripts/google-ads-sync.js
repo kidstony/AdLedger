@@ -111,12 +111,12 @@ function syncSpend(cid, range) {
   if (records.length) post({ secret: SECRET, records: records });
 }
 
-// Map enum device của Google Ads về 4 giá trị app dùng. Còn lại (CONNECTED_TV,
-// OTHER, UNKNOWN...) gộp về 'ALL' để không tách nhầm.
+// Map enum device của Google Ads về MOBILE/DESKTOP/TABLET. Còn lại (CONNECTED_TV,
+// OTHER, UNKNOWN...) → 'OTHER' (nhãn riêng, tách khỏi 'ALL' legacy).
 function mapDevice(device) {
   var d = String(device || '').toUpperCase();
   if (d === 'MOBILE' || d === 'DESKTOP' || d === 'TABLET') return d;
-  return 'ALL';
+  return 'OTHER'; // Connected TV / Unknown — nhãn riêng, không gộp vào 'ALL' legacy
 }
 
 function dateRange(timeZone, daysBack) {

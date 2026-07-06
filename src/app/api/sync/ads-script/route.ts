@@ -149,8 +149,9 @@ export async function POST(req: NextRequest) {
   // Upsert spend. Granularity mịn: (campaign_id, date, device, ad_group_id).
   // Script cũ chưa gửi device/ad_group_id → mặc định 'ALL' (giữ nguyên hành vi).
   const normDevice = (d?: string) => {
-    const u = (d ?? '').toUpperCase()
-    return u === 'MOBILE' || u === 'DESKTOP' || u === 'TABLET' ? u : 'ALL'
+    if (!d) return 'ALL' // script cũ không gửi device → 'ALL' (tổng legacy)
+    const u = d.toUpperCase()
+    return u === 'MOBILE' || u === 'DESKTOP' || u === 'TABLET' ? u : 'OTHER'
   }
   const spendRows = records.map(r => ({
     campaign_id: r.campaign_id,
