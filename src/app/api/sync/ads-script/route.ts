@@ -168,6 +168,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
+  // Supersede dữ liệu legacy: khi đã có dòng chi tiết theo device/ad_group cho một
+  // (campaign, ngày), xoá dòng tổng cũ device='ALL' & ad_group_id='ALL' của chính
+  // ngày đó để không cộng chồng (đếm gấp đôi) khi backfill/re-sync.
+  const segmentedDatesByCampaign = new Map<string, Set<string>>()
+  spendRows.forEach(r => {
+    if (r.device === 'ALL' && r.ad_group_id === 'ALL') return
+    const set = segmentedDatesByCampaign.get(r.campaign_id) ?? new Set<string>()
+    set.add(r.date)
+    segmentedDatesByCampaign.set(r.campaign_id, set)
+  })
+  for (const [campaignId, dates] of segmentedDatesByCampaign) {
+    await supabaseAdmin
+      .from('ad_spend')
+      .delete()
+      .eq('campaign_id', campaignId)
+      .eq('device', 'ALL')
+      .eq('ad_group_id', 'ALL')
+      .in('date', [...dates])
+  }
+
   await supabaseAdmin.from('sync_log').insert({ records: spendRows.length, status: 'success', message: null, organization_id: organizationId })
   return NextResponse.json({ success: true, count: spendRows.length })
 }

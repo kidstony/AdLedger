@@ -129,7 +129,7 @@ function buildBackfillScript(secret: string, webhookUrl: string) {
   return `function main() {
   var SECRET     = '${secret}';
   var WEBHOOK    = '${webhookUrl}';
-  var START_DATE = '2025-01-01'; // ĐỔI: ngày bắt đầu backfill (yyyy-MM-dd)
+  var START_DATE = '2020-01-01'; // đã set sẵn phủ toàn bộ lịch sử; rút gần lại nếu bị timeout
   var BATCH      = 1000;
 
   var mccName = AdsApp.currentAccount().getName();
@@ -540,7 +540,7 @@ export default function IntegrationsPage() {
             {scriptTab === 'backfill' && (
               <div className="border border-dashed border-slate-200 rounded-lg p-4 space-y-3 bg-slate-50/50">
                 <div className="flex items-center justify-between">
-                  <p className="text-xs text-slate-400">Đổ toàn bộ dữ liệu từ <code className="bg-slate-100 px-1 rounded">START_DATE</code> đến hôm qua. Nhớ đổi biến trước khi chạy.</p>
+                  <p className="text-xs text-slate-400">Đổ toàn bộ dữ liệu (kèm device/ad group) từ <code className="bg-slate-100 px-1 rounded">START_DATE</code> (đã set sẵn 2020) đến hôm qua. Chạy 1 lần để tách chi phí lịch sử.</p>
                   <CopyButton text={buildBackfillScript(secret, webhookUrl)} label="Copy code" />
                 </div>
                 <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto overflow-y-auto leading-relaxed font-mono max-h-[400px]">
@@ -554,7 +554,7 @@ export default function IntegrationsPage() {
               <p>1. Vào <strong>Tools &amp; Settings → Scripts → + Create</strong></p>
               <p>2. Dán script quét, click <strong>Run</strong> → sau đó dán script hàng ngày</p>
               <p>3. Đặt lịch script hàng ngày: <strong>Daily — 8:00 AM</strong> → Save</p>
-              <p>4. <strong>Lần đầu:</strong> chạy script lịch sử 1 lần (đổi <code>START_DATE</code>) để backfill dữ liệu quá khứ</p>
+              <p>4. <strong>Lần đầu:</strong> chạy script lịch sử 1 lần để backfill dữ liệu quá khứ (đã có device/ad group để tách chi phí)</p>
             </div>
           </div>
         )}
