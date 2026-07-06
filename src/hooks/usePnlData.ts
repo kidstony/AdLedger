@@ -126,10 +126,14 @@ export function usePnlData() {
   async function fetchCampaignInfo() {
     const res = await fetch('/api/integrations/campaigns').catch(() => null)
     if (!res?.ok) return
-    const list: CampaignInfo[] = await res.json().catch(() => [])
+    const list: Array<CampaignInfo & { projects?: { project_id: string }[] }> = await res.json().catch(() => [])
     if (!Array.isArray(list)) return
+    // Một campaign có thể gán cho nhiều dự án → set info cho tất cả project của nó.
     const map = new Map<string, CampaignInfo>()
-    list.forEach(c => { if (c.project_id) map.set(c.project_id, c) })
+    list.forEach(c => {
+      const pids = c.projects?.length ? c.projects.map(p => p.project_id) : (c.project_id ? [c.project_id] : [])
+      pids.forEach(pid => map.set(pid, { campaign_id: c.campaign_id, customer_id: c.customer_id, mcc_id: c.mcc_id, project_id: pid }))
+    })
     setCampaignInfoByProjectId(map)
   }
 

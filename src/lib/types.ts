@@ -164,7 +164,9 @@ export interface CampaignDiscovery {
   last_seen: string
   mcc_id?: string | null
   mcc_name?: string | null
-  project_id?: string | null
+  // Một campaign có thể gán cho nhiều dự án (nhiều link ref chung 1 campaign).
+  projects?: { project_id: string; project_name: string }[]
+  project_id?: string | null      // = phần tử đầu của projects (tương thích ngược)
   project_name?: string | null
 }
 

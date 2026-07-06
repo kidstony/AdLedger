@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CampaignDiscovery } from '@/lib/types'
+import { toast } from 'sonner'
 
 interface SyncLogEntry {
   id: string
@@ -389,15 +390,24 @@ export default function IntegrationsPage() {
     setTimeout(() => setBackfillStatus('idle'), 3000)
   }
 
-  async function handleMapping(campaignId: string, projectId: string | null) {
+  // assign=true gán thêm 1 dự án vào campaign; assign=false gỡ đúng dự án đó.
+  async function handleMapping(campaignId: string, projectId: string | null, assign = true) {
     setMappingInProgress(prev => new Set(prev).add(campaignId))
-    await authFetch('/api/integrations/campaigns', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ campaign_id: campaignId, project_id: projectId }),
-    })
-    await loadCampaigns()
-    setMappingInProgress(prev => { const next = new Set(prev); next.delete(campaignId); return next })
+    try {
+      const res = await authFetch('/api/integrations/campaigns', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaign_id: campaignId, project_id: projectId, assign }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        toast.error(body.error ? `Gán thất bại: ${body.error}` : 'Gán thất bại')
+        return
+      }
+      await loadCampaigns()
+    } finally {
+      setMappingInProgress(prev => { const next = new Set(prev); next.delete(campaignId); return next })
+    }
   }
 
   function formatTime(iso: string) {
@@ -405,8 +415,8 @@ export default function IntegrationsPage() {
     return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
   }
 
-  const unmapped = campaigns.filter(c => !c.project_id)
-  const mapped = campaigns.filter(c => c.project_id)
+  const unmapped = campaigns.filter(c => !c.projects?.length)
+  const mapped = campaigns.filter(c => c.projects?.length)
   const displayList = activeTab === 'unmapped' ? unmapped : mapped
 
   const filteredList = useMemo(() => {
@@ -622,40 +632,50 @@ export default function IntegrationsPage() {
                 {filteredList.length === 0 && (
                   <div className="py-4 text-center text-xs text-slate-400">Không tìm thấy campaign nào.</div>
                 )}
-                {filteredList.map(c => (
-                  <div key={c.campaign_id}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-sm ${c.project_id ? 'border-green-100 bg-green-50/50' : 'border-slate-100 bg-white'}`}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-slate-800 truncate">{c.campaign_name}</p>
-                      <p className="text-xs text-slate-400 font-mono mt-0.5">{c.customer_id} · ID: {c.campaign_id}</p>
-                    </div>
-
-                    {c.project_id ? (
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-md font-medium">{c.project_name}</span>
-                        <button
-                          onClick={() => handleMapping(c.campaign_id, null)}
-                          disabled={mappingInProgress.has(c.campaign_id)}
-                          className="p-1 rounded hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors"
-                          title="Bỏ gán"
-                        >
-                          {mappingInProgress.has(c.campaign_id) ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
-                        </button>
+                {filteredList.map(c => {
+                  const mappedProjects = c.projects ?? []
+                  const mappedIds = new Set(mappedProjects.map(p => p.project_id))
+                  const busy = mappingInProgress.has(c.campaign_id)
+                  return (
+                    <div key={c.campaign_id}
+                      className={`flex items-start gap-3 px-3 py-2.5 rounded-lg border text-sm ${mappedProjects.length ? 'border-green-100 bg-green-50/50' : 'border-slate-100 bg-white'}`}
+                    >
+                      <div className="flex-1 min-w-0 pt-0.5">
+                        <p className="font-medium text-slate-800 truncate">{c.campaign_name}</p>
+                        <p className="text-xs text-slate-400 font-mono mt-0.5">{c.customer_id} · ID: {c.campaign_id}</p>
                       </div>
-                    ) : (
-                      <div className="shrink-0">
+
+                      <div className="flex flex-col items-end gap-1.5 shrink-0 max-w-[240px]">
+                        {mappedProjects.length > 0 && (
+                          <div className="flex flex-wrap justify-end gap-1">
+                            {mappedProjects.map(p => (
+                              <span key={p.project_id}
+                                className="inline-flex items-center gap-1 text-xs px-2 py-1 bg-green-100 text-green-700 rounded-md font-medium">
+                                {p.project_name}
+                                <button
+                                  onClick={() => handleMapping(c.campaign_id, p.project_id, false)}
+                                  disabled={busy}
+                                  className="rounded hover:bg-red-100 text-green-600 hover:text-red-600 transition-colors"
+                                  title="Bỏ gán dự án này"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {/* Luôn cho thêm dự án nữa (nhiều link ref chung 1 campaign) */}
                         <CampaignProjectSelect
                           campaignId={c.campaign_id}
-                          currentProjectId={c.project_id ?? null}
-                          projects={projects}
-                          inProgress={mappingInProgress.has(c.campaign_id)}
-                          onSelect={handleMapping}
+                          currentProjectId={null}
+                          projects={projects.filter(p => !mappedIds.has(p.project_id))}
+                          inProgress={busy}
+                          onSelect={(campaignId, projectId) => { if (projectId) handleMapping(campaignId, projectId, true) }}
                         />
                       </div>
-                    )}
-                  </div>
-                ))}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
