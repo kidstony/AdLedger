@@ -5,11 +5,12 @@ import { Gauge, Info, RefreshCw } from 'lucide-react'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { useDateRange } from '@/context/DateRangeContext'
 import { supabase } from '@/lib/supabase'
-import { formatCid, formatVND } from '@/lib/utils'
+import { cn, formatCid, formatVND } from '@/lib/utils'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import HealthScorecard from '@/components/optimize/HealthScorecard'
 import SuggestionCard from '@/components/optimize/SuggestionCard'
 import BreakdownTables from '@/components/optimize/BreakdownTables'
+import PortfolioTable, { type OverviewRow } from '@/components/optimize/PortfolioTable'
 import type { CampaignHealth, CampaignSettings, KeywordAgg, OptimizationSuggestion, SearchTermAgg, SegmentAgg } from '@/lib/types'
 
 interface OptimizeResponse {
@@ -38,25 +39,30 @@ export default function OptimizePage() {
     [projects],
   )
 
+  const [mode, setMode] = useState<'overview' | 'detail'>('overview')
   const [projectId, setProjectId] = useState('')
   const [data, setData] = useState<OptimizeResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [overview, setOverview] = useState<OverviewRow[] | null>(null)
+  const [ovLoading, setOvLoading] = useState(false)
 
   // Không setState trong effect để chọn mặc định — dẫn xuất trực tiếp.
   const selectedId = projectId || eligible[0]?.project_id || ''
 
+  const authFetch = async (url: string) => {
+    const { data: { session } } = await supabase.auth.getSession()
+    return fetch(url, { headers: session ? { Authorization: `Bearer ${session.access_token}` } : {} }).then(r => r.json())
+  }
+
+  // Chi tiết 1 camp (chế độ detail).
   useEffect(() => {
-    if (!selectedId) return
+    if (mode !== 'detail' || !selectedId) return
     let cancelled = false
     const run = async () => {
       setLoading(true); setError(null)
       try {
-        const { data: { session } } = await supabase.auth.getSession()
-        const url = `/api/optimize?project_id=${encodeURIComponent(selectedId)}&from=${fromStr}&to=${toStr}`
-        const res: OptimizeResponse = await fetch(url, {
-          headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
-        }).then(r => r.json())
+        const res: OptimizeResponse = await authFetch(`/api/optimize?project_id=${encodeURIComponent(selectedId)}&from=${fromStr}&to=${toStr}`)
         if (cancelled) return
         if (res.error) { setError(res.error); setData(null) }
         else setData(res)
@@ -68,10 +74,31 @@ export default function OptimizePage() {
     }
     run()
     return () => { cancelled = true }
-  }, [selectedId, fromStr, toStr])
+  }, [mode, selectedId, fromStr, toStr])
+
+  // Bảng tổng quan (chế độ overview).
+  useEffect(() => {
+    if (mode !== 'overview') return
+    let cancelled = false
+    const run = async () => {
+      setOvLoading(true)
+      try {
+        const res = await authFetch(`/api/optimize/overview?from=${fromStr}&to=${toStr}`)
+        if (!cancelled) setOverview(Array.isArray(res.rows) ? res.rows : [])
+      } catch {
+        if (!cancelled) setOverview([])
+      } finally {
+        if (!cancelled) setOvLoading(false)
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, [mode, fromStr, toStr])
+
+  const openDetail = (pid: string) => { setProjectId(pid); setMode('detail') }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-6">
+    <div className="mx-auto max-w-5xl px-6 py-6">
       <header className="mb-5">
         <div className="flex items-center gap-2">
           <Gauge className="text-slate-700" size={22} />
@@ -82,28 +109,51 @@ export default function OptimizePage() {
         </p>
       </header>
 
-      {/* Bộ chọn */}
+      {/* Tab + bộ chọn */}
       <div className="mb-5 flex flex-wrap items-center gap-3">
-        <select
-          value={selectedId}
-          onChange={e => setProjectId(e.target.value)}
-          className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-slate-400 focus:outline-none"
-        >
-          {eligible.length === 0 && <option value="">— Chưa có camp nào gắn campaign —</option>}
-          {eligible.map(p => (
-            <option key={p.project_id} value={p.project_id}>
-              {p.name} · {formatCid(p.cid)}
-            </option>
+        <div className="flex gap-1 rounded-lg bg-slate-100 p-0.5">
+          {(['overview', 'detail'] as const).map(m => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={cn('rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                mode === m ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
+            >
+              {m === 'overview' ? 'Tổng quan' : 'Chi tiết camp'}
+            </button>
           ))}
-        </select>
+        </div>
+        {mode === 'detail' && (
+          <select
+            value={selectedId}
+            onChange={e => setProjectId(e.target.value)}
+            className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-slate-400 focus:outline-none"
+          >
+            {eligible.length === 0 && <option value="">— Chưa có camp nào gắn campaign —</option>}
+            {eligible.map(p => (
+              <option key={p.project_id} value={p.project_id}>
+                {p.name} · {formatCid(p.cid)}
+              </option>
+            ))}
+          </select>
+        )}
         <DateRangePicker
           from={fromStr}
           to={toStr}
           onApply={(f, t) => setDateRange({ from: new Date(f + 'T00:00:00Z'), to: new Date(t + 'T00:00:00Z') })}
         />
-        {loading && <RefreshCw size={16} className="animate-spin text-slate-400" />}
+        {(loading || ovLoading) && <RefreshCw size={16} className="animate-spin text-slate-400" />}
       </div>
 
+      {/* Chế độ Tổng quan */}
+      {mode === 'overview' && (
+        overview
+          ? <PortfolioTable rows={overview} onSelect={openDetail} />
+          : <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-400">Đang tải...</div>
+      )}
+
+      {/* Chế độ Chi tiết */}
+      {mode === 'detail' && <>
       {/* Trạng thái */}
       {error && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -164,6 +214,7 @@ export default function OptimizePage() {
           </section>
         </div>
       )}
+      </>}
     </div>
   )
 }

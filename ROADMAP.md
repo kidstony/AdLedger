@@ -67,6 +67,7 @@ Dashboard / Revenue grid / Project detail (Next.js)
 | | `keyword_metrics` | PK `(campaign_id, ad_group_id, criterion_id, date)`; +quality_score | Webhook (auto) |
 | | `search_term_metrics` | PK `(campaign_id, ad_group_id, search_term, date)` | Webhook (auto) |
 | | `segment_metrics` | PK `(campaign_id, date, segment_type, segment_value)`; device/hour/geo | Webhook (auto) |
+| | `campaign_settings` | PK `campaign_id`; daily_budget, bidding_strategy, currency_code | Webhook (auto) |
 | **Dự án** | `projects` | PK `project_id`; FK `cid`, `google_campaign_id`, `team_id`, `master_project_id`, `category_id`, `bank_account_id` | UI |
 | | `master_projects` | gom nhiều `projects` thành 1 dự án mẹ | UI |
 | | `project_categories`, `affiliate_networks` | phân loại; `organization_id` | UI |
@@ -144,7 +145,7 @@ src/
 ### 3.2 Bản đồ API (42 route, dưới `src/app/api/`)
 
 - **Ingest/Integrations:** `sync/ads-script` (webhook — spend + `campaign_metrics` + discovery), `integrations/{campaigns, secret, sync-log}`
-- **Tối ưu camp:** `optimize` (GET — phân tích 1 camp theo project, chạy `campaign-optimizer`)
+- **Tối ưu camp:** `optimize` (GET — phân tích 1 camp), `optimize/overview` (GET — bảng tổng quan tất cả camp, xếp theo cấp thiết)
 - **Projects:** `projects/[id]/{route, history, pnl-summary, password, reminder, my-permissions, shares, shares/[shareId]}`, `projects/{categories, networks, next-id, reminders-active, team-users}`, `project-members`
 - **Master projects:** `master-projects`, `master-projects/[id]`
 - **Doanh thu:** `revenue`
@@ -228,6 +229,14 @@ Lọc dữ liệu theo role diễn ra ở **2 tầng**:
 - [x] **P1 — ROI core:** bảng `campaign_metrics` + ingest (`type:'campaign_metrics'`) + `campaign-optimizer.ts` (rule ROI-based: cut/scale/raise_budget/raise_bid/margin_alert/daypart + fix_creative + setup_tracking) + `api/optimize` + trang `/optimize` (scorecard + thẻ gợi ý). Migration [`migration_campaign_optimizer.sql`](supabase/migration_campaign_optimizer.sql) tạo sẵn cả 4 bảng.
 - [x] **P2 — keyword & search term:** ingest `keyword_metrics`/`search_term_metrics` (script Hàng ngày) + rule engagement `pause_keyword`/`add_negative` + bảng breakdown (`BreakdownTables`) ở `/optimize`.
 - [x] **P3 — device/giờ/geo:** ingest `segment_metrics` (device/giờ/geo, script Hàng ngày) + rule `device_adjust`/`daypart` theo phân khúc + bảng breakdown device/giờ/geo ở `/optimize`.
+
+### Đi sâu Tối Ưu Camp (Deep) — ✅ D0–D4
+- [x] **D0** Fix ngưỡng "đủ dữ liệu" theo số click (currency-agnostic) — bug tài khoản USD không ra gợi ý cut.
+- [x] **D1** Kế hoạch hành động xếp theo $ tác động + `items[]` cụ thể + `estimatedSavings`; money() định dạng USD.
+- [x] **D2** So xu hướng WoW (kỳ trước cùng độ dài) → `health.trend` + rule momentum + mũi tên ▲▼ ở scorecard.
+- [x] **D3** `campaign_settings` (budget/bid strategy/currency) → gợi ý scale nói số cụ thể; raise_bid đổi lời khi bid tự động.
+- [x] **D4** `optimize/overview` + trang tab **Tổng quan** (bảng tất cả camp xếp theo cấp thiết) / **Chi tiết camp**.
+- [ ] Ceiling (để sau): conversion signal từ network (postback/OCI) → ROI mức keyword; phân tích ad/RSA; charts.
 
 ### Việc còn mở / ý tưởng tiếp theo — ☐ Chưa làm
 - [ ] Tự động lấy doanh thu từ **network API** (thay nhập tay) — ghi thẳng vào `affiliate_revenue`, **không đổi** phần tính P&L phía sau
