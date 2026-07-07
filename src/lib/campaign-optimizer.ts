@@ -329,7 +329,12 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   // 4. Đủ lãi + IS mất do THỨ HẠNG cao → TĂNG BID / cải thiện QS.
   //    Nếu đang dùng bid tự động (Maximize/tCPA/tROAS) thì "tăng bid tay" vô nghĩa
   //    → đổi thành nới target / tăng ngân sách.
-  if (health.roi != null && health.roi > CFG.TARGET_ROI
+  //    GUARD: nếu CPC đã vượt trần lời-mỗi-click (rule 4b) thì KHÔNG gợi ý tăng —
+  //    trần bid là kim chỉ nam (playbook 3c), tránh 2 lời khuyên ngược nhau.
+  const revPerClickAll = totalRevenue > 0 && health.clicks > 0 ? totalRevenue / health.clicks : null
+  const bidCeiling = revPerClickAll != null ? revPerClickAll * CFG.BID_CEILING_RATIO : null
+  const cpcOverCeiling = enoughData && bidCeiling != null && health.avgCpc > 0 && health.avgCpc > bidCeiling
+  if (!cpcOverCeiling && health.roi != null && health.roi > CFG.TARGET_ROI
       && health.isLostRank != null && health.isLostRank / 100 > CFG.IS_RANK_THRESHOLD) {
     const strategy = input.settings?.bidding_strategy ?? null
     const automated = isAutomatedBidding(strategy)
@@ -353,10 +358,10 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   // 4b. Trần bid theo lời-mỗi-click (playbook 3c) — "kim chỉ nam bid" khi không có
   //     conversion tracking: CPC trung bình không nên vượt BID_CEILING_RATIO của giá
   //     trị DT Màn hình mỗi click.
-  if (enoughData && totalRevenue > 0 && health.clicks > 0 && health.avgCpc > 0) {
-    const revPerClick = totalRevenue / health.clicks
-    const ceiling = revPerClick * CFG.BID_CEILING_RATIO
-    if (health.avgCpc > ceiling) {
+  if (cpcOverCeiling && revPerClickAll != null && bidCeiling != null) {
+    const revPerClick = revPerClickAll
+    const ceiling = bidCeiling
+    {
       const ratio = (health.avgCpc / revPerClick) * 100
       suggestions.push(makeSuggestion({
         type: 'lower_bid', severity: health.roi != null && health.roi < 0 ? 'high' : 'medium', confidence: 'roi', scope,
@@ -424,10 +429,15 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
 
   // 6. Lãi theo THỨ trong tuần (ROI ở mức ngày vẫn hợp lệ) → gợi ý dayparting.
   //    Xấp xỉ profit ngày = doanh thu − ad_spend (bỏ qua rental/other để bắt tín hiệu).
+  //    CHỈ xét các ngày ≤ ngày cuối ĐÃ CÓ doanh thu nhập ("dữ liệu chín" — playbook 0):
+  //    ngày cuối kỳ thường đã sync chi phí nhưng CHƯA nhập DT → thành "lỗ giả".
   {
+    const revenueDates = Object.keys(input.revenueByDate).filter(d => (input.revenueByDate[d] ?? 0) > 0)
+    const matureCutoff = revenueDates.length ? revenueDates.sort()[revenueDates.length - 1] : null
     const byWeekday = new Map<number, { profit: number; spend: number }>()
     const allDates = new Set([...Object.keys(input.revenueByDate), ...Object.keys(input.spendByDate)])
     for (const d of allDates) {
+      if (matureCutoff != null && d > matureCutoff) continue // DT chưa kịp nhập → bỏ qua
       const wd = new Date(d + 'T00:00:00').getDay()
       const rev = input.revenueByDate[d] ?? 0
       const sp = input.spendByDate[d] ?? 0
