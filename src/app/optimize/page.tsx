@@ -15,6 +15,7 @@ interface OptimizeResponse {
   project: { project_id: string; name: string; cid: string; campaign_id: string }
   range: { from: string; to: string }
   cost: { spend: number; rental: number; other: number; total: number }
+  revenue: { screen: number; confirmed: number }
   hasMetrics: boolean
   health: CampaignHealth
   suggestions: OptimizationSuggestion[]
@@ -73,7 +74,7 @@ export default function OptimizePage() {
           <h1 className="text-xl font-bold text-slate-800">Tối Ưu Camp</h1>
         </div>
         <p className="mt-1 text-sm text-slate-500">
-          Phân tích số liệu Google Ads + doanh thu affiliate thật để đề xuất hướng tối ưu camp.
+          Phân tích số liệu Google Ads + <b>DT Màn hình</b> (tín hiệu doanh thu sớm) để đề xuất hướng tối ưu camp.
         </p>
       </header>
 
@@ -119,7 +120,7 @@ export default function OptimizePage() {
 
       {!error && data && data.hasMetrics && (
         <div className="space-y-5">
-          <HealthScorecard health={data.health} cost={data.cost} />
+          <HealthScorecard health={data.health} cost={data.cost} confirmedRevenue={data.revenue.confirmed} />
 
           {!data.hasConversionTracking && (
             <div className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">

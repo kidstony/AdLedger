@@ -183,7 +183,7 @@ Công thức: `cost = spend(QC) + rentalDay(thuê TK) + otherDay(CP khác)`; `pr
 Trang `/revenue` dùng [`useRevenueGrid.ts`](src/hooks/useRevenueGrid.ts): grid kiểu Excel (hàng = project, cột = ngày), gõ ô → upsert `affiliate_revenue`. Có `status` pending/confirmed + chu kỳ payout.
 
 ### 4.5 Tối ưu camp
-`google-ads-sync.js` gửi thêm `type:'campaign_metrics'` (impressions/clicks/CTR/CPC/Search IS) → webhook upsert `campaign_metrics` (KHÔNG đụng `ad_spend`). Trang `/optimize` gọi [`api/optimize`](src/app/api/optimize/route.ts): ghép `campaign_metrics` + doanh thu thật (`affiliate_revenue`) + cost (spend+rental+other, dùng lại `computeCidCost`) → [`campaign-optimizer.ts`](src/lib/campaign-optimizer.ts) chạy rule engine ra `health` + `suggestions[]`. Vì affiliate **không có conversion tracking**, ROI thật chỉ ở mức project×ngày → gợi ý chia 2 độ tin cậy `roi` (chắc) vs `engagement` (cần xem xét).
+`google-ads-sync.js` gửi thêm `type:'campaign_metrics'` (impressions/clicks/CTR/CPC/Search IS) → webhook upsert `campaign_metrics` (KHÔNG đụng `ad_spend`). Trang `/optimize` gọi [`api/optimize`](src/app/api/optimize/route.ts): ghép `campaign_metrics` + **DT Màn hình** (`affiliate_revenue` type='pending', tính qua [`screen-revenue.ts`](src/lib/screen-revenue.ts) — mirror logic delta của `usePnlData`) + cost (spend+rental+other, dùng lại `computeCidCost`) → [`campaign-optimizer.ts`](src/lib/campaign-optimizer.ts) chạy rule engine ra `health` + `suggestions[]`. Cơ sở phân tích = **DT Màn hình** (tín hiệu sớm, kịp tối ưu); DT Thực (confirmed) chỉ hiển thị tham chiếu. Vì affiliate **không có conversion tracking**, tín hiệu tiền chỉ ở mức project×ngày → gợi ý chia 2 độ tin cậy `roi` (chắc) vs `engagement` (cần xem xét).
 
 ---
 

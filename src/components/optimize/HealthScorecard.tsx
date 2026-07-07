@@ -24,9 +24,10 @@ function Tile({ label, value, sub, tone = 'default' }: {
   )
 }
 
-export default function HealthScorecard({ health, cost }: {
+export default function HealthScorecard({ health, cost, confirmedRevenue }: {
   health: CampaignHealth
   cost: { spend: number; rental: number; other: number; total: number }
+  confirmedRevenue: number
 }) {
   const roiTone = health.roi == null ? 'default' : health.roi >= 20 ? 'good' : health.roi < 0 ? 'bad' : 'warn'
   const trend = health.cpcTrendPct
@@ -44,7 +45,8 @@ export default function HealthScorecard({ health, cost }: {
         </div>
         <div className="h-10 w-px bg-slate-200" />
         <div className="flex flex-1 flex-wrap gap-x-6 gap-y-1 text-xs">
-          <span className="text-slate-500">Doanh thu: <b className="text-slate-800">{formatVND(health.revenue)}</b></span>
+          <span className="text-slate-500">DT Màn hình: <b className="text-slate-800">{formatVND(health.revenue)}</b></span>
+          <span className="text-amber-600">DT Thực: <b>{formatVND(confirmedRevenue)}</b></span>
           <span className="text-slate-500">Chi phí QC: <b className="text-slate-800">{formatVND(cost.spend)}</b></span>
           {cost.rental > 0 && <span className="text-slate-500">Thuê TK: <b className="text-slate-800">{formatVND(cost.rental)}</b></span>}
           {cost.other > 0 && <span className="text-slate-500">CP khác: <b className="text-slate-800">{formatVND(cost.other)}</b></span>}
@@ -55,7 +57,7 @@ export default function HealthScorecard({ health, cost }: {
       {/* Chỉ số hiệu suất */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Tile label="ROI" value={health.roi == null ? '—' : `${health.roi.toFixed(1)}%`} tone={roiTone}
-          sub={health.roi == null ? 'chưa có chi phí' : undefined} />
+          sub={health.roi == null ? 'chưa có chi phí' : 'theo DT Màn hình'} />
         <Tile label="CTR" value={`${health.ctr.toFixed(2)}%`}
           sub={`${formatVND(health.clicks)} click / ${formatVND(health.impressions)} hiển thị`} />
         <Tile label="CPC trung bình" value={formatVND(health.avgCpc)}

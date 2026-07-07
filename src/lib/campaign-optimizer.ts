@@ -9,9 +9,10 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // Rule engine tối ưu campaign — DETERMINISTIC, giải thích được, KHÔNG dùng LLM.
 //
-// Bối cảnh affiliate KHÔNG có conversion tracking: doanh thu thật chỉ biết ở mức
-// project × ngày (affiliate_revenue). Vì vậy:
-//   • confidence 'roi'        → dùng doanh thu thật → gợi ý CHẮC (scale/cut/budget).
+// Cơ sở doanh thu = DT Màn hình (screen revenue, affiliate_revenue type='pending')
+// vì có sớm, kịp cho tối ưu. Affiliate KHÔNG có conversion tracking nên tín hiệu
+// tiền chỉ biết ở mức project × ngày. Vì vậy:
+//   • confidence 'roi'        → dùng DT Màn hình → gợi ý CHẮC (scale/cut/budget).
 //   • confidence 'engagement' → chỉ tín hiệu hiệu suất (CTR/CPC/IS) → "cần xem xét".
 //
 // Ngưỡng gom ở CFG để chỉnh 1 chỗ. Đơn vị tiền = đơn vị tài khoản Google Ads.
@@ -138,11 +139,11 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   if (enoughData && totalRevenue === 0) {
     suggestions.push(makeSuggestion({
       type: 'cut', severity: 'high', confidence: 'roi', scope,
-      title: 'Cắt camp — tiêu tiền nhưng chưa có doanh thu',
-      detail: `Đã chi ${money(totalSpend)} trong ${days} ngày mà doanh thu = 0. Camp đang lỗ toàn bộ chi phí.`,
+      title: 'Cắt camp — tiêu tiền nhưng chưa có DT Màn hình',
+      detail: `Đã chi ${money(totalSpend)} trong ${days} ngày mà DT Màn hình = 0. Camp đang lỗ toàn bộ chi phí.`,
       evidence: [
         { metric: 'Chi phí QC', value: money(totalSpend) },
-        { metric: 'Doanh thu', value: '0' },
+        { metric: 'DT Màn hình', value: '0' },
         { metric: 'Số ngày', value: String(days) },
       ],
       recommendedAction: 'Tạm dừng camp; rà lại targeting/keyword/landing trước khi bật lại.',
@@ -159,7 +160,7 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
       detail: `ROI ${pct(health.roi)} (dưới ngưỡng ${CFG.LOSS_ROI}%). Lỗ khoảng ${money(loss)} trong kỳ.`,
       evidence: [
         { metric: 'ROI', value: pct(health.roi) },
-        { metric: 'Doanh thu', value: money(totalRevenue) },
+        { metric: 'DT Màn hình', value: money(totalRevenue) },
         { metric: 'Tổng chi phí', value: money(totalCost) },
       ],
       recommendedAction: 'Cắt hoặc thu hẹp về khung keyword/thời điểm còn lãi; giảm bid mạnh.',
@@ -179,7 +180,7 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
       evidence: [
         { metric: 'ROI', value: pct(health.roi) },
         { metric: 'IS mất do ngân sách', value: pct(health.isLostBudget) },
-        { metric: 'Doanh thu hiện tại', value: money(totalRevenue) },
+        { metric: 'DT Màn hình', value: money(totalRevenue) },
       ],
       recommendedAction: `Tăng ngân sách từng bước (15–25%/lần), theo dõi ROI giữ trên ${CFG.TARGET_ROI}%.`,
       impactScore: Math.max(upside, totalRevenue * 0.2),
@@ -277,7 +278,7 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     suggestions.push(makeSuggestion({
       type: 'setup_tracking', severity: 'low', confidence: 'engagement', scope,
       title: 'Chưa có conversion tracking — tối ưu sâu bị giới hạn',
-      detail: 'Google Ads không thấy doanh thu (chuyển đổi ở site merchant qua link ref). ROI thật chỉ biết ở mức project × ngày. Keyword/search term/device/giờ/geo chỉ tối ưu bằng tín hiệu hiệu suất.',
+      detail: 'Cơ sở phân tích là DT Màn hình (ước tính sớm, có thể lệch DT Thực). Google Ads không thấy doanh thu (chuyển đổi ở site merchant qua link ref) nên ROI chỉ biết ở mức project × ngày; keyword/search term/device/giờ/geo chỉ tối ưu bằng tín hiệu hiệu suất.',
       evidence: [{ metric: 'Conversion trong kỳ', value: '0' }],
       recommendedAction: 'Cân nhắc import postback/conversion từ network để mở khóa tối ưu ở mức keyword.',
       impactScore: 0,

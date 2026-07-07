@@ -3,11 +3,13 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCallerProfile } from '@/lib/require-role'
 import { computeCidCost } from '@/lib/costs'
 import { optimizeCampaign } from '@/lib/campaign-optimizer'
+import { computeScreenRevenue, PendingRow } from '@/lib/screen-revenue'
 import { CampaignMetric, RentalGroup } from '@/lib/types'
 
 // GET /api/optimize?project_id=...&from=...&to=...
 // Phân tích 1 camp (theo project) và trả gợi ý tối ưu. Dùng service_role +
-// kiểm quyền trong code (giống pnl-summary). Doanh thu = affiliate_revenue thật.
+// kiểm quyền trong code (giống pnl-summary). Cơ sở phân tích = DT Màn hình
+// (affiliate_revenue type='pending') vì có sớm; DT Thực (confirmed) chỉ để tham chiếu.
 export async function GET(req: Request) {
   const caller = await getCallerProfile(req)
   if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -33,10 +35,11 @@ export async function GET(req: Request) {
 
   const { data: project } = await supabaseAdmin
     .from('projects')
-    .select('project_id, name, cid, google_campaign_id')
+    .select('project_id, name, cid, google_campaign_id, screen_revenue_type')
     .eq('project_id', project_id)
     .single()
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+  const isCumulative = project.screen_revenue_type === 'cumulative'
 
   if (!project.google_campaign_id) {
     return NextResponse.json({ error: 'Project chưa gắn Google campaign', code: 'NO_CAMPAIGN' }, { status: 400 })
@@ -52,7 +55,7 @@ export async function GET(req: Request) {
 
     supabaseAdmin
       .from('affiliate_revenue')
-      .select('date, type, amount')
+      .select('date, type, amount, cycle_end')
       .eq('project_id', project_id)
       .gte('date', from).lte('date', to),
 
@@ -78,14 +81,31 @@ export async function GET(req: Request) {
   const adSpends = adSpendRes.data ?? []
   const others = otherRes.data ?? []
 
-  const revenueByDate: Record<string, number> = {}
-  let totalRevenue = 0
-  for (const r of revenues) {
-    if (r.type !== 'confirmed') continue
-    const amt = r.amount ?? 0
-    revenueByDate[r.date] = (revenueByDate[r.date] ?? 0) + amt
-    totalRevenue += amt
+  // Cơ sở phân tích = DT Màn hình (pending). Với project cumulative, cần baseline
+  // = dòng pending cuối trước khoảng ngày (mirror usePnlData).
+  let baselinePrev = 0
+  if (isCumulative) {
+    const { data: prev } = await supabaseAdmin
+      .from('affiliate_revenue')
+      .select('amount, cycle_end')
+      .eq('project_id', project_id).eq('type', 'pending')
+      .lt('date', from)
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    baselinePrev = prev ? (prev.cycle_end ? 0 : (prev.amount ?? 0)) : 0
   }
+
+  const pendingRows: PendingRow[] = revenues
+    .filter(r => r.type === 'pending')
+    .map(r => ({ date: r.date, amount: r.amount ?? 0, cycle_end: r.cycle_end }))
+  const { byDate: revenueByDate, total: totalRevenue } =
+    computeScreenRevenue(pendingRows, isCumulative, baselinePrev)
+
+  // DT Thực (confirmed) — chỉ để tham chiếu ở UI, không dùng để ra quyết định.
+  const confirmedRevenue = revenues
+    .filter(r => r.type === 'confirmed')
+    .reduce((s, r) => s + (r.amount ?? 0), 0)
 
   const spendByDate: Record<string, number> = {}
   let totalSpend = 0
@@ -119,6 +139,7 @@ export async function GET(req: Request) {
     project: { project_id, name: project.name, cid: project.cid, campaign_id },
     range: { from, to },
     cost: { spend: totalSpend, rental: total_rental, other: total_other, total: totalCost },
+    revenue: { screen: totalRevenue, confirmed: confirmedRevenue },
     hasMetrics: metrics.length > 0,
     ...result,
   })
