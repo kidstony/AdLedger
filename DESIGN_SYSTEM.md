@@ -97,14 +97,25 @@ card: bg-white rounded-lg border border-slate-200 p-5 shadow-sm
 
 ---
 
-## Glossary
+## Glossary — từ chuẩn (canonical)
+
+**Bắt buộc dùng đúng các từ này.** Quy tắc: "màn hình" luôn viết thường; nhóm màn hình = amber, nhóm thực nhận = xanh. `total_pending` == `total_screen_revenue` → dùng chung nhóm "màn hình".
+
+| Khái niệm | Nút/toggle | Cột bảng | Nhãn thẻ (card) | Màu |
+|---|---|---|---|---|
+| Doanh thu chưa nhận (screen/pending) | **Tiền màn hình** | **DT màn hình** | **Doanh thu (màn hình)** | Amber |
+| Lợi nhuận screen | — | **LN màn hình** | **Lợi nhuận (màn hình)** | Amber |
+| ROI screen | — | — | **ROI (màn hình)** | Amber |
+| Doanh thu đã nhận (confirmed) | **Thực nhận** | **Doanh thu** | **Doanh thu** | Blue |
+| Phụ đề ô đã nhận | — | — | **✓ đã nhận** | — |
+
+Không dùng lại các biến thể cũ: ~~DT Màn hình~~, ~~Doanh thu (Màn hình)~~, ~~Theo màn hình~~, ~~Doanh thu thực~~, ~~Doanh thu chờ~~, ~~Chờ TT~~ (cho doanh thu), ~~(Ước tính)~~.
+Chi phí: **Tổng chi phí** (thẻ) / **Tổng CP** (bảng hẹp), **CP khác**, **Chi phí QC** / **QC** (viết tắt), **Thuê TK**.
+
+Lưu ý enum nội bộ (chưa đồng bộ, không hiển thị): confirmed = `'confirmed'` (DB/dashboard) nhưng `'revenue'` (revenue tab); screen = `'pending'` (DB) nhưng `'screen'` (UI toggle).
 
 | Thuật ngữ | Nghĩa | Màu |
 |---|---|---|
-| DT Màn hình / Tiền màn hình | Screen revenue — sẽ về sau | Amber |
-| Chờ về / Chờ TT | Tiền đang chờ nhận | Amber |
-| Ước tính | Tính toán bao gồm screen revenue | Amber |
-| Doanh thu xác nhận / Đã xác nhận | Tiền đã nhận thực tế | Blue |
 | CID | Google Ads Customer ID (xxx-xxx-xxxx) | — |
 | MCC | Manager account Google Ads hierarchy | — |
 

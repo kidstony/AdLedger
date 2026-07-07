@@ -26,7 +26,7 @@ const columns: { key: string; label: string; sortable: boolean; align: string; i
   { key: 'cid',                  label: 'CID',             sortable: false, align: 'text-left' },
   { key: 'total_cost',           label: 'Tổng CP',         sortable: true,  align: 'text-right' },
   { key: 'total_revenue',        label: 'Doanh thu',       sortable: true,  align: 'text-right' },
-  { key: 'total_screen_revenue', label: 'DT Màn hình',     sortable: false, align: 'text-right', icon: true },
+  { key: 'total_screen_revenue', label: 'DT màn hình',     sortable: false, align: 'text-right', icon: true },
   { key: 'total_profit',         label: 'Lợi nhuận',       sortable: true,  align: 'text-right' },
   { key: 'avg_roi',              label: 'ROI%',            sortable: true,  align: 'text-right' },
 ]

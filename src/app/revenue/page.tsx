@@ -420,7 +420,7 @@ export default function RevenuePage() {
             className={cn('flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
               activeTab === 'revenue' ? 'bg-white text-green-700 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
           >
-            <Banknote size={12} /> Doanh thu thực
+            <Banknote size={12} /> Thực nhận
           </button>
           <button
             onClick={() => setActiveTab('screen')}
@@ -602,7 +602,7 @@ export default function RevenuePage() {
                         ? isRevTab && confirmedAt
                           ? `✓ ${new Date(confirmedAt).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}`
                           : !isRevTab
-                            ? `✓ Đã nhận ${formatVND(revenueGrid.get(key) ?? 0)}`
+                            ? `✓ đã nhận ${formatVND(revenueGrid.get(key) ?? 0)}`
                             : undefined
                         : undefined
 

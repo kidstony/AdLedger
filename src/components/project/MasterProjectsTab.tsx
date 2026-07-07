@@ -215,7 +215,7 @@ export default function MasterProjectsTab() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Thương hiệu', 'Chiến dịch', 'Tổng CP', 'Doanh thu', 'Chờ TT', 'Lợi nhuận', 'ROI', ''].map(h => (
+                {['Thương hiệu', 'Chiến dịch', 'Tổng CP', 'Doanh thu', 'DT màn hình', 'Lợi nhuận', 'ROI', ''].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>

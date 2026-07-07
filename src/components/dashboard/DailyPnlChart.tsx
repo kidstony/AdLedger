@@ -35,7 +35,7 @@ export default function DailyPnlChart({ data, view }: Props) {
   // Screen view: amber revenue/profit (estimate). Confirmed view: blue revenue, green profit.
   const revenueColor = isScreen ? '#f59e0b' : '#60a5fa'
   const profitColor  = isScreen ? '#f59e0b' : '#22c55e'
-  const revenueLabel = isScreen ? 'DT Màn hình' : 'Doanh thu'
+  const revenueLabel = isScreen ? 'DT màn hình' : 'Doanh thu'
 
   const chartData = data.map(d => ({
     date: fmtDate(d.date),

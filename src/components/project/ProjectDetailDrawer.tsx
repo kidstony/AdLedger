@@ -478,7 +478,7 @@ export default function ProjectDetailDrawer({
                     <PnlCard label="Chi quảng cáo" value={pnl.total_spend} color="text-slate-700" />
                     {pnl.total_rental > 0 && <PnlCard label="Chi thuê TK" value={pnl.total_rental} color="text-slate-700" />}
                     {pnl.total_other > 0 && <PnlCard label="Chi khác" value={pnl.total_other} color="text-slate-700" />}
-                    <PnlCard label="Doanh thu chờ" value={pnl.total_pending} color="text-amber-600" />
+                    <PnlCard label="Doanh thu (màn hình)" value={pnl.total_pending} color="text-amber-600" />
                     <PnlCard
                       label="ROI"
                       value={null}

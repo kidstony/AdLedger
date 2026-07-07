@@ -42,7 +42,7 @@ export default function SummaryCards({
       {/* Chi phí */}
       <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Tổng Chi phí</span>
+          <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Tổng chi phí</span>
           <div className="p-1.5 rounded-md bg-slate-50">
             <DollarSign size={14} className="text-slate-600" />
           </div>
@@ -55,7 +55,7 @@ export default function SummaryCards({
       <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-            {isScreen ? 'Doanh thu (Màn hình)' : 'Doanh thu'}
+            {isScreen ? 'Doanh thu (màn hình)' : 'Doanh thu'}
           </span>
           <div className={cn('p-1.5 rounded-md', isScreen ? 'bg-amber-50' : 'bg-blue-50')}>
             {isScreen
@@ -76,7 +76,7 @@ export default function SummaryCards({
       <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-            {isScreen ? 'Lợi nhuận (Ước tính)' : 'Lợi nhuận'}
+            {isScreen ? 'Lợi nhuận (màn hình)' : 'Lợi nhuận'}
           </span>
           <div className={cn('p-1.5 rounded-md', isScreen ? 'bg-amber-50' : profit >= 0 ? 'bg-green-50' : 'bg-red-50')}>
             {profit >= 0
@@ -99,7 +99,7 @@ export default function SummaryCards({
       <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-            {isScreen ? 'ROI (Ước tính)' : 'ROI'}
+            {isScreen ? 'ROI (màn hình)' : 'ROI'}
           </span>
           <div className={cn('p-1.5 rounded-md', isScreen ? 'bg-amber-50' : roi >= 0 ? 'bg-emerald-50' : 'bg-red-50')}>
             <Percent size={14} className={roiColor} />

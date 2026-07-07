@@ -11,7 +11,7 @@ export default function DailyPnlTable({ data, view }: Props) {
 
   const isScreen = view === 'screen'
   const headers = isScreen
-    ? ['Ngày', 'Tổng chi phí', 'Tiền màn hình', 'LN màn hình', 'ROI%']
+    ? ['Ngày', 'Tổng chi phí', 'DT màn hình', 'LN màn hình', 'ROI%']
     : ['Ngày', 'Tổng chi phí', 'Doanh thu', 'Lợi nhuận', 'ROI%']
 
   return (

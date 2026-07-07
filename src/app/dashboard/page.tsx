@@ -55,7 +55,7 @@ export default function DashboardPage() {
               pnlView === 'screen' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
             )}
           >
-            <Monitor size={14} /> Theo màn hình
+            <Monitor size={14} /> Tiền màn hình
           </button>
           <button
             onClick={() => setPnlView('confirmed')}
@@ -136,9 +136,9 @@ export default function DashboardPage() {
             'CID': s.cid,
             'Chi phí QC': s.total_spend,
             'Thuê TK': s.total_rental,
-            'CP Khác': s.total_other,
+            'CP khác': s.total_other,
             'Doanh thu': s.total_revenue,
-            'DT Màn hình': s.total_screen_revenue,
+            'DT màn hình': s.total_screen_revenue,
             'Lợi nhuận': s.total_profit,
             'ROI%': s.avg_roi.toFixed(1) + '%',
           })),

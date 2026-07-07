@@ -386,7 +386,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             className={cn('flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
               !isScreen ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
           >
-            <Banknote size={12} /> Doanh thu thực
+            <Banknote size={12} /> Thực nhận
           </button>
         </div>
       </div>
@@ -403,9 +403,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
         </div>
       ) : (
         <div className="grid grid-cols-4 gap-4">
-          {/* Tổng Chi phí — with breakdown if rental or other > 0 */}
+          {/* Tổng chi phí — with breakdown if rental or other > 0 */}
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Tổng Chi phí</p>
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Tổng chi phí</p>
             <p className="text-lg font-semibold text-slate-700">{canViewAdspend ? formatVNDFull(totalSpend) : '****'}</p>
             {canViewAdspend && (rentalCost > 0 || otherCost > 0) && (
               <div className="mt-2.5 space-y-1 border-t border-slate-100 pt-2">
@@ -419,7 +419,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 )}
                 {otherCost > 0 && (
                   <div className="flex justify-between text-[11px] text-slate-400">
-                    <span>CP Khác</span><span className="font-mono">{formatVND(otherCost)}</span>
+                    <span>CP khác</span><span className="font-mono">{formatVND(otherCost)}</span>
                   </div>
                 )}
               </div>
@@ -428,7 +428,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
           <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
-              {isScreen ? 'Tiền màn hình' : 'Doanh thu thực'}
+              {isScreen ? 'Tiền màn hình' : 'Thực nhận'}
             </p>
             <p className={`text-lg font-semibold ${isScreen ? 'text-amber-500' : 'text-blue-600'}`}>
               {canViewRevenue ? formatVNDFull(viewRevenue) : '****'}
@@ -473,7 +473,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
               <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
                 <tr>
                   {(isScreen
-                    ? ['Ngày', 'Tổng chi phí', 'Tiền màn hình', 'LN màn hình', 'ROI%']
+                    ? ['Ngày', 'Tổng chi phí', 'DT màn hình', 'LN màn hình', 'ROI%']
                     : ['Ngày', 'Tổng chi phí', 'Doanh thu', 'Lợi nhuận', 'ROI%']
                   ).map(h => (
                     <th key={h} className="px-4 py-2.5 text-right first:text-left text-xs font-medium text-slate-500 uppercase tracking-wide">{h}</th>
