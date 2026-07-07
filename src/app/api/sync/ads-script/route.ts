@@ -87,6 +87,27 @@ type Body =
   | { secret?: string; type: 'segment_metrics'; records?: SegmentMetricRecord[] }
   | { secret?: string; records?: []; type?: undefined }
 
+// Gộp các dòng trùng khóa (cộng dồn metric) TRƯỚC khi upsert. Bắt buộc vì Postgres
+// ON CONFLICT không xử lý được 2 dòng trùng conflict-target trong cùng 1 lệnh
+// ("cannot affect row a second time"). Trùng xảy ra khi Google gộp nhãn (vd device
+// CONNECTED_TV+UNKNOWN → 'OTHER') hoặc geographic_view trả 1 nước nhiều location_type.
+const NUM_SUM_FIELDS = ['impressions', 'clicks', 'cost', 'conversions', 'conversions_value'] as const
+function dedupeRows<T extends Record<string, unknown>>(rows: T[], keyFields: readonly string[]): T[] {
+  const map = new Map<string, T>()
+  for (const r of rows) {
+    const key = keyFields.map(f => String(r[f])).join('')
+    const existing = map.get(key)
+    if (!existing) { map.set(key, { ...r }); continue }
+    for (const f of NUM_SUM_FIELDS) {
+      if (!(f in r)) continue
+      const a = typeof existing[f] === 'number' ? (existing[f] as number) : 0
+      const b = typeof r[f] === 'number' ? (r[f] as number) : 0
+      ;(existing as Record<string, unknown>)[f] = a + b
+    }
+  }
+  return [...map.values()]
+}
+
 async function backfillProjectCidMcc(campaignIds: string[]) {
   if (!campaignIds.length) return
   const { data: mappedProjects } = await supabaseAdmin
@@ -194,7 +215,7 @@ export async function POST(req: NextRequest) {
     }))
     const { error } = await supabaseAdmin
       .from('campaign_metrics')
-      .upsert(rows, { onConflict: 'campaign_id,date' })
+      .upsert(dedupeRows(rows, ['campaign_id', 'date']), { onConflict: 'campaign_id,date' })
     if (error) {
       await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: `campaign_metrics: ${error.message}`, organization_id: organizationId })
       return NextResponse.json({ error: error.message }, { status: 500 })
@@ -224,7 +245,7 @@ export async function POST(req: NextRequest) {
     }))
     const { error } = await supabaseAdmin
       .from('keyword_metrics')
-      .upsert(rows, { onConflict: 'campaign_id,ad_group_id,criterion_id,date' })
+      .upsert(dedupeRows(rows, ['campaign_id', 'ad_group_id', 'criterion_id', 'date']), { onConflict: 'campaign_id,ad_group_id,criterion_id,date' })
     if (error) {
       await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: `keyword_metrics: ${error.message}`, organization_id: organizationId })
       return NextResponse.json({ error: error.message }, { status: 500 })
@@ -251,7 +272,7 @@ export async function POST(req: NextRequest) {
     }))
     const { error } = await supabaseAdmin
       .from('search_term_metrics')
-      .upsert(rows, { onConflict: 'campaign_id,ad_group_id,search_term,date' })
+      .upsert(dedupeRows(rows, ['campaign_id', 'ad_group_id', 'search_term', 'date']), { onConflict: 'campaign_id,ad_group_id,search_term,date' })
     if (error) {
       await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: `search_terms: ${error.message}`, organization_id: organizationId })
       return NextResponse.json({ error: error.message }, { status: 500 })
@@ -282,7 +303,7 @@ export async function POST(req: NextRequest) {
     if (rows.length === 0) return NextResponse.json({ success: true, type: 'segment_metrics', count: 0 })
     const { error } = await supabaseAdmin
       .from('segment_metrics')
-      .upsert(rows, { onConflict: 'campaign_id,date,segment_type,segment_value' })
+      .upsert(dedupeRows(rows, ['campaign_id', 'date', 'segment_type', 'segment_value']), { onConflict: 'campaign_id,date,segment_type,segment_value' })
     if (error) {
       await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: `segment_metrics: ${error.message}`, organization_id: organizationId })
       return NextResponse.json({ error: error.message }, { status: 500 })
