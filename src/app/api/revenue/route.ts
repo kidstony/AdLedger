@@ -84,11 +84,19 @@ export async function PATCH(req: NextRequest) {
     if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const fields: Record<string, string | boolean | null> = {}
+  // cycle_end được upsert riêng: đánh dấu chốt kỳ không phụ thuộc dòng pending đã tồn tại hay chưa.
+  // (update thường là no-op nếu dòng chưa có → dùng upsert theo PK project_id,date,type)
+  if (cycle_end !== undefined) {
+    const { error } = await supabaseAdmin
+      .from('affiliate_revenue')
+      .upsert({ project_id, date, type, cycle_end: !!cycle_end }, { onConflict: 'project_id,date,type' })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  const fields: Record<string, string | null> = {}
   if (note !== undefined) fields.note = note ?? null
   if (payout_start_date !== undefined) fields.payout_start_date = payout_start_date ?? null
   if (payout_end_date !== undefined) fields.payout_end_date = payout_end_date ?? null
-  if (cycle_end !== undefined) fields.cycle_end = !!cycle_end
 
   if (Object.keys(fields).length === 0) return NextResponse.json({ success: true })
 

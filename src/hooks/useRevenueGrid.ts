@@ -571,14 +571,27 @@ export function useRevenueGrid() {
   // "Chốt kỳ": đánh dấu ngày cuối kỳ trên dòng pending → delta luỹ kế ngày kế reset về 0
   const toggleCycleEnd = useCallback(async (projectId: string, date: string, value: boolean) => {
     const key = `${projectId}__${date}`
+    // Đảm bảo dòng pending đã được ghi trước khi PATCH (tránh no-op khi debounce chưa flush)
+    await flushSave()
     setCycleEndMap(prev => { const n = new Map(prev); if (value) n.set(key, true); else n.delete(key); return n })
-    const token = await getToken()
-    await fetch('/api/revenue', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ project_id: projectId, date, type: 'pending', cycle_end: value }),
-    })
-  }, [])
+    try {
+      const token = await getToken()
+      const res = await fetch('/api/revenue', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ project_id: projectId, date, type: 'pending', cycle_end: value }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        // Revert optimistic UI
+        setCycleEndMap(prev => { const n = new Map(prev); if (value) n.delete(key); else n.set(key, true); return n })
+        sonnerToast.error(`Chốt kỳ thất bại: ${body?.error ?? res.status}`)
+      }
+    } catch (err) {
+      setCycleEndMap(prev => { const n = new Map(prev); if (value) n.delete(key); else n.set(key, true); return n })
+      sonnerToast.error(`Lỗi kết nối: ${err instanceof Error ? err.message : 'Unknown'}`)
+    }
+  }, [flushSave])
 
   return {
     projects, today, viewMode, anchorDate, selectedDate,
