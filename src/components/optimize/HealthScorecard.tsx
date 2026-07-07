@@ -3,6 +3,9 @@
 import { cn, formatVND } from '@/lib/utils'
 import type { CampaignHealth } from '@/lib/types'
 
+const intFmt = new Intl.NumberFormat('en-US')
+const fmtCount = (n: number) => intFmt.format(Math.round(n))
+
 function scoreColor(score: number): string {
   if (score >= 70) return 'text-green-600'
   if (score >= 45) return 'text-amber-600'
@@ -59,7 +62,7 @@ export default function HealthScorecard({ health, cost, confirmedRevenue }: {
         <Tile label="ROI" value={health.roi == null ? '—' : `${health.roi.toFixed(1)}%`} tone={roiTone}
           sub={health.roi == null ? 'chưa có chi phí' : 'theo DT Màn hình'} />
         <Tile label="CTR" value={`${health.ctr.toFixed(2)}%`}
-          sub={`${formatVND(health.clicks)} click / ${formatVND(health.impressions)} hiển thị`} />
+          sub={`${fmtCount(health.clicks)} click / ${fmtCount(health.impressions)} hiển thị`} />
         <Tile label="CPC trung bình" value={formatVND(health.avgCpc)}
           tone={trend != null && trend > 25 ? 'warn' : 'default'}
           sub={trend == null ? undefined : `${trend >= 0 ? '+' : ''}${trend.toFixed(1)}% cuối kỳ`} />

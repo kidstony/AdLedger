@@ -4,6 +4,7 @@ import { getCallerProfile } from '@/lib/require-role'
 import { computeCidCost } from '@/lib/costs'
 import { optimizeCampaign } from '@/lib/campaign-optimizer'
 import { computeScreenRevenue, PendingRow } from '@/lib/screen-revenue'
+import { splitSpend, AttrProject } from '@/lib/attribution'
 import { CampaignMetric, RentalGroup } from '@/lib/types'
 
 // GET /api/optimize?project_id=...&from=...&to=...
@@ -46,7 +47,7 @@ export async function GET(req: Request) {
   }
   const campaign_id = project.google_campaign_id
 
-  const [metricsRes, revenueRes, adSpendRes, otherRes, rentalRes] = await Promise.all([
+  const [metricsRes, revenueRes, adSpendRes, otherRes] = await Promise.all([
     supabaseAdmin
       .from('campaign_metrics')
       .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is')
@@ -68,12 +69,8 @@ export async function GET(req: Request) {
     supabaseAdmin
       .from('other_costs')
       .select('amount')
-      .eq('project_id', project_id),
-
-    supabaseAdmin
-      .from('rental_groups')
-      .select('*, rental_group_cids!inner(cid, project_id)')
-      .or(`rental_group_cids.cid.eq.${project.cid},rental_group_cids.project_id.eq.${project_id}`),
+      .eq('project_id', project_id)
+      .gte('date', from).lte('date', to),
   ])
 
   const metrics = (metricsRes.data ?? []) as CampaignMetric[]
@@ -116,11 +113,78 @@ export async function GET(req: Request) {
   }
 
   const total_other = others.reduce((s, r) => s + (r.amount ?? 0), 0)
-  const adSpendByCid = new Map([[project.cid, totalSpend]])
+
+  // ── Chi phí Thuê TK (rental) ──────────────────────────────────────────────
+  // Fetch TẤT CẢ rental group của org rồi match trong JS (mirror usePnlData) —
+  // KHÔNG dùng .or trên cột embedded (không match được → trước đây bỏ sót rental).
+  const [cidProjectsRes, rentalRes] = await Promise.all([
+    supabaseAdmin
+      .from('projects')
+      .select('project_id, google_campaign_id, screen_revenue_type, attribution_weight')
+      .eq('cid', project.cid),
+    (() => {
+      let q = supabaseAdmin.from('rental_groups').select('*, rental_group_cids(*)')
+      if (caller.organization_id) q = q.eq('organization_id', caller.organization_id)
+      return q
+    })(),
+  ])
+  const cidProjects = cidProjectsRes.data?.length
+    ? cidProjectsRes.data
+    : [{ project_id, google_campaign_id: campaign_id, screen_revenue_type: project.screen_revenue_type, attribution_weight: null }]
   const rentalGroups = (rentalRes.data ?? []) as unknown as RentalGroup[]
-  const total_rental = rentalGroups.reduce(
-    (sum, rg) => sum + computeCidCost(project.cid, rg, from, to, adSpendByCid), 0,
-  )
+
+  // Base % rental = tổng ad spend theo CID (mọi campaign của các project chung cid).
+  let cidSpend = totalSpend
+  const cidCampaignIds = [...new Set(cidProjects.map(p => p.google_campaign_id).filter(Boolean))] as string[]
+  const needsCidSpend = !(cidCampaignIds.length <= 1 && cidCampaignIds[0] === campaign_id)
+  if (needsCidSpend && cidCampaignIds.length) {
+    const { data: cidSpendRows } = await supabaseAdmin
+      .from('ad_spend').select('spend').in('campaign_id', cidCampaignIds).gte('date', from).lte('date', to)
+    cidSpend = (cidSpendRows ?? []).reduce((s, r) => s + (r.spend ?? 0), 0)
+  }
+  const adSpendByCid = new Map([[project.cid, cidSpend]])
+
+  // Cơ sở chia (DT Màn hình) cho các project chung cid — chỉ cần khi >1 project.
+  const revenueBasis = new Map<string, number>([[project_id, totalRevenue]])
+  if (cidProjects.length > 1) {
+    const otherIds = cidProjects.map(p => p.project_id).filter(id => id !== project_id)
+    const { data: sibPending } = await supabaseAdmin
+      .from('affiliate_revenue').select('project_id, date, amount, cycle_end')
+      .in('project_id', otherIds).eq('type', 'pending').gte('date', from).lte('date', to)
+    const byPid = new Map<string, PendingRow[]>()
+    for (const r of sibPending ?? []) {
+      const arr = byPid.get(r.project_id) ?? []
+      arr.push({ date: r.date, amount: r.amount ?? 0, cycle_end: r.cycle_end })
+      byPid.set(r.project_id, arr)
+    }
+    for (const p of cidProjects) {
+      if (p.project_id === project_id) continue
+      const { total } = computeScreenRevenue(byPid.get(p.project_id) ?? [], p.screen_revenue_type === 'cumulative', 0)
+      revenueBasis.set(p.project_id, total)
+    }
+  }
+
+  let total_rental = 0
+  for (const rg of rentalGroups) {
+    for (const ce of rg.rental_group_cids ?? []) {
+      // Entry gán cứng cho 1 project: chỉ tính nếu là project này.
+      if (ce.project_id) {
+        if (ce.project_id === project_id) total_rental += computeCidCost(ce.cid, rg, from, to, adSpendByCid)
+        continue
+      }
+      // Entry theo CID: áp cho cid này; chia giữa các project chung cid nếu >1.
+      if (ce.cid !== project.cid) continue
+      const cost = computeCidCost(ce.cid, rg, from, to, adSpendByCid)
+      if (!cost) continue
+      if (cidProjects.length > 1) {
+        const sibs: AttrProject[] = cidProjects.map(p => ({ project_id: p.project_id, attribution_weight: p.attribution_weight ?? null }))
+        total_rental += splitSpend(cost, sibs, revenueBasis).get(project_id) ?? 0
+      } else {
+        total_rental += cost
+      }
+    }
+  }
+
   const totalCost = totalSpend + total_rental + total_other
 
   const result = optimizeCampaign({
