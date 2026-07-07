@@ -236,6 +236,8 @@ Lọc dữ liệu theo role diễn ra ở **2 tầng**:
 - [x] **D2** So xu hướng WoW (kỳ trước cùng độ dài) → `health.trend` + rule momentum + mũi tên ▲▼ ở scorecard.
 - [x] **D3** `campaign_settings` (budget/bid strategy/currency) → gợi ý scale nói số cụ thể; raise_bid đổi lời khi bid tự động.
 - [x] **D4** `optimize/overview` + trang tab **Tổng quan** (bảng tất cả camp xếp theo cấp thiết) / **Chi tiết camp**.
+- [x] **E1 (playbook)** `tighten_match` (broad match chi tiêu lớn), `lower_bid` theo trần lời-mỗi-click (60% DT/click), `harvest_keyword` (gặt search term thắng thành exact), `dataMaturity` (banner camp non).
+- [x] **E2 (playbook)** [`migration_optimizer_deep.sql`](supabase/migration_optimizer_deep.sql): `campaign_metrics.top_is/abs_top_is` → rule "đua top vô ích khi margin mỏng"; `campaign_settings.geo_target_type` → `fix_geo_setting` (Presence-or-interest); `keyword_metrics.qs_*` (3 thành phần QS) → items ghi VÌ SAO QS thấp + tooltip bảng keyword.
 - [ ] Ceiling (để sau): conversion signal từ network (postback/OCI) → ROI mức keyword; phân tích ad/RSA; charts.
 
 ### Việc còn mở / ý tưởng tiếp theo — ☐ Chưa làm

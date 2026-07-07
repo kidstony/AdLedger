@@ -124,7 +124,9 @@ function gaqlScanFn() {
       'metrics.cost_micros, metrics.conversions, metrics.conversions_value, ' +
       'metrics.search_impression_share, ' +
       'metrics.search_budget_lost_impression_share, ' +
-      'metrics.search_rank_lost_impression_share ' +
+      'metrics.search_rank_lost_impression_share, ' +
+      'metrics.top_impression_percentage, ' +
+      'metrics.absolute_top_impression_percentage ' +
       'FROM campaign ' +
       "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' " +
       'AND metrics.impressions > 0';
@@ -142,7 +144,9 @@ function gaqlScanFn() {
         conversions_value:       m.conversionsValue == null ? null : Number(m.conversionsValue),
         search_impression_share: m.searchImpressionShare == null ? null : Number(m.searchImpressionShare),
         search_budget_lost_is:   m.searchBudgetLostImpressionShare == null ? null : Number(m.searchBudgetLostImpressionShare),
-        search_rank_lost_is:     m.searchRankLostImpressionShare == null ? null : Number(m.searchRankLostImpressionShare)
+        search_rank_lost_is:     m.searchRankLostImpressionShare == null ? null : Number(m.searchRankLostImpressionShare),
+        top_is:                  m.topImpressionPercentage == null ? null : Number(m.topImpressionPercentage),
+        abs_top_is:              m.absoluteTopImpressionPercentage == null ? null : Number(m.absoluteTopImpressionPercentage)
       });
       if (metricRecords.length >= 5000) flushMetrics();
     }
@@ -204,6 +208,9 @@ function gaqlKwStFn() {
         'SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, ' +
         'ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ' +
         'ad_group_criterion.quality_info.quality_score, ' +
+        'ad_group_criterion.quality_info.search_predicted_ctr, ' +
+        'ad_group_criterion.quality_info.creative_quality_score, ' +
+        'ad_group_criterion.quality_info.post_click_quality_score, ' +
         'segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions ' +
         'FROM keyword_view ' +
         "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' " +
@@ -226,7 +233,10 @@ function gaqlKwStFn() {
           clicks:        Number(m.clicks || 0),
           cost:          Number(m.costMicros || 0) / 1e6,
           conversions:   m.conversions == null ? null : Number(m.conversions),
-          quality_score: qi.qualityScore == null ? null : Number(qi.qualityScore)
+          quality_score: qi.qualityScore == null ? null : Number(qi.qualityScore),
+          qs_expected_ctr: qi.searchPredictedCtr || null,
+          qs_ad_relevance: qi.creativeQualityScore || null,
+          qs_landing_page: qi.postClickQualityScore || null
         });
         if (kwRecords.length >= BATCH) flushKw();
       }
@@ -316,16 +326,19 @@ function gaqlSettingsFn() {
   function scanSettings() {
     try {
       var cur = String(AdsApp.currentAccount().getCurrencyCode() || '');
-      var rows = AdsApp.search('SELECT campaign.id, campaign.bidding_strategy_type, campaign_budget.amount_micros FROM campaign ' +
+      var rows = AdsApp.search('SELECT campaign.id, campaign.bidding_strategy_type, ' +
+        'campaign.geo_target_type_setting.positive_geo_target_type, campaign_budget.amount_micros FROM campaign ' +
         "WHERE campaign.status IN ('ENABLED', 'PAUSED')");
       while (rows.hasNext()) {
         var r = rows.next();
         var cb = r.campaignBudget || {};
+        var gt = r.campaign.geoTargetTypeSetting || {};
         settingsRecords.push({
           campaign_id:      String(r.campaign.id),
           bidding_strategy: r.campaign.biddingStrategyType || null,
           daily_budget:     cb.amountMicros == null ? null : Number(cb.amountMicros) / 1e6,
-          currency_code:    cur
+          currency_code:    cur,
+          geo_target_type:  gt.positiveGeoTargetType || null
         });
         if (settingsRecords.length >= BATCH) flushSettings();
       }

@@ -88,6 +88,15 @@ function isAutomatedBidding(strategy: string | null | undefined): boolean {
   return strategy != null && strategy !== '' && !MANUAL_BID_STRATEGIES.includes(strategy)
 }
 
+// Chẩn bệnh QS (playbook 3a): thành phần nào BELOW_AVERAGE → lý do ngắn gọn.
+export function qsReasons(k: Pick<KeywordAgg, 'qs_expected_ctr' | 'qs_ad_relevance' | 'qs_landing_page'>): string[] {
+  const out: string[] = []
+  if (k.qs_expected_ctr === 'BELOW_AVERAGE') out.push('CTR kỳ vọng thấp')
+  if (k.qs_ad_relevance === 'BELOW_AVERAGE') out.push('ad lệch keyword')
+  if (k.qs_landing_page === 'BELOW_AVERAGE') out.push('landing kém')
+  return out
+}
+
 // Gộp keyword theo (criterion, ad_group) trên toàn kỳ. Sắp theo chi phí giảm dần.
 export function aggregateKeywords(rows: KeywordMetric[]): KeywordAgg[] {
   const m = new Map<string, KeywordAgg>()
@@ -102,6 +111,9 @@ export function aggregateKeywords(rows: KeywordMetric[]): KeywordAgg[] {
     e.clicks += r.clicks
     e.cost += r.cost
     if (r.quality_score != null) e.quality_score = r.quality_score
+    if (r.qs_expected_ctr) e.qs_expected_ctr = r.qs_expected_ctr
+    if (r.qs_ad_relevance) e.qs_ad_relevance = r.qs_ad_relevance
+    if (r.qs_landing_page) e.qs_landing_page = r.qs_landing_page
     m.set(key, e)
   }
   const out = [...m.values()]
@@ -192,6 +204,7 @@ function computeHealth(d: PeriodTotals): CampaignHealth {
   const isRate = weightedRate(metrics, m => m.search_impression_share)
   const isBudget = weightedRate(metrics, m => m.search_budget_lost_is)
   const isRank = weightedRate(metrics, m => m.search_rank_lost_is)
+  const absTopRate = weightedRate(metrics, m => m.abs_top_is ?? null)
 
   // Health score 0..100 (heuristic, minh bạch):
   //   ROI (±40), CTR (±20), Impression Share (±20), xu hướng CPC (±20).
@@ -210,6 +223,7 @@ function computeHealth(d: PeriodTotals): CampaignHealth {
     impressionShare: isRate != null ? isRate * 100 : null,
     isLostBudget: isBudget != null ? isBudget * 100 : null,
     isLostRank: isRank != null ? isRank * 100 : null,
+    absTopIs: absTopRate != null ? absTopRate * 100 : null,
     spend: totalSpend,
     revenue: totalRevenue,
     clicks,
@@ -359,6 +373,38 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     }
   }
 
+  // 4c. Đua top vô ích (playbook 2c): đứng vị trí 1 tuyệt đối quá nhiều trong khi
+  //     margin mỏng → thử tụt 1 hạng, CPC thường giảm mạnh hơn lượng click mất.
+  const absTop = health.absTopIs
+  if (absTop != null && absTop >= CFG.ABS_TOP_HIGH * 100
+      && health.roi != null && health.roi >= 0 && health.roi < CFG.TARGET_ROI) {
+    suggestions.push(makeSuggestion({
+      type: 'lower_bid', severity: 'medium', confidence: 'roi', scope,
+      title: 'Đua top tuyệt đối trong khi margin mỏng — thử giảm bid 1 nấc',
+      detail: `${pct(absTop, 0)} hiển thị đang ở vị trí 1 tuyệt đối nhưng ROI chỉ ${pct(health.roi)}. Tụt 1 hạng thường giảm CPC mạnh hơn lượng click mất → tổng lời tăng.`,
+      evidence: [
+        { metric: 'Abs-top IS', value: pct(absTop, 0) },
+        { metric: 'ROI', value: pct(health.roi) },
+        { metric: 'CPC trung bình', value: money(health.avgCpc) },
+      ],
+      recommendedAction: 'Giảm bid nhẹ (−10–15%), theo dõi CPC/ROI 5–7 ngày; nếu ROI tăng → giữ, nếu volume tụt quá → hoàn.',
+      impactScore: totalSpend * 0.15,
+    }))
+  }
+
+  // 4d. Presence-or-interest (playbook 1a-phụ): rò cost sang người *quan tâm* geo
+  //     chứ không *ở* geo — mặc định của Google. Đổi sang Presence là cắt rò an toàn.
+  if (input.settings?.geo_target_type === 'PRESENCE_OR_INTEREST') {
+    suggestions.push(makeSuggestion({
+      type: 'fix_geo_setting', severity: 'medium', confidence: 'engagement', scope,
+      title: 'Location đang là "Presence or interest" — rò cost ngoài geo target',
+      detail: 'Cài đặt hiện tại cho phép hiển thị với người *quan tâm* tới geo (ở nơi khác) chứ không chỉ người *đang ở* geo. Với affiliate trả tiền theo geo, đây là rò kinh điển.',
+      evidence: [{ metric: 'Geo target type', value: 'PRESENCE_OR_INTEREST' }],
+      recommendedAction: 'Trong Campaign settings → Locations → Location options: đổi sang "Presence" (People in or regularly in your targeted locations).',
+      impactScore: totalSpend * 0.1,
+    }))
+  }
+
   // 5. CPC tăng nhanh + biên mỏng → CẢNH BÁO MARGIN.
   if (health.cpcTrendPct != null && health.cpcTrendPct > CFG.CPC_TREND_ALERT
       && (health.roi == null || health.roi < CFG.TARGET_ROI)) {
@@ -500,10 +546,13 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
       ],
       recommendedAction: 'Rà bảng bên dưới; tắt/giảm bid keyword kém hiệu suất; xem lại match type.',
       impactScore: wasted,
-      items: badKws.slice(0, 8).map(k => ({
-        label: k.keyword_text || '(?)', cost: k.cost,
-        meta: `${k.match_type} · CTR ${pct(k.ctr)}${k.quality_score != null ? ` · QS ${k.quality_score}` : ''}`,
-      })),
+      items: badKws.slice(0, 8).map(k => {
+        const reasons = qsReasons(k)
+        return {
+          label: k.keyword_text || '(?)', cost: k.cost,
+          meta: `${k.match_type} · CTR ${pct(k.ctr)}${k.quality_score != null ? ` · QS ${k.quality_score}` : ''}${reasons.length ? ` · ${reasons.join(', ')}` : ''}`,
+        }
+      }),
     }))
   }
 

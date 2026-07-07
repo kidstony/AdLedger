@@ -50,7 +50,7 @@ export async function GET(req: Request) {
   const [metricsRes, revenueRes, adSpendRes, otherRes, keywordRes, searchTermRes, segmentRes, settingsRes] = await Promise.all([
     supabaseAdmin
       .from('campaign_metrics')
-      .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is')
+      .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is, top_is, abs_top_is')
       .eq('campaign_id', campaign_id)
       .gte('date', from).lte('date', to),
 
@@ -74,7 +74,7 @@ export async function GET(req: Request) {
 
     supabaseAdmin
       .from('keyword_metrics')
-      .select('campaign_id, ad_group_id, criterion_id, date, keyword_text, match_type, impressions, clicks, cost, conversions, quality_score')
+      .select('campaign_id, ad_group_id, criterion_id, date, keyword_text, match_type, impressions, clicks, cost, conversions, quality_score, qs_expected_ctr, qs_ad_relevance, qs_landing_page')
       .eq('campaign_id', campaign_id)
       .gte('date', from).lte('date', to),
 
@@ -92,7 +92,7 @@ export async function GET(req: Request) {
 
     supabaseAdmin
       .from('campaign_settings')
-      .select('campaign_id, daily_budget, bidding_strategy, target_cpa, target_roas, currency_code')
+      .select('campaign_id, daily_budget, bidding_strategy, target_cpa, target_roas, currency_code, geo_target_type')
       .eq('campaign_id', campaign_id)
       .maybeSingle(),
   ])
@@ -225,7 +225,7 @@ export async function GET(req: Request) {
 
   const [prevMetricsRes, prevSpendRes, prevPendingRes] = await Promise.all([
     supabaseAdmin.from('campaign_metrics')
-      .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is')
+      .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is, top_is, abs_top_is')
       .eq('campaign_id', campaign_id).gte('date', prevFrom).lte('date', prevTo),
     supabaseAdmin.from('ad_spend').select('spend').eq('campaign_id', campaign_id).gte('date', prevFrom).lte('date', prevTo),
     supabaseAdmin.from('affiliate_revenue').select('date, amount, cycle_end')

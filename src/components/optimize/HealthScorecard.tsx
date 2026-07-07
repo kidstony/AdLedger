@@ -101,7 +101,10 @@ export default function HealthScorecard({ health, cost, confirmedRevenue, settin
         <Tile label="Impression Share"
           value={health.impressionShare == null ? '—' : `${health.impressionShare.toFixed(0)}%`}
           delta={<Delta value={wow?.isDelta} unit="pt" goodUp />}
-          sub={health.isLostBudget != null ? `mất ${health.isLostBudget.toFixed(0)}% do ngân sách` : undefined} />
+          sub={[
+            health.isLostBudget != null ? `mất ${health.isLostBudget.toFixed(0)}% do ngân sách` : null,
+            health.absTopIs != null ? `top tuyệt đối ${health.absTopIs.toFixed(0)}%` : null,
+          ].filter(Boolean).join(' · ') || undefined} />
       </div>
     </div>
   )

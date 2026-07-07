@@ -40,6 +40,8 @@ interface CampaignMetricRecord {
   search_impression_share?: number | null
   search_budget_lost_is?: number | null
   search_rank_lost_is?: number | null
+  top_is?: number | null
+  abs_top_is?: number | null
 }
 
 // Số liệu cấp keyword & search term (feature "Tối Ưu Camp" P2).
@@ -55,6 +57,9 @@ interface KeywordMetricRecord {
   cost?: number
   conversions?: number | null
   quality_score?: number | null
+  qs_expected_ctr?: string | null
+  qs_ad_relevance?: string | null
+  qs_landing_page?: string | null
 }
 interface SearchTermRecord {
   campaign_id: string
@@ -74,6 +79,7 @@ interface CampaignSettingsRecord {
   target_cpa?: number | null
   target_roas?: number | null
   currency_code?: string | null
+  geo_target_type?: string | null
 }
 // Phân khúc device/hour/geo (Tối Ưu Camp P3).
 interface SegmentMetricRecord {
@@ -220,6 +226,8 @@ export async function POST(req: NextRequest) {
       search_impression_share: num(r.search_impression_share),
       search_budget_lost_is:   num(r.search_budget_lost_is),
       search_rank_lost_is:     num(r.search_rank_lost_is),
+      top_is:                  num(r.top_is),
+      abs_top_is:              num(r.abs_top_is),
       organization_id:         organizationId,
       updated_at:              new Date().toISOString(),
     }))
@@ -250,6 +258,9 @@ export async function POST(req: NextRequest) {
       cost:            Number(r.cost ?? 0),
       conversions:     r.conversions == null ? null : Number(r.conversions),
       quality_score:   r.quality_score == null ? null : Number(r.quality_score),
+      qs_expected_ctr: r.qs_expected_ctr ?? null,
+      qs_ad_relevance: r.qs_ad_relevance ?? null,
+      qs_landing_page: r.qs_landing_page ?? null,
       organization_id: organizationId,
       updated_at:      new Date().toISOString(),
     }))
@@ -334,6 +345,7 @@ export async function POST(req: NextRequest) {
       target_cpa:       num(r.target_cpa),
       target_roas:      num(r.target_roas),
       currency_code:    r.currency_code ?? null,
+      geo_target_type:  r.geo_target_type ?? null,
       organization_id:  organizationId,
       updated_at:       new Date().toISOString(),
     }))

@@ -2,6 +2,7 @@
 
 import { formatVND } from '@/lib/utils'
 import { countryNameByGeoId } from '@/lib/geo-targets'
+import { qsReasons } from '@/lib/campaign-optimizer'
 import type { KeywordAgg, SearchTermAgg, SegmentAgg, SegmentType } from '@/lib/types'
 
 const intFmt = new Intl.NumberFormat('en-US')
@@ -131,7 +132,17 @@ export default function BreakdownTables({ keywords, searchTerms, segments }: {
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtCount(k.clicks)}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500">{k.ctr.toFixed(1)}%</td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-500">{formatVND(k.avgCpc)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">{k.quality_score ?? '—'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                      {(() => {
+                        const reasons = qsReasons(k)
+                        return (
+                          <span title={reasons.length ? reasons.join(', ') : undefined}
+                            className={reasons.length ? 'cursor-help text-red-500 underline decoration-dotted' : undefined}>
+                            {k.quality_score ?? '—'}
+                          </span>
+                        )
+                      })()}
+                    </td>
                     <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-800">{formatVND(k.cost)}</td>
                   </tr>
                 )

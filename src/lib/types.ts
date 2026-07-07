@@ -198,6 +198,8 @@ export interface CampaignMetric {
   search_impression_share: number | null   // 0..1 (tỉ lệ)
   search_budget_lost_is: number | null      // 0..1 — IS mất do ngân sách
   search_rank_lost_is: number | null        // 0..1 — IS mất do thứ hạng (Ad Rank)
+  top_is?: number | null                    // 0..1 — tỉ lệ hiển thị ở top (E2)
+  abs_top_is?: number | null                // 0..1 — tỉ lệ hiển thị vị trí 1 tuyệt đối (E2)
 }
 
 export interface KeywordMetric {
@@ -212,6 +214,10 @@ export interface KeywordMetric {
   cost: number
   conversions: number | null
   quality_score: number | null
+  // QS 3 thành phần (E2): ABOVE_AVERAGE / AVERAGE / BELOW_AVERAGE — biết VÌ SAO QS thấp.
+  qs_expected_ctr?: string | null
+  qs_ad_relevance?: string | null
+  qs_landing_page?: string | null
 }
 
 export interface SearchTermMetric {
@@ -233,6 +239,7 @@ export interface CampaignSettings {
   target_cpa: number | null
   target_roas: number | null
   currency_code: string | null
+  geo_target_type?: string | null   // PRESENCE | PRESENCE_OR_INTEREST (E2 — rò geo)
 }
 
 export type SegmentType = 'device' | 'hour' | 'geo'
@@ -310,6 +317,7 @@ export interface CampaignHealth {
   impressionShare: number | null   // %
   isLostBudget: number | null      // %
   isLostRank: number | null        // %
+  absTopIs?: number | null         // % — tỉ lệ hiển thị vị trí 1 tuyệt đối (E2)
   spend: number
   revenue: number
   clicks: number
@@ -342,6 +350,9 @@ export interface KeywordAgg {
   ctr: number
   avgCpc: number
   quality_score: number | null
+  qs_expected_ctr?: string | null
+  qs_ad_relevance?: string | null
+  qs_landing_page?: string | null
 }
 
 export interface SearchTermAgg {

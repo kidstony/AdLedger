@@ -45,7 +45,7 @@ export async function GET(req: Request) {
 
   const [metricsRes, spendRes, pendingRes] = await Promise.all([
     supabaseAdmin.from('campaign_metrics')
-      .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is')
+      .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is, top_is, abs_top_is')
       .in('campaign_id', campaignIds).gte('date', from).lte('date', to),
     supabaseAdmin.from('ad_spend').select('campaign_id, spend').in('campaign_id', campaignIds).gte('date', from).lte('date', to),
     supabaseAdmin.from('affiliate_revenue').select('project_id, date, amount, cycle_end')
