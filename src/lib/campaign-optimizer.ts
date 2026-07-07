@@ -2,6 +2,7 @@ import {
   CampaignHealth,
   CampaignMetric,
   CampaignOptimizerResult,
+  HealthTrend,
   KeywordAgg,
   KeywordMetric,
   OptimizationSuggestion,
@@ -42,7 +43,19 @@ export const CFG = {
   LOW_CTR_RATIO: 0.5,            // CTR < 50% CTR campaign = kém
   QS_LOW: 3,                     // quality score ≤ 3 = kém
   BREAKDOWN_LIMIT: 20,           // số dòng tối đa trả về cho bảng breakdown
+  // WoW (so kỳ trước cùng độ dài):
+  WOW_CPC_ALERT: 20,             // CPC tăng > 20% vs kỳ trước → cảnh báo
+  WOW_ROI_DROP: 20,             // ROI giảm > 20 điểm % vs kỳ trước → cảnh báo
+  WOW_SPEND_UP: 15,             // chi phí tăng > 15%
+  WOW_REV_DOWN: 10,             // DT Màn hình giảm > 10% (đi kèm spend tăng → xấu)
 } as const
+
+interface PeriodTotals {
+  metrics: CampaignMetric[]
+  totalRevenue: number
+  totalCost: number
+  totalSpend: number
+}
 
 export interface OptimizerInput {
   campaign_id: string
@@ -57,6 +70,7 @@ export interface OptimizerInput {
   keywords?: KeywordMetric[]             // keyword_metrics theo ngày (P2)
   searchTerms?: SearchTermMetric[]       // search_term_metrics theo ngày (P2)
   segments?: SegmentMetric[]             // segment_metrics device/hour/geo (P3)
+  prev?: PeriodTotals                    // kỳ trước cùng độ dài — để so xu hướng WoW (D2)
 }
 
 // Gộp keyword theo (criterion, ad_group) trên toàn kỳ. Sắp theo chi phí giảm dần.
@@ -149,8 +163,8 @@ function cpcTrend(metrics: CampaignMetric[]): number | null {
   return ((second - first) / first) * 100
 }
 
-function computeHealth(input: OptimizerInput): CampaignHealth {
-  const { metrics, totalRevenue, totalCost, totalSpend } = input
+function computeHealth(d: PeriodTotals): CampaignHealth {
+  const { metrics, totalRevenue, totalCost, totalSpend } = d
   const impressions = metrics.reduce((s, m) => s + m.impressions, 0)
   const clicks = metrics.reduce((s, m) => s + m.clicks, 0)
   const conversions = metrics.reduce((s, m) => s + (m.conversions ?? 0), 0)
@@ -190,6 +204,18 @@ function computeHealth(input: OptimizerInput): CampaignHealth {
   }
 }
 
+function computeTrend(cur: CampaignHealth, prev: CampaignHealth): HealthTrend {
+  const pctChange = (c: number, p: number) => (p !== 0 ? ((c - p) / Math.abs(p)) * 100 : null)
+  return {
+    spendPct: pctChange(cur.spend, prev.spend),
+    revenuePct: pctChange(cur.revenue, prev.revenue),
+    roiDelta: cur.roi != null && prev.roi != null ? cur.roi - prev.roi : null,
+    cpcPct: pctChange(cur.avgCpc, prev.avgCpc),
+    ctrDelta: cur.ctr - prev.ctr,
+    isDelta: cur.impressionShare != null && prev.impressionShare != null ? cur.impressionShare - prev.impressionShare : null,
+  }
+}
+
 let seq = 0
 function makeSuggestion(
   s: Omit<OptimizationSuggestion, 'id'> & { id?: string },
@@ -200,6 +226,7 @@ function makeSuggestion(
 export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult {
   seq = 0
   const health = computeHealth(input)
+  if (input.prev) health.trend = computeTrend(health, computeHealth(input.prev))
   const suggestions: OptimizationSuggestion[] = []
 
   const { metrics, totalRevenue, totalCost, totalSpend, campaign_id, campaignLabel, project_id } = input
@@ -329,6 +356,50 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
         ],
         recommendedAction: `Đặt ad schedule giảm bid ${WD[wd]}, hoặc tắt nếu vẫn lỗ sau khi giảm.`,
         impactScore: -v.profit,
+      }))
+    }
+  }
+
+  // 6b. Cảnh báo momentum — so kỳ trước cùng độ dài (WoW). Chỉ chạy khi có health.trend.
+  const tr = health.trend
+  if (tr) {
+    // Chi phí tăng nhưng DT Màn hình giảm → xấu rõ.
+    if (tr.spendPct != null && tr.spendPct > CFG.WOW_SPEND_UP && tr.revenuePct != null && tr.revenuePct < -CFG.WOW_REV_DOWN) {
+      suggestions.push(makeSuggestion({
+        type: 'margin_alert', severity: 'high', confidence: 'roi', scope,
+        title: 'Xấu đi so kỳ trước — chi phí tăng nhưng doanh thu giảm',
+        detail: `So kỳ trước: chi phí ${tr.spendPct >= 0 ? '+' : ''}${pct(tr.spendPct)} nhưng DT Màn hình ${pct(tr.revenuePct)}. Hiệu quả đang tụt.`,
+        evidence: [
+          { metric: 'Chi phí WoW', value: `${tr.spendPct >= 0 ? '+' : ''}${pct(tr.spendPct)}` },
+          { metric: 'DT Màn hình WoW', value: pct(tr.revenuePct) },
+        ],
+        recommendedAction: 'Rà nguyên nhân (CPC, cạnh tranh, mùa vụ); cân nhắc giảm chi/thu hẹp về phần còn hiệu quả.',
+        impactScore: totalCost * 0.5,
+      }))
+    }
+    // ROI tụt mạnh so kỳ trước.
+    if (tr.roiDelta != null && tr.roiDelta < -CFG.WOW_ROI_DROP) {
+      suggestions.push(makeSuggestion({
+        type: 'margin_alert', severity: 'medium', confidence: 'roi', scope,
+        title: 'ROI giảm mạnh so kỳ trước',
+        detail: `ROI giảm ${Math.abs(tr.roiDelta).toFixed(0)} điểm % so kỳ trước${health.roi != null ? ` (nay ${pct(health.roi)})` : ''}.`,
+        evidence: [{ metric: 'ROI WoW', value: `${tr.roiDelta >= 0 ? '+' : ''}${tr.roiDelta.toFixed(0)} đpt` }],
+        recommendedAction: 'Kiểm CPC/độ cạnh tranh/chất lượng traffic; siết keyword & negative.',
+        impactScore: totalCost * 0.3,
+      }))
+    }
+    // CPC tăng nhanh so kỳ trước (tín hiệu chi phí).
+    if (tr.cpcPct != null && tr.cpcPct > CFG.WOW_CPC_ALERT) {
+      suggestions.push(makeSuggestion({
+        type: 'margin_alert', severity: 'medium', confidence: 'engagement', scope,
+        title: 'CPC tăng so kỳ trước',
+        detail: `CPC +${pct(tr.cpcPct)} so kỳ trước (nay ${money(health.avgCpc)}). Chi phí traffic đang đắt lên.`,
+        evidence: [
+          { metric: 'CPC WoW', value: `+${pct(tr.cpcPct)}` },
+          { metric: 'CPC hiện tại', value: money(health.avgCpc) },
+        ],
+        recommendedAction: 'Thêm negative keyword, xem lại bid/đối thủ; cân nhắc siết match type.',
+        impactScore: totalSpend * 0.2,
       }))
     }
   }

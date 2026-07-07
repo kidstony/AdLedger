@@ -208,6 +208,37 @@ export async function GET(req: Request) {
 
   const totalCost = totalSpend + total_rental + total_other
 
+  // ── Kỳ trước cùng độ dài (WoW / D2) ───────────────────────────────────────
+  const DAY = 86400000
+  const isoDay = (d: Date) => d.toISOString().slice(0, 10)
+  const fromMs = new Date(from + 'T00:00:00Z').getTime()
+  const lenDays = Math.round((new Date(to + 'T00:00:00Z').getTime() - fromMs) / DAY) + 1
+  const prevTo = isoDay(new Date(fromMs - DAY))
+  const prevFrom = isoDay(new Date(fromMs - lenDays * DAY))
+
+  const [prevMetricsRes, prevSpendRes, prevPendingRes] = await Promise.all([
+    supabaseAdmin.from('campaign_metrics')
+      .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is')
+      .eq('campaign_id', campaign_id).gte('date', prevFrom).lte('date', prevTo),
+    supabaseAdmin.from('ad_spend').select('spend').eq('campaign_id', campaign_id).gte('date', prevFrom).lte('date', prevTo),
+    supabaseAdmin.from('affiliate_revenue').select('date, amount, cycle_end')
+      .eq('project_id', project_id).eq('type', 'pending').gte('date', prevFrom).lte('date', prevTo),
+  ])
+  const prevMetrics = (prevMetricsRes.data ?? []) as CampaignMetric[]
+  const prevSpend = (prevSpendRes.data ?? []).reduce((s, r) => s + (r.spend ?? 0), 0)
+  let prevBaseline = 0
+  if (isCumulative) {
+    const { data: pb } = await supabaseAdmin.from('affiliate_revenue')
+      .select('amount, cycle_end').eq('project_id', project_id).eq('type', 'pending')
+      .lt('date', prevFrom).order('date', { ascending: false }).limit(1).maybeSingle()
+    prevBaseline = pb ? (pb.cycle_end ? 0 : (pb.amount ?? 0)) : 0
+  }
+  const prevPendingRows: PendingRow[] = (prevPendingRes.data ?? []).map(r => ({ date: r.date, amount: r.amount ?? 0, cycle_end: r.cycle_end }))
+  const { total: prevRevenue } = computeScreenRevenue(prevPendingRows, isCumulative, prevBaseline)
+  const prevTotalCost = totalSpend > 0 ? prevSpend * (totalCost / totalSpend) : prevSpend
+  const hasPrev = prevSpend > 0 || prevMetrics.length > 0 || prevRevenue > 0
+  const prev = hasPrev ? { metrics: prevMetrics, totalRevenue: prevRevenue, totalCost: prevTotalCost, totalSpend: prevSpend } : undefined
+
   const result = optimizeCampaign({
     campaign_id,
     campaignLabel: project.name,
@@ -221,6 +252,7 @@ export async function GET(req: Request) {
     keywords,
     searchTerms,
     segments,
+    prev,
   })
 
   return NextResponse.json({

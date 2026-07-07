@@ -303,6 +303,18 @@ export interface CampaignHealth {
   impressions: number
   conversions: number | null
   score: number                // 0..100
+  trend?: HealthTrend          // so với kỳ trước cùng độ dài (WoW); undefined nếu không có kỳ trước
+}
+
+// Thay đổi vs kỳ trước. *Pct = % thay đổi; *Delta = chênh lệch điểm % (cho các chỉ số
+// vốn đã là %). null nếu kỳ trước không đủ dữ liệu.
+export interface HealthTrend {
+  spendPct: number | null
+  revenuePct: number | null
+  roiDelta: number | null
+  cpcPct: number | null
+  ctrDelta: number | null
+  isDelta: number | null
 }
 
 // Số liệu keyword/search-term đã gộp theo kỳ (cho bảng breakdown + rule P2).
