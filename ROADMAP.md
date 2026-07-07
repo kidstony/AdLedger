@@ -1,124 +1,277 @@
-# Lộ trình xây dựng tool theo dõi lãi/lỗ Affiliate (100 CID / 10 MCC)
+# ROADMAP — AdLedger (P&L Tracker cho Affiliate)
 
-## Kiến trúc tổng thể (ghi nhớ trước khi bắt đầu)
+> **File này là "bộ não" của dự án.** Nó chứa: ngữ cảnh sản phẩm → bản đồ dữ liệu → bản đồ code → các luồng chính → checklist tiến độ → **quy tắc thêm chức năng mới mà không phá code/dữ liệu cũ**.
+>
+> **Đọc file này TRƯỚC khi code bất cứ thứ gì.** Sau khi thêm/sửa tính năng, **cập nhật lại file này** (đặc biệt mục [Bản đồ dữ liệu](#2--bản-đồ-dữ-liệu-nguồn-sự-thật) và [Checklist](#6--checklist-tiến-độ)). Coi đây là hợp đồng — code phải khớp với mô tả ở đây.
+
+---
+
+## 0 · Mục lục
+
+1. [Ngữ cảnh sản phẩm](#1--ngữ-cảnh-sản-phẩm)
+2. [Bản đồ dữ liệu (nguồn sự thật)](#2--bản-đồ-dữ-liệu-nguồn-sự-thật)
+3. [Bản đồ code](#3--bản-đồ-code)
+4. [Các luồng dữ liệu chính](#4--các-luồng-dữ-liệu-chính)
+5. [Phân quyền (RBAC + Sharing)](#5--phân-quyền-rbac--sharing)
+6. [Checklist tiến độ](#6--checklist-tiến-độ)
+7. [Quy tắc thêm chức năng mới (đọc kỹ!)](#7--quy-tắc-thêm-chức-năng-mới-đọc-kỹ)
+8. [Phụ lục: môi trường, deploy, quy trình vibe-code](#8--phụ-lục)
+
+---
+
+## 1 · Ngữ cảnh sản phẩm
+
+**AdLedger** là công cụ theo dõi **lãi/lỗ (P&L)** cho hoạt động affiliate chạy Google Ads ở quy mô nhiều CID / nhiều MCC.
+
+Bài toán cốt lõi: nối **chi phí quảng cáo** (tự động từ Google Ads) với **doanh thu affiliate** (nhập tay) + **các chi phí khác** (thuê tài khoản, chi phí vận hành) để ra được P&L theo từng dự án / ngày / team.
+
+Mô hình dữ liệu gốc (vẫn đúng, chỉ mở rộng thêm):
 
 ```
-10 MCC (mỗi MCC 10 CID)
-      │  Google Ads Scripts chạy hourly tại từng MCC
+Google Ads (nhiều MCC × nhiều CID)
+      │  google-ads-sync.js chạy hằng ngày ở từng MCC
       ▼
-1 webhook endpoint duy nhất (Next.js API route)
-      │
+POST /api/sync/ads-script   (1 webhook duy nhất, xác thực bằng secret)
       ▼
-Database (Supabase/Postgres)
-   ├── projects          (map: cid ↔ project_id)
-   ├── ad_spend          (cid, date, cost)            ← tự động từ Scripts
-   └── affiliate_revenue (project_id, date, revenue)  ← NHẬP THỦ CÔNG (tạm thời)
-      │  view pnl_daily JOIN theo project_id + date
+Supabase / Postgres
+   ├── ad_spend            (campaign_id × date × device × ad_group) ← TỰ ĐỘNG
+   ├── projects            (map: project_id ↔ cid ↔ google_campaign_id)
+   ├── affiliate_revenue   (project_id × date)                     ← NHẬP TAY
+   ├── rental_groups + other_costs (chi phí thuê TK + CP khác)      ← NHẬP TAY
+   └── ... (teams, org, shares, banks, reminders...)
       ▼
-Dashboard (Next.js, đọc từ view, nút Refresh chỉ query DB)
+P&L TÍNH Ở APP LAYER (KHÔNG dùng view pnl_daily)
+   attribution.ts (chia spend theo ref-link) + costs.ts (thuê TK) → usePnlData.ts / pnl-summary
+      ▼
+Dashboard / Revenue grid / Project detail (Next.js)
 ```
 
-> **Cập nhật:** vì chưa gắn được tracking/subid vào link dự án, doanh thu sẽ nhập tay theo `project_id` thay vì tự động khớp qua subid. Khi nào gắn tracking xong, chỉ cần thêm 1 job tự động ghi vào đúng bảng `affiliate_revenue` này — không phải đổi kiến trúc gì cả.
+> ⚠️ **Điểm quan trọng vs. kế hoạch gốc:** ROADMAP đời đầu dự tính một **view SQL `pnl_daily`**. Thực tế **view này KHÔNG tồn tại**. P&L được tính **hoàn toàn trong TypeScript** vì logic attribution (chia 1 campaign cho nhiều ref-link) quá phức tạp cho SQL view. Xem [§4.3](#43-tính-pl).
+
+**Trạng thái hiện tại:** app đã vượt xa MVP ban đầu. Ngoài P&L, đã có: quản lý dự án dạng "Camp Manager" (status/category/network/attribution), multi-tenant (organizations), RBAC 3 cấp + chia sẻ dự án theo quyền chi tiết, teams, banks/tài khoản thanh toán, chi phí thuê TK, nhắc lịch + thông báo (in-app + Telegram), lịch sử thay đổi.
 
 ---
 
-## PHASE 1 — Chuẩn hóa quy ước ID (làm trước tiên, không cần code)
+## 2 · Bản đồ dữ liệu (nguồn sự thật)
 
-- [ ] Với mỗi dự án, đặt 1 mã định danh duy nhất (vd `proj001`, `proj002`...)
-- [ ] Đảm bảo mã này gắn được vào tracking template của campaign Google Ads tương ứng (để biết `project_id ↔ cid`)
-- [ ] ~~Subid sang network affiliate~~ — tạm bỏ qua, vì hiện chưa gắn được tracking vào link dự án; doanh thu sẽ nhập thủ công (xem Phase 4)
-- [ ] Chuẩn bị danh sách `project_id | cid | tên dự án` để nhập vào tool — Phase 2 sẽ build trang "Quản lý dự án" ngay trong tool, không dùng Google Sheet
+> **Nguồn schema chuẩn = [`src/lib/types.ts`](src/lib/types.ts).** Các bảng gốc (`projects`, `ad_spend`, `affiliate_revenue`, `banks`, `bank_accounts`...) được tạo tay trong Supabase SQL Editor — **không** có migration file. Các file trong [`supabase/`](supabase/) chỉ là **migration tăng dần** (thêm cột/bảng/RLS về sau). Khi đổi schema: sửa `types.ts` **và** thêm 1 file `supabase/migration_*.sql` mới, **không sửa migration cũ**.
 
-> Không có bước này thì không thể biết spend nào thuộc dự án nào, mọi bước sau đều vô nghĩa.
+### 2.1 Nhóm bảng theo miền
 
----
+| Miền | Bảng | Khóa / quan hệ chính | Ghi bởi |
+|---|---|---|---|
+| **Chi phí QC** | `ad_spend` | PK `(campaign_id, date, device, ad_group_id)` | Webhook (auto) |
+| | `campaign_discoveries` | PK `campaign_id`; `customer_id`(=cid), `mcc_id` | Webhook (auto) |
+| | `sync_log` | log mỗi lần sync; `organization_id` | Webhook (auto) |
+| **Dự án** | `projects` | PK `project_id`; FK `cid`, `google_campaign_id`, `team_id`, `master_project_id`, `category_id`, `bank_account_id` | UI |
+| | `master_projects` | gom nhiều `projects` thành 1 dự án mẹ | UI |
+| | `project_categories`, `affiliate_networks` | phân loại; `organization_id` | UI |
+| **Doanh thu** | `affiliate_revenue` | PK `(project_id, date)`; `revenue`, `screen_revenue`, `status`, chu kỳ payout | UI (nhập tay) |
+| **Chi phí khác** | `rental_groups` + `rental_group_cids` | thuê tài khoản theo nhóm CID; rate_type % / ngày / tuần / tháng / 1 lần | UI |
+| | `account_rental_rates` | (biến thể thuê theo từng CID) | UI |
+| | `cost_categories` + `other_costs` | chi phí vận hành khác, có thể gán `project_id` | UI |
+| **Ngân hàng** | `banks` + `bank_accounts` | TK nhận tiền (traditional / crypto) | UI |
+| **Multi-tenant + quyền** | `organizations` | tenant gốc; giữ `ads_secret`, `telegram_bot_token`, `telegram_chat_id` | Admin |
+| | `teams` | thuộc `organization_id`; `projects.team_id` trỏ về | Admin |
+| | `user_profiles` | `role`, `team_id`, `organization_id` (1-1 với `auth.users`) | Admin |
+| | `project_members` | gán member ↔ project (quyền cơ bản) | Admin/Manager |
+| | `project_shares` + `project_share_permissions` | chia sẻ dự án + override quyền chi tiết | Manager |
+| **Vận hành** | `project_history` | audit log thay đổi field của project | Auto (API) |
+| | `project_reminders` | nhắc lịch, lặp, kênh in-app/telegram | UI |
+| | `notifications` | thông báo in-app | Auto/API |
+| | `rate_limits` | chống spam endpoint (vd webhook) | Auto |
 
-## PHASE 2 — Dựng hạ tầng lưu trữ & nhận dữ liệu
+### 2.2 Quan hệ then chốt (đọc kỹ trước khi đụng vào)
 
-- [ ] Build trang "Quản lý dự án": thêm/sửa/xóa mapping `project_id | cid | tên dự án` trực tiếp trên giao diện web → lưu vào bảng `projects` trong Supabase
-- [ ] Tạo project Supabase (Postgres miễn phí)
-- [ ] Tạo 3 bảng: `projects`, `ad_spend`, `affiliate_revenue` + import dữ liệu từ Phase 1 vào `projects`
-- [ ] Tạo view `pnl_daily` (JOIN spend + revenue theo project_id + date)
-- [ ] Build project Next.js, deploy lên Vercel (có URL public ổn định)
-- [ ] Build API route `/api/ingest/spend` — nhận JSON từ script, ghi vào `ad_spend`, có secret key xác thực đơn giản trong header
-
-> Làm phase này trước Phase 3, vì script Google Ads cần có endpoint sẵn để gửi dữ liệu vào.
-
----
-
-## PHASE 3 — Thu thập dữ liệu Google Ads qua Scripts
-
-- [ ] Viết 1 script mẫu: loop qua các CID con trong MCC → lấy `date, cost, clicks` → POST về webhook ở Phase 2
-- [ ] Dán và test trên **1 MCC duy nhất** trước, dùng nút "Preview" để kiểm tra log, xác nhận data đến đúng webhook
-- [ ] Khi ổn, sao chép script (chỉnh mã định danh MCC) sang 9 MCC còn lại
-- [ ] Set lịch chạy **hourly** cho cả 10 MCC (qua icon bút chì ở cột Frequency), lệch giờ nhau vài phút giữa các MCC
-- [ ] Thêm bộ lọc theo label (`Active_Tool`) để chỉ chạy trên các CID đang cần theo dõi
-
----
-
-## PHASE 4 — Nhập doanh thu thủ công (tạm thời, thay cho tự động hóa qua network)
-
-- [ ] Build 1 trang "Nhập doanh thu" dạng **bảng giống Excel** (hàng = project, cột = các ngày gần đây) thay vì form nhập từng dòng — với 50+ project, nhập kiểu form-từng-cái sẽ rất mất thời gian
-- [ ] Cho phép gõ trực tiếp số tiền vào ô, tự lưu vào `affiliate_revenue (project_id, date, revenue)` khi rời ô (hoặc có nút "Lưu" cuối trang)
-- [ ] Cân nhắc tần suất nhập: hằng ngày nếu cần theo dõi sát, hoặc gộp nhập 1 lần/tuần nếu khối lượng quá lớn — chỉ cần nhất quán
-
-> Khi nào gắn được tracking/subid vào link dự án, thay bước này bằng job tự động lấy doanh thu từ network API — ghi vào đúng bảng `affiliate_revenue` này, không cần đổi Phase 5/6 phía sau.
+- **`projects.google_campaign_id` là bản lề** nối dự án ↔ `ad_spend`. Một `google_campaign_id` có thể gắn **nhiều** `projects` (nhiều ref-link chung 1 campaign) → sinh ra cơ chế **attribution** ([§4.2](#42-attribution-chia-spend)).
+- **`ad_spend` KHÔNG có `project_id`.** Spend gắn với `campaign_id`; việc quy spend về project là do code TS làm lúc runtime. **Đừng** thêm `project_id` vào `ad_spend` — sẽ phá attribution.
+- **`ad_spend` có 2 mức granularity cùng tồn tại:** dòng legacy `device='ALL', ad_group_id='ALL'` (script cũ) và dòng chi tiết theo device/ad_group (script mới). Webhook **tự xóa** dòng ALL khi có dòng chi tiết cùng `(campaign, date)` để không đếm gấp đôi (xem [`route.ts:172`](src/app/api/sync/ads-script/route.ts#L172)).
+- **`affiliate_revenue` tách 2 loại doanh thu:** `revenue` (đã chốt) và `screen_revenue` (số hiển thị sớm trên dashboard network, dùng làm tín hiệu chia spend khi chưa có revenue thật).
+- **Đa số bảng có `organization_id`** để cô lập tenant qua RLS. Bảng mới **nên có** `organization_id` nếu chứa dữ liệu nghiệp vụ.
 
 ---
 
-## PHASE 5 — Dashboard hiển thị P&L
+## 3 · Bản đồ code
 
-- [ ] Trang tổng quan: bảng tất cả project, cột spend/revenue/profit/ROI%, tô màu dòng đang lỗ
-- [ ] Trang chi tiết: click 1 project → biểu đồ profit theo ngày
-- [ ] Nút "Refresh": chỉ query lại view `pnl_daily`, không gọi ra ngoài (dữ liệu đã được Scripts cập nhật sẵn theo giờ)
+Next.js 16 (App Router) + TypeScript + Tailwind v4 + Supabase. Cấu trúc:
+
+```
+src/
+├── app/                      # App Router: pages + API routes
+│   ├── (pages)               # dashboard, projects, revenue, expenses, banks,
+│   │                         #   master-projects, teams, users, admin/*, login
+│   └── api/                  # 42 route handlers (xem §3.2)
+├── components/               # UI theo miền: dashboard/, project/, projects/,
+│   │                         #   revenue/, team/, project-detail/, layout/, ui/
+├── context/                  # React Context (state toàn cục phía client)
+│   ├── AuthContext           # user + role + teamId + organizationId
+│   ├── ProjectsContext       # danh sách projects (lọc theo role)
+│   ├── MasterProjectsContext
+│   └── DateRangeContext      # khoảng ngày dùng chung dashboard/revenue
+├── hooks/
+│   ├── usePnlData.ts         # ★ tính P&L dashboard (client): spend+attr+cost+rev
+│   ├── useRevenueGrid.ts     # ★ grid nhập doanh thu kiểu Excel
+│   ├── useProjects.ts, useSharePermissions.ts
+├── lib/
+│   ├── types.ts              # ★ NGUỒN SCHEMA — mọi interface dữ liệu
+│   ├── attribution.ts        # ★ chia spend 1 campaign → nhiều ref-link project
+│   ├── costs.ts              # ★ tính chi phí thuê TK (rental) theo rate_type
+│   ├── supabase.ts           # client anon (dùng ở client component, chịu RLS)
+│   ├── supabase-admin.ts     # client service_role (chỉ dùng trong API routes!)
+│   ├── require-role.ts       # requireRole / getCallerProfile / getOrgTeamIds
+│   ├── check-member-permission.ts  # memberCanDo(user, project, permission)
+│   ├── crypto.ts             # mã hóa mật khẩu affiliate lưu DB
+│   ├── rate-limit.ts, utils.ts, mock-data.ts
+├── middleware.ts             # hiện chỉ pass-through (chưa chặn auth ở edge)
+└── scripts/google-ads-sync.js  # script dán vào Google Ads (không thuộc bundle)
+```
+
+### 3.1 File quan trọng nhất (nếu sửa, dễ ảnh hưởng dây chuyền)
+
+| File | Vai trò | Đụng vào là ảnh hưởng |
+|---|---|---|
+| [`lib/types.ts`](src/lib/types.ts) | Toàn bộ interface + hằng số (STATUS_CONFIG, ACCESS_LEVEL_DEFAULTS…) | Mọi nơi |
+| [`lib/attribution.ts`](src/lib/attribution.ts) | Chia spend theo tier ad_group > device > date_window > campaign/manual_pct; đảm bảo **tổng spend bất biến** | Dashboard, project detail |
+| [`lib/costs.ts`](src/lib/costs.ts) | Quy đổi rate thuê TK ra tiền theo khoảng ngày | Dashboard, pnl-summary |
+| [`hooks/usePnlData.ts`](src/hooks/usePnlData.ts) | Ghép spend+revenue+cost thành P&L cho dashboard (client-side) | Trang dashboard |
+| [`app/api/sync/ads-script/route.ts`](src/app/api/sync/ads-script/route.ts) | Webhook nhận spend + discovery, chống double-count | Toàn bộ dữ liệu spend |
+
+### 3.2 Bản đồ API (42 route, dưới `src/app/api/`)
+
+- **Ingest/Integrations:** `sync/ads-script` (webhook), `integrations/{campaigns, secret, sync-log}`
+- **Projects:** `projects/[id]/{route, history, pnl-summary, password, reminder, my-permissions, shares, shares/[shareId]}`, `projects/{categories, networks, next-id, reminders-active, team-users}`, `project-members`
+- **Master projects:** `master-projects`, `master-projects/[id]`
+- **Doanh thu:** `revenue`
+- **Chi phí:** `expenses/{categories, other, rental-groups, rental-group-cids, rental-rates}`
+- **Ngân hàng:** `banks`, `bank-accounts`, `payment-accounts`
+- **Teams:** `teams`, `teams/[id]`, `teams/[id]/{members, projects, access-matrix}`
+- **Admin:** `admin/{list-users, create-user, delete-user, update-role, assign-org, telegram-config, encrypt-passwords}`
+- **Khác:** `notifications`
+
+> **Quy ước API:** route nào dùng [`supabaseAdmin`](src/lib/supabase-admin.ts) (service_role, bỏ qua RLS) **bắt buộc** tự kiểm quyền bằng [`requireRole`](src/lib/require-role.ts) / [`getCallerProfile`](src/lib/require-role.ts) / [`memberCanDo`](src/lib/check-member-permission.ts) trước khi ghi. Client component thì query trực tiếp qua [`supabase`](src/lib/supabase.ts) anon và **dựa vào RLS** để lọc dữ liệu.
 
 ---
 
-## PHASE 6 — Giám sát & vận hành ổn định
+## 4 · Các luồng dữ liệu chính
 
-- [ ] Thêm cảnh báo (email/Telegram) nếu 1 `cid` không nhận data mới trong >2 giờ — phát hiện script bị âm thầm dừng
-- [ ] Định kỳ 1 lần/tháng kiểm tra log thực thi script ở cả 10 MCC
-- [ ] Khi có dự án mới: thêm dòng vào bảng `projects`, gắn label trên CID tương ứng — hệ thống tự nhận diện, không cần sửa code
+### 4.1 Thu thập spend (auto)
+`google-ads-sync.js` chạy ở mỗi MCC → POST `/api/sync/ads-script` với `secret`.
+- Xác thực: khớp `organizations.ads_secret` (đa tenant) **hoặc** env `ADS_SCRIPT_SECRET` (fallback).
+- `type:'discover'` → upsert `campaign_discoveries` (khám phá campaign ↔ cid ↔ mcc).
+- `type:'spend'` (mặc định) → upsert `ad_spend` theo `(campaign_id,date,device,ad_group_id)`, xóa dòng legacy `ALL` để tránh đếm đôi, ghi `sync_log`.
+- `backfillProjectCidMcc()` tự cập nhật `projects.cid/mcc_id` từ discovery.
 
----
+### 4.2 Attribution (chia spend)
+Khi nhiều `projects` (ref-link) chung 1 `google_campaign_id`:
+`buildSiblingsByCampaign()` gom sibling → mỗi dòng `ad_spend` chạy qua `allocateSpendRow()`:
+tier khớp cụ thể nhất (**ad_group > device > date_window > campaign/manual_pct**), rồi `splitSpend()` chia theo trọng số `attribution_weight` → nếu không có thì theo `screen_revenue` → không có nữa thì chia đều. **Bất biến: tổng phần chia == spend gốc** (không mất/đội chi phí).
 
-## PHỤ LỤC — Quy trình vibe code bằng VS Code + Claude Pro
+### 4.3 Tính P&L
+**KHÔNG có view SQL.** Hai điểm tính, cùng công thức:
+- **Dashboard (client):** [`usePnlData.ts`](src/hooks/usePnlData.ts) — đọc `ad_spend` + `affiliate_revenue` + rental + other, chạy attribution + costs, ra `DailyPnlRow` / `PnlSummary`.
+- **Chi tiết 1 project (server):** [`api/projects/[id]/pnl-summary`](src/app/api/projects/[id]/pnl-summary/route.ts) — cùng logic qua `computeCidCost`.
 
-### A. Cài đặt môi trường (làm 1 lần)
+Công thức: `cost = spend(QC) + rentalDay(thuê TK) + otherDay(CP khác)`; `profit = revenue − cost`; `screenProfit = screen_revenue − cost`; `roi = profit / cost × 100`.
 
-1. Cài **VS Code** bản 1.98.0 trở lên
-2. Cài **Node.js** (bản LTS) — cần để chạy project Next.js sau này
-3. Mở VS Code → `Ctrl+Shift+X` (Windows/Linux) hoặc `Cmd+Shift+X` (Mac) → tìm **"Claude Code"** (publisher: Anthropic) → Install
-4. Click icon **Spark (✱)** ở góc trên-phải editor (hoặc icon Spark ở thanh Activity Bar bên trái) → **Sign in** → đăng nhập bằng tài khoản **Claude Pro** ngay trên trình duyệt — không cần tạo API key riêng, dùng thẳng gói Pro
-
-### B. Khởi tạo project
-
-5. Tạo thư mục project, mở bằng VS Code (`code ten-thu-muc`)
-6. Copy file lộ trình này vào thư mục gốc, đặt tên `ROADMAP.md` — Claude sẽ đọc file này để hiểu toàn bộ kiến trúc
-7. Trong khung chat Claude Code, gõ `/init` — lệnh này tạo file `CLAUDE.md` ghi nhớ ngữ cảnh dự án, để các phiên làm việc sau không phải giải thích lại từ đầu
-
-### C. Quy trình làm việc cho mỗi Phase
-
-8. Mở 1 phiên chat mới trong Claude Code (icon Spark)
-9. Bật **Plan mode** (chọn ở thanh chế độ dưới khung nhập) — Claude sẽ mô tả kế hoạch trước khi sửa file, bạn duyệt trước khi cho code chạy thật
-10. Gõ prompt kiểu: *"Đọc ROADMAP.md, thực hiện Phase 2: khởi tạo project Next.js + schema Supabase theo đúng mô tả"*
-11. Xem bản kế hoạch Claude đưa ra → góp ý / chỉnh sửa nếu cần → đồng ý cho thực thi
-12. Claude sửa file, hiện diff (so sánh trước/sau) từng file → bạn **Accept** hoặc yêu cầu sửa lại
-13. Sau khi xong, nhờ Claude tự chạy thử (vd `npm run dev`) ngay trong terminal tích hợp để kiểm tra lỗi
-14. Nhờ Claude **commit git** sau mỗi bước hoàn chỉnh (*"commit thay đổi này với message mô tả rõ"*) — giúp dễ quay lại nếu bước sau làm hỏng
-
-### D. Lặp lại cho từng Phase tiếp theo
-
-15. Mỗi khi bắt đầu Phase mới, nhắc lại: *"Đọc ROADMAP.md, đánh dấu Phase X đã xong, bắt đầu Phase Y"*
-16. Gõ `/usage` định kỳ để theo dõi mức dùng còn lại trong gói Pro, tránh hết hạn mức giữa chừng việc đang dở
+### 4.4 Nhập doanh thu
+Trang `/revenue` dùng [`useRevenueGrid.ts`](src/hooks/useRevenueGrid.ts): grid kiểu Excel (hàng = project, cột = ngày), gõ ô → upsert `affiliate_revenue`. Có `status` pending/confirmed + chu kỳ payout.
 
 ---
 
-## Thứ tự ưu tiên nếu muốn có kết quả nhanh nhất
+## 5 · Phân quyền (RBAC + Sharing)
 
-1. Phase 1 (chuẩn hóa ID) — bắt buộc làm đầu tiên
-2. Phase 2 + Phase 3 cho **1 MCC mẫu** — chứng minh luồng spend chạy thông suốt
-3. Phase 5 (dashboard cơ bản) — nhìn thấy kết quả sớm để có động lực
-4. Nhân rộng Phase 3 ra 9 MCC còn lại
-5. Phase 4 (doanh thu affiliate) — ghép nốt để có P&L hoàn chỉnh
-6. Phase 6 — hoàn thiện khâu vận hành lâu dài
+**3 vai trò** (`user_profiles.role`): `super_admin` (toàn quyền), `manager` (phạm vi team/org của mình), `member` (chỉ dự án được gán/chia sẻ).
+
+Lọc dữ liệu theo role diễn ra ở **2 tầng**:
+1. **RLS trong Postgres** (các `migration_rbac.sql`, `migration_security_rls.sql`, `migration_organizations.sql`, `migration_shares.sql`) + hàm `get_user_role() / get_user_org_id() / get_user_team_id() / check_project_permission()`.
+2. **Code TS**: `ProjectsContext` load khác nhau theo role; API routes gọi `requireRole` / `memberCanDo`.
+
+**Chia sẻ chi tiết:** `project_shares.access_level` ∈ `viewer/reporter/editor` → map ra 6 quyền (`ACCESS_LEVEL_DEFAULTS` trong types.ts): `view_revenue/view_profit/view_adspend/input_revenue/input_expense/confirm_payment`. `project_share_permissions` **override từng quyền**. Kiểm ở server bằng `memberCanDo()`.
+
+> ⚠️ Khi thêm bảng/tính năng có dữ liệu nhạy cảm: **phải** viết RLS tương ứng **và** kiểm quyền ở API. Đừng chỉ dựa một tầng.
+
+---
+
+## 6 · Checklist tiến độ
+
+### Nền tảng gốc (Phase 1–6 kế hoạch đầu) — ✅ Hoàn thành
+- [x] Chuẩn hóa `project_id ↔ cid ↔ campaign` (thay Google Sheet bằng trang "Quản lý dự án")
+- [x] Hạ tầng Supabase + bảng `projects`, `ad_spend`, `affiliate_revenue`
+- [x] Webhook `/api/sync/ads-script` (secret, rate-limit, discovery, chống double-count)
+- [x] `google-ads-sync.js` chạy được cho cả MCC lẫn CID thường; segment device/ad_group
+- [x] Trang nhập doanh thu kiểu Excel (`/revenue`)
+- [x] Dashboard P&L (bảng + biểu đồ theo ngày) + trang chi tiết project
+- [x] Cảnh báo sync trễ / Telegram (config theo org) — `sync_log` + `telegram-config`
+
+### Tính năng đã mở rộng thêm — ✅ Hoàn thành
+- [x] **Multi-tenant**: `organizations`, secret ingest theo org
+- [x] **RBAC 3 cấp** + RLS + **chia sẻ dự án** theo quyền chi tiết (6 permission, override)
+- [x] **Teams**: gán project theo team, ma trận truy cập (`teams/[id]/access-matrix`)
+- [x] **Camp Manager**: status (8 trạng thái), category, affiliate network, người phụ trách, ghi chú, ngày start camp
+- [x] **Attribution**: chia 1 campaign cho nhiều ref-link (ad_group/device/date/manual %)
+- [x] **Chi phí**: thuê tài khoản (`rental_groups`) + chi phí khác (`other_costs`)
+- [x] **Master projects**: gom nhiều CID thành 1 dự án mẹ
+- [x] **Banks / tài khoản thanh toán** (traditional + crypto), mã hóa mật khẩu affiliate
+- [x] **Nhắc lịch + thông báo** in-app + Telegram; **lịch sử thay đổi** project
+- [x] **screen_revenue** vs **revenue** (tín hiệu sớm) + trạng thái payout pending/confirmed
+
+### Việc còn mở / ý tưởng tiếp theo — ☐ Chưa làm
+- [ ] Tự động lấy doanh thu từ **network API** (thay nhập tay) — ghi thẳng vào `affiliate_revenue`, **không đổi** phần tính P&L phía sau
+- [ ] `middleware.ts` hiện **pass-through** — cân nhắc chặn auth ở edge thay vì chỉ client redirect
+- [ ] Materialize P&L (view/bảng cache) nếu dữ liệu lớn làm dashboard chậm — hiện tính client-side mỗi lần
+- [ ] Export báo cáo (CSV/PDF) theo team/khoảng ngày
+- [ ] Test tự động (hiện chưa có test) cho `attribution.ts` + `costs.ts` (logic dễ sai nhất)
+
+> **Khi hoàn thành một mục:** đổi `[ ]`→`[x]`, và nếu có bảng/cột/luồng mới thì cập nhật [§2](#2--bản-đồ-dữ-liệu-nguồn-sự-thật)/[§3](#3--bản-đồ-code)/[§4](#4--các-luồng-dữ-liệu-chính).
+
+---
+
+## 7 · Quy tắc thêm chức năng mới (đọc kỹ!)
+
+Mục tiêu: thêm tính năng mà **không phá code cũ** và **ghép được với dữ liệu hiện có**.
+
+### 7.1 Checklist trước khi code
+1. **Đọc lại §2 + §4** — tính năng của bạn đọc/ghi bảng nào? Nó ghép với dữ liệu hiện có qua khóa nào (`project_id`? `google_campaign_id`? `organization_id`? `date`?).
+2. **Định nghĩa kiểu trong [`types.ts`](src/lib/types.ts) TRƯỚC** — đây là hợp đồng. Không rải interface rời rạc khắp nơi.
+3. **Đổi schema = thêm migration mới**, đặt tên `supabase/migration_<mô_tả>.sql`. **Tuyệt đối không sửa migration đã có.** Dùng `ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS` để chạy lại an toàn (idempotent).
+4. Bảng mới chứa dữ liệu nghiệp vụ → **thêm `organization_id` + viết RLS** cùng lúc.
+
+### 7.2 Nguyên tắc "không phá cũ"
+- **Cột mới luôn nullable / có default.** Không NOT NULL trên bảng có sẵn dữ liệu.
+- **Không đổi PK/ý nghĩa cột đang dùng.** Đặc biệt: đừng thêm `project_id` vào `ad_spend`; đừng gộp `revenue`/`screen_revenue`; đừng phá bất biến "tổng spend" của [`attribution.ts`](src/lib/attribution.ts).
+- **Tôn trọng 2 mức granularity của `ad_spend`** (ALL vs device/ad_group). Query spend mới phải cộng đúng như [`usePnlData.ts`](src/hooks/usePnlData.ts) làm, tránh đếm đôi.
+- **P&L chỉ có 1 công thức** (§4.3). Nếu cần số P&L ở chỗ mới, **tái sử dụng** `attribution.ts` + `costs.ts`, đừng viết lại công thức song song (sẽ lệch số giữa các trang).
+
+### 7.3 Chọn đúng client Supabase
+- **Client component / hook** → [`supabase`](src/lib/supabase.ts) (anon) + dựa RLS.
+- **API route cần bỏ qua RLS** → [`supabaseAdmin`](src/lib/supabase-admin.ts) **và phải tự kiểm quyền** (`requireRole`/`memberCanDo`). Không bao giờ import `supabase-admin` vào client.
+
+### 7.4 Thêm trang / API mới — theo khuôn có sẵn
+- Trang mới: đặt `src/app/<tên>/page.tsx`, thêm link trong [`layout/Sidebar.tsx`](src/components/layout/Sidebar.tsx), bọc trong provider phù hợp nếu cần state chung.
+- API mới: `src/app/api/<miền>/route.ts`, mở đầu bằng kiểm quyền, trả `NextResponse.json`. Nhìn [`revenue`](src/app/api/revenue/route.ts) hoặc [`pnl-summary`](src/app/api/projects/[id]/pnl-summary/route.ts) làm mẫu.
+- UI: tái dùng `components/ui/*` và tuân [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) (màu/UX/glossary).
+
+### 7.5 Sau khi xong
+- Chạy `npm run dev` + `npm run lint`, kiểm thử tay luồng vừa sửa.
+- **Cập nhật ROADMAP.md này** (schema/luồng/checklist).
+- `git commit` message rõ ràng theo từng bước hoàn chỉnh.
+
+---
+
+## 8 · Phụ lục
+
+### 8.1 Môi trường & deploy
+- **Tech:** Next.js 16 (App Router), React 19, TS, Tailwind v4, Supabase (Postgres + Auth), Recharts, Radix/base-ui. Deploy: Vercel.
+- **Biến môi trường** ([`.env.example`](.env.example)):
+  - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (client)
+  - `SUPABASE_SERVICE_ROLE_KEY` (server — bí mật)
+  - `ADS_SCRIPT_SECRET` (fallback secret cho webhook; ưu tiên `organizations.ads_secret`)
+- **Chạy local:** `npm install` → điền `.env.local` → `npm run dev`. Setup Supabase xem [README.md](README.md).
+
+### 8.2 Quy trình vibe-code (VS Code + Claude Code)
+1. Mở phiên chat mới → yêu cầu: *"Đọc ROADMAP.md rồi làm việc X"* (Claude sẽ có toàn bộ ngữ cảnh từ file này).
+2. Bật **Plan mode** để duyệt kế hoạch trước khi cho sửa file thật.
+3. Xem diff từng file → Accept / yêu cầu chỉnh.
+4. Nhờ chạy `npm run dev` để kiểm lỗi ngay trong terminal tích hợp.
+5. Nhờ **cập nhật ROADMAP.md** + **commit git** sau mỗi bước hoàn chỉnh.
+6. `/usage` định kỳ để theo dõi hạn mức gói Pro.

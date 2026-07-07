@@ -4,7 +4,7 @@
 
 ## Tech Stack
 
-- **Frontend**: Next.js 14 (App Router) + TypeScript + Tailwind CSS
+- **Frontend**: Next.js 16 (App Router) + React 19 + TypeScript + Tailwind CSS v4
 - **Backend**: Supabase (PostgreSQL + Auth)
 - **Deploy**: Vercel
 
@@ -13,7 +13,7 @@
 ## Setup cho Developer (chạy local)
 
 ### Yêu cầu
-- Node.js 18+
+- Node.js 20+ (Next.js 16 yêu cầu Node 20.9 trở lên)
 - Tài khoản [Supabase](https://supabase.com) (free tier là đủ)
 
 ### Bước 1 — Clone & install
