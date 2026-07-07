@@ -12,6 +12,7 @@ import {
   SegmentMetric,
   SegmentType,
 } from './types'
+import { countryNameByGeoId } from './geo-targets'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Rule engine tối ưu campaign — DETERMINISTIC, giải thích được, KHÔNG dùng LLM.
@@ -401,7 +402,10 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     hour:   { type: 'daypart',       noun: 'khung giờ', action: 'Giảm bid hoặc tắt lịch ở khung giờ kém (ad schedule).' },
     geo:    { type: 'device_adjust', noun: 'vị trí',    action: 'Điều chỉnh bid theo vị trí, hoặc loại trừ vị trí kém.' },
   }
-  const fmtSegVal = (s: SegmentAgg) => (s.segment_type === 'hour' ? `${s.segment_value}h` : s.segment_value)
+  const fmtSegVal = (s: SegmentAgg) =>
+    s.segment_type === 'hour' ? `${s.segment_value}h`
+    : s.segment_type === 'geo' ? (countryNameByGeoId(s.segment_value) ?? s.segment_value)
+    : s.segment_value
   for (const stype of ['device', 'hour', 'geo'] as SegmentType[]) {
     const segs = segAgg.filter(s => s.segment_type === stype)
     if (!segs.length) continue

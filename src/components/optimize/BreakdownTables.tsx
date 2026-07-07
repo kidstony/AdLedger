@@ -1,6 +1,7 @@
 'use client'
 
 import { formatVND } from '@/lib/utils'
+import { countryNameByGeoId } from '@/lib/geo-targets'
 import type { KeywordAgg, SearchTermAgg, SegmentAgg, SegmentType } from '@/lib/types'
 
 const intFmt = new Intl.NumberFormat('en-US')
@@ -26,8 +27,18 @@ function TableCard({ title, hint, children }: { title: string; hint: string; chi
   )
 }
 
-const SEG_LABEL: Record<SegmentType, string> = { device: 'Thiết bị', hour: 'Khung giờ', geo: 'Vị trí (country id)' }
-const segValue = (s: SegmentAgg) => (s.segment_type === 'hour' ? `${s.segment_value}h` : s.segment_value)
+const SEG_LABEL: Record<SegmentType, string> = { device: 'Thiết bị', hour: 'Khung giờ', geo: 'Vị trí (quốc gia)' }
+
+function SegValueCell({ s }: { s: SegmentAgg }) {
+  if (s.segment_type === 'hour') return <>{s.segment_value}h</>
+  if (s.segment_type === 'geo') {
+    const name = countryNameByGeoId(s.segment_value)
+    return name
+      ? <>{name} <span className="text-[10px] text-slate-300">#{s.segment_value}</span></>
+      : <>Không rõ <span className="text-[10px] text-slate-300">#{s.segment_value}</span></>
+  }
+  return <>{s.segment_value}</>
+}
 
 function SegmentTable({ type, rows }: { type: SegmentType; rows: SegmentAgg[] }) {
   if (rows.length === 0) return null
@@ -42,7 +53,7 @@ function SegmentTable({ type, rows }: { type: SegmentType; rows: SegmentAgg[] })
             const wasteful = s.clicks === 0 && s.cost > 0
             return (
               <tr key={i} className={wasteful ? 'bg-amber-50/50' : ''}>
-                <td className="px-3 py-2 text-slate-700">{segValue(s)}</td>
+                <td className="px-3 py-2 text-slate-700"><SegValueCell s={s} /></td>
                 <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtCount(s.impressions)}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtCount(s.clicks)}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-slate-500">{s.ctr.toFixed(1)}%</td>
