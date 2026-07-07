@@ -2,8 +2,12 @@ import {
   CampaignHealth,
   CampaignMetric,
   CampaignOptimizerResult,
+  KeywordAgg,
+  KeywordMetric,
   OptimizationSuggestion,
   OptSeverity,
+  SearchTermAgg,
+  SearchTermMetric,
 } from './types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,6 +32,11 @@ export const CFG = {
   CPC_TREND_ALERT: 25,           // CPC nửa sau tăng > 25% so nửa đầu → cảnh báo margin
   CTR_FLOOR: 1.0,                // CTR% dưới mức này (search) → nghi mẫu QC kém
   MIN_IMPR_FOR_CTR: 500,         // cần đủ impression mới kết luận CTR
+  // P2 — keyword & search term (engagement, không có doanh thu ở mức này):
+  KW_COST_FRACTION: 0.03,        // keyword/term chi phí ≥ 3% chi phí campaign = đáng kể
+  LOW_CTR_RATIO: 0.5,            // CTR < 50% CTR campaign = kém
+  QS_LOW: 3,                     // quality score ≤ 3 = kém
+  BREAKDOWN_LIMIT: 20,           // số dòng tối đa trả về cho bảng breakdown
 } as const
 
 export interface OptimizerInput {
@@ -35,11 +44,52 @@ export interface OptimizerInput {
   campaignLabel: string
   project_id?: string
   metrics: CampaignMetric[]              // campaign_metrics theo ngày (đã lọc kỳ)
-  revenueByDate: Record<string, number>  // doanh thu confirmed theo ngày (project)
+  revenueByDate: Record<string, number>  // DT Màn hình theo ngày (project)
   spendByDate: Record<string, number>    // ad_spend theo ngày (nguồn P&L)
-  totalRevenue: number                   // doanh thu confirmed trong kỳ
+  totalRevenue: number                   // DT Màn hình trong kỳ
   totalCost: number                      // spend + rental + other (P&L cost)
   totalSpend: number                     // riêng ad spend
+  keywords?: KeywordMetric[]             // keyword_metrics theo ngày (P2)
+  searchTerms?: SearchTermMetric[]       // search_term_metrics theo ngày (P2)
+}
+
+// Gộp keyword theo (criterion, ad_group) trên toàn kỳ. Sắp theo chi phí giảm dần.
+export function aggregateKeywords(rows: KeywordMetric[]): KeywordAgg[] {
+  const m = new Map<string, KeywordAgg>()
+  for (const r of rows) {
+    const key = `${r.criterion_id}|${r.ad_group_id}`
+    const e = m.get(key) ?? {
+      criterion_id: r.criterion_id, ad_group_id: r.ad_group_id,
+      keyword_text: r.keyword_text, match_type: r.match_type,
+      impressions: 0, clicks: 0, cost: 0, ctr: 0, avgCpc: 0, quality_score: r.quality_score,
+    }
+    e.impressions += r.impressions
+    e.clicks += r.clicks
+    e.cost += r.cost
+    if (r.quality_score != null) e.quality_score = r.quality_score
+    m.set(key, e)
+  }
+  const out = [...m.values()]
+  for (const e of out) {
+    e.ctr = e.impressions > 0 ? (e.clicks / e.impressions) * 100 : 0
+    e.avgCpc = e.clicks > 0 ? e.cost / e.clicks : 0
+  }
+  return out.sort((a, b) => b.cost - a.cost)
+}
+
+// Gộp search term theo cụm truy vấn trên toàn kỳ. Sắp theo chi phí giảm dần.
+export function aggregateSearchTerms(rows: SearchTermMetric[]): SearchTermAgg[] {
+  const m = new Map<string, SearchTermAgg>()
+  for (const r of rows) {
+    const e = m.get(r.search_term) ?? { search_term: r.search_term, impressions: 0, clicks: 0, cost: 0, ctr: 0 }
+    e.impressions += r.impressions
+    e.clicks += r.clicks
+    e.cost += r.cost
+    m.set(r.search_term, e)
+  }
+  const out = [...m.values()]
+  for (const e of out) e.ctr = e.impressions > 0 ? (e.clicks / e.impressions) * 100 : 0
+  return out.sort((a, b) => b.cost - a.cost)
 }
 
 const fmtInt = new Intl.NumberFormat('vi-VN')
@@ -273,6 +323,57 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     }))
   }
 
+  // 7b/7c. Keyword & search term (P2) — engagement, không có doanh thu ở mức này.
+  const kwAgg = aggregateKeywords(input.keywords ?? [])
+  const stAgg = aggregateSearchTerms(input.searchTerms ?? [])
+  const metricCost = metrics.reduce((s, m) => s + m.cost, 0)
+  const sigCost = metricCost * CFG.KW_COST_FRACTION
+  const roiNeg = health.roi != null && health.roi < 0
+
+  const badKws = kwAgg.filter(k =>
+    (k.clicks === 0 && k.cost > 0) ||
+    (k.cost >= sigCost && (k.ctr < health.ctr * CFG.LOW_CTR_RATIO || (k.quality_score != null && k.quality_score <= CFG.QS_LOW))),
+  )
+  if (badKws.length) {
+    const wasted = badKws.reduce((s, k) => s + k.cost, 0)
+    const top = badKws.slice(0, 3).map(k => k.keyword_text || '(?)').join(', ')
+    suggestions.push(makeSuggestion({
+      type: 'pause_keyword', severity: roiNeg ? 'high' : 'medium', confidence: 'engagement',
+      scope: { level: 'keyword', label: `${badKws.length} keyword`, campaign_id, project_id },
+      title: `${badKws.length} keyword hiệu suất kém — cân nhắc tắt`,
+      detail: `Chi phí cao nhưng CTR thấp / Quality Score kém / không có click. Ví dụ: ${top}. Tổng chi phí liên quan ${money(wasted)}.`,
+      evidence: [
+        { metric: 'Số keyword', value: String(badKws.length) },
+        { metric: 'Chi phí liên quan', value: money(wasted) },
+        { metric: 'CTR campaign', value: pct(health.ctr) },
+      ],
+      recommendedAction: 'Rà bảng bên dưới; tắt/giảm bid keyword kém hiệu suất; xem lại match type.',
+      impactScore: wasted,
+    }))
+  }
+
+  const badTerms = stAgg.filter(t =>
+    (t.clicks === 0 && t.cost > 0) ||
+    (t.cost >= sigCost && t.ctr < health.ctr * CFG.LOW_CTR_RATIO),
+  )
+  if (badTerms.length) {
+    const wasted = badTerms.reduce((s, t) => s + t.cost, 0)
+    const top = badTerms.slice(0, 3).map(t => `"${t.search_term}"`).join(', ')
+    suggestions.push(makeSuggestion({
+      type: 'add_negative', severity: roiNeg ? 'high' : 'medium', confidence: 'engagement',
+      scope: { level: 'search_term', label: `${badTerms.length} search term`, campaign_id, project_id },
+      title: `${badTerms.length} search term nghi phí rác — cân nhắc negative`,
+      detail: `Truy vấn tốn chi phí mà CTR thấp / không click. Ví dụ: ${top}. Tổng chi phí liên quan ${money(wasted)}.`,
+      evidence: [
+        { metric: 'Số search term', value: String(badTerms.length) },
+        { metric: 'Chi phí liên quan', value: money(wasted) },
+        { metric: 'CTR campaign', value: pct(health.ctr) },
+      ],
+      recommendedAction: 'Rà bảng bên dưới; thêm negative keyword cho truy vấn không liên quan.',
+      impactScore: wasted,
+    }))
+  }
+
   // 8. Luôn nhắc nếu thiếu conversion tracking (mở khóa tối ưu sâu hơn).
   if (!hasConversionTracking) {
     suggestions.push(makeSuggestion({
@@ -288,7 +389,15 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   const rank: Record<OptSeverity, number> = { high: 3, medium: 2, low: 1 }
   suggestions.sort((a, b) => rank[b.severity] - rank[a.severity] || b.impactScore - a.impactScore)
 
-  return { health, suggestions, hasConversionTracking }
+  return {
+    health,
+    suggestions,
+    hasConversionTracking,
+    breakdowns: {
+      keywords: kwAgg.slice(0, CFG.BREAKDOWN_LIMIT),
+      searchTerms: stAgg.slice(0, CFG.BREAKDOWN_LIMIT),
+    },
+  }
 }
 
 // tiện ích cho test/nơi khác nếu cần format bằng chứng thủ công

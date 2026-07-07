@@ -176,6 +176,87 @@ function gaqlScanFn() {
   }`
 }
 
+// Keyword + search term (Tối Ưu Camp P2). CHỈ dùng ở script Hàng ngày (không
+// backfill nhiều năm — dữ liệu search term rất lớn, dễ timeout). Dùng lại
+// fromStr/toStr/SECRET/WEBHOOK/BATCH của script gọi nó.
+function gaqlKwStFn() {
+  return `  var kwRecords = [];
+  var stRecords = [];
+
+  function flushKw() {
+    for (var i = 0; i < kwRecords.length; i += BATCH) {
+      UrlFetchApp.fetch(WEBHOOK, { method: 'post', contentType: 'application/json',
+        payload: JSON.stringify({ secret: SECRET, type: 'keyword_metrics', records: kwRecords.slice(i, i + BATCH) }) });
+    }
+    kwRecords = [];
+  }
+  function flushSt() {
+    for (var i = 0; i < stRecords.length; i += BATCH) {
+      UrlFetchApp.fetch(WEBHOOK, { method: 'post', contentType: 'application/json',
+        payload: JSON.stringify({ secret: SECRET, type: 'search_terms', records: stRecords.slice(i, i + BATCH) }) });
+    }
+    stRecords = [];
+  }
+
+  function scanKwSt() {
+    var kq =
+      'SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, ' +
+      'ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ' +
+      'ad_group_criterion.quality_info.quality_score, ' +
+      'segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions ' +
+      'FROM keyword_view ' +
+      "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' " +
+      'AND metrics.impressions > 0';
+    var kr = AdsApp.search(kq);
+    while (kr.hasNext()) {
+      var r = kr.next();
+      var c = r.adGroupCriterion || {};
+      var kw = c.keyword || {};
+      var qi = c.qualityInfo || {};
+      var m = r.metrics || {};
+      kwRecords.push({
+        campaign_id:   String(r.campaign.id),
+        ad_group_id:   String(r.adGroup.id),
+        criterion_id:  String(c.criterionId),
+        date:          r.segments.date,
+        keyword_text:  kw.text || '',
+        match_type:    kw.matchType || '',
+        impressions:   Number(m.impressions || 0),
+        clicks:        Number(m.clicks || 0),
+        cost:          Number(m.costMicros || 0) / 1e6,
+        conversions:   m.conversions == null ? null : Number(m.conversions),
+        quality_score: qi.qualityScore == null ? null : Number(qi.qualityScore)
+      });
+      if (kwRecords.length >= BATCH) flushKw();
+    }
+    flushKw();
+
+    var sq =
+      'SELECT campaign.id, ad_group.id, search_term_view.search_term, ' +
+      'segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions ' +
+      'FROM search_term_view ' +
+      "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' " +
+      'AND metrics.impressions > 0';
+    var sr = AdsApp.search(sq);
+    while (sr.hasNext()) {
+      var r2 = sr.next();
+      var m2 = r2.metrics || {};
+      stRecords.push({
+        campaign_id:  String(r2.campaign.id),
+        ad_group_id:  String(r2.adGroup.id),
+        search_term:  r2.searchTermView.searchTerm,
+        date:         r2.segments.date,
+        impressions:  Number(m2.impressions || 0),
+        clicks:       Number(m2.clicks || 0),
+        cost:         Number(m2.costMicros || 0) / 1e6,
+        conversions:  m2.conversions == null ? null : Number(m2.conversions)
+      });
+      if (stRecords.length >= BATCH) flushSt();
+    }
+    flushSt();
+  }`
+}
+
 function buildBackfillScript(secret: string, webhookUrl: string) {
   return `function main() {
   var SECRET     = '${secret}';
@@ -238,6 +319,8 @@ function buildSpendScript(secret: string, webhookUrl: string) {
 
 ${gaqlScanFn()}
 
+${gaqlKwStFn()}
+
   if (typeof MccApp !== 'undefined') {
     var accountIt = MccApp.accounts().get();
     while (accountIt.hasNext()) {
@@ -245,12 +328,14 @@ ${gaqlScanFn()}
       MccApp.select(account);
       scanAccount(account.getCustomerId().replace(/-/g, ''));
       flush(); // gửi & giải phóng sau mỗi tài khoản
+      scanKwSt(); // keyword + search term (Tối Ưu Camp P2)
     }
   } else {
     mccId = null;
     mccName = null;
     scanAccount(AdsApp.currentAccount().getCustomerId().replace(/-/g, ''));
     flush();
+    scanKwSt();
   }
 
   Logger.log('Spend sync done: ' + sent + ' records (' + fromStr + ' → ' + toStr + ')');
@@ -579,7 +664,7 @@ export default function IntegrationsPage() {
             {scriptTab === 'spend' && (
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs text-slate-400">Đặt lịch: Daily 8:00 AM trong Google Ads Scripts. Đồng bộ chi phí + số liệu hiệu suất (CTR/CPC/Impression Share) cho <strong>Tối Ưu Camp</strong>.</p>
+                  <p className="text-xs text-slate-400">Đặt lịch: Daily 8:00 AM trong Google Ads Scripts. Đồng bộ chi phí + số liệu hiệu suất (CTR/CPC/Impression Share) + keyword/search term cho <strong>Tối Ưu Camp</strong>.</p>
                   <CopyButton text={buildSpendScript(secret, webhookUrl)} label="Copy code" />
                 </div>
                 <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto overflow-y-auto leading-relaxed font-mono max-h-[400px]">

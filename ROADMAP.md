@@ -64,8 +64,8 @@ Dashboard / Revenue grid / Project detail (Next.js)
 | | `campaign_discoveries` | PK `campaign_id`; `customer_id`(=cid), `mcc_id` | Webhook (auto) |
 | | `sync_log` | log mỗi lần sync; `organization_id` | Webhook (auto) |
 | **Tối ưu camp** | `campaign_metrics` | PK `(campaign_id, date)`; impressions/clicks/cost/conversions/Search IS | Webhook (auto) |
-| | `keyword_metrics` | PK `(campaign_id, ad_group_id, criterion_id, date)`; +quality_score *(P2)* | Webhook (auto) |
-| | `search_term_metrics` | PK `(campaign_id, ad_group_id, search_term, date)` *(P2)* | Webhook (auto) |
+| | `keyword_metrics` | PK `(campaign_id, ad_group_id, criterion_id, date)`; +quality_score | Webhook (auto) |
+| | `search_term_metrics` | PK `(campaign_id, ad_group_id, search_term, date)` | Webhook (auto) |
 | | `segment_metrics` | PK `(campaign_id, date, segment_type, segment_value)`; device/hour/geo *(P3)* | Webhook (auto) |
 | **Dự án** | `projects` | PK `project_id`; FK `cid`, `google_campaign_id`, `team_id`, `master_project_id`, `category_id`, `bank_account_id` | UI |
 | | `master_projects` | gom nhiều `projects` thành 1 dự án mẹ | UI |
@@ -183,7 +183,7 @@ Công thức: `cost = spend(QC) + rentalDay(thuê TK) + otherDay(CP khác)`; `pr
 Trang `/revenue` dùng [`useRevenueGrid.ts`](src/hooks/useRevenueGrid.ts): grid kiểu Excel (hàng = project, cột = ngày), gõ ô → upsert `affiliate_revenue`. Có `status` pending/confirmed + chu kỳ payout.
 
 ### 4.5 Tối ưu camp
-`google-ads-sync.js` gửi thêm `type:'campaign_metrics'` (impressions/clicks/CTR/CPC/Search IS) → webhook upsert `campaign_metrics` (KHÔNG đụng `ad_spend`). Trang `/optimize` gọi [`api/optimize`](src/app/api/optimize/route.ts): ghép `campaign_metrics` + **DT Màn hình** (`affiliate_revenue` type='pending', tính qua [`screen-revenue.ts`](src/lib/screen-revenue.ts) — mirror logic delta của `usePnlData`) + cost (spend+rental+other, dùng lại `computeCidCost`) → [`campaign-optimizer.ts`](src/lib/campaign-optimizer.ts) chạy rule engine ra `health` + `suggestions[]`. Cơ sở phân tích = **DT Màn hình** (tín hiệu sớm, kịp tối ưu); DT Thực (confirmed) chỉ hiển thị tham chiếu. Vì affiliate **không có conversion tracking**, tín hiệu tiền chỉ ở mức project×ngày → gợi ý chia 2 độ tin cậy `roi` (chắc) vs `engagement` (cần xem xét).
+`google-ads-sync.js` (và script tab "Hàng ngày" ở trang Tích hợp) gửi thêm `type:'campaign_metrics'` (impressions/clicks/CTR/CPC/Search IS), `type:'keyword_metrics'` (keyword_view + quality_score) và `type:'search_terms'` (search_term_view) → webhook upsert vào `campaign_metrics`/`keyword_metrics`/`search_term_metrics` (KHÔNG đụng `ad_spend`). Keyword/search-term **chỉ sync ở script Hàng ngày** (không backfill — volume lớn). Engine thêm rule engagement `pause_keyword` (keyword chi phí cao + CTR thấp/QS kém/0 click) và `add_negative` (search term tốn phí, CTR thấp/0 click); API trả `breakdowns.{keywords,searchTerms}` cho bảng ở trang `/optimize`. Trang `/optimize` gọi [`api/optimize`](src/app/api/optimize/route.ts): ghép `campaign_metrics` + **DT Màn hình** (`affiliate_revenue` type='pending', tính qua [`screen-revenue.ts`](src/lib/screen-revenue.ts) — mirror logic delta của `usePnlData`) + cost (spend+rental+other, dùng lại `computeCidCost`) → [`campaign-optimizer.ts`](src/lib/campaign-optimizer.ts) chạy rule engine ra `health` + `suggestions[]`. Cơ sở phân tích = **DT Màn hình** (tín hiệu sớm, kịp tối ưu); DT Thực (confirmed) chỉ hiển thị tham chiếu. Vì affiliate **không có conversion tracking**, tín hiệu tiền chỉ ở mức project×ngày → gợi ý chia 2 độ tin cậy `roi` (chắc) vs `engagement` (cần xem xét).
 
 ---
 
@@ -226,7 +226,7 @@ Lọc dữ liệu theo role diễn ra ở **2 tầng**:
 
 ### Tối Ưu Camp (Campaign Optimizer) — đang triển khai theo giai đoạn
 - [x] **P1 — ROI core:** bảng `campaign_metrics` + ingest (`type:'campaign_metrics'`) + `campaign-optimizer.ts` (rule ROI-based: cut/scale/raise_budget/raise_bid/margin_alert/daypart + fix_creative + setup_tracking) + `api/optimize` + trang `/optimize` (scorecard + thẻ gợi ý). Migration [`migration_campaign_optimizer.sql`](supabase/migration_campaign_optimizer.sql) tạo sẵn cả 4 bảng.
-- [ ] **P2 — keyword & search term:** ingest `keyword_metrics`/`search_term_metrics` + rule engagement (negative keyword, pause keyword) + bảng breakdown.
+- [x] **P2 — keyword & search term:** ingest `keyword_metrics`/`search_term_metrics` (script Hàng ngày) + rule engagement `pause_keyword`/`add_negative` + bảng breakdown (`BreakdownTables`) ở `/optimize`.
 - [ ] **P3 — device/giờ/geo:** ingest `segment_metrics` + rule bid-adjust/dayparting theo phân khúc + charts.
 
 ### Việc còn mở / ý tưởng tiếp theo — ☐ Chưa làm

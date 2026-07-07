@@ -297,10 +297,36 @@ export interface CampaignHealth {
   score: number                // 0..100
 }
 
+// Số liệu keyword/search-term đã gộp theo kỳ (cho bảng breakdown + rule P2).
+export interface KeywordAgg {
+  criterion_id: string
+  ad_group_id: string
+  keyword_text: string
+  match_type: string
+  impressions: number
+  clicks: number
+  cost: number
+  ctr: number
+  avgCpc: number
+  quality_score: number | null
+}
+
+export interface SearchTermAgg {
+  search_term: string
+  impressions: number
+  clicks: number
+  cost: number
+  ctr: number
+}
+
 export interface CampaignOptimizerResult {
   health: CampaignHealth
   suggestions: OptimizationSuggestion[]
   hasConversionTracking: boolean
+  breakdowns: {
+    keywords: KeywordAgg[]      // xấu nhất trước (theo chi phí)
+    searchTerms: SearchTermAgg[]
+  }
 }
 
 // Quy tắc quy chi phí QC của một campaign về từng ref-link project (sub-project).

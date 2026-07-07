@@ -48,6 +48,8 @@ function syncAccount() {
   discoverCampaigns(cid);
   syncSpend(cid, range);
   syncCampaignMetrics(cid, range);
+  syncKeywords(cid, range);
+  syncSearchTerms(cid, range);
 }
 
 /**
@@ -153,6 +155,83 @@ function syncCampaignMetrics(cid, range) {
     }
   }
   if (records.length) post({ secret: SECRET, type: 'campaign_metrics', records: records });
+}
+
+/**
+ * Keyword metrics (Tối Ưu Camp P2): keyword × ngày (impressions/clicks/cost/
+ * quality_score) để gợi ý tắt keyword kém hiệu suất.
+ */
+function syncKeywords(cid, range) {
+  var query =
+    'SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, ' +
+    'ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ' +
+    'ad_group_criterion.quality_info.quality_score, ' +
+    'segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions ' +
+    'FROM keyword_view ' +
+    "WHERE segments.date BETWEEN '" + range.from + "' AND '" + range.to + "' " +
+    'AND metrics.impressions > 0';
+
+  var records = [];
+  var rows = AdsApp.search(query);
+  while (rows.hasNext()) {
+    var r = rows.next();
+    var c = r.adGroupCriterion || {};
+    var kw = c.keyword || {};
+    var qi = c.qualityInfo || {};
+    var m = r.metrics || {};
+    records.push({
+      campaign_id:   String(r.campaign.id),
+      ad_group_id:   String(r.adGroup.id),
+      criterion_id:  String(c.criterionId),
+      date:          r.segments.date,
+      keyword_text:  kw.text || '',
+      match_type:    kw.matchType || '',
+      impressions:   Number(m.impressions || 0),
+      clicks:        Number(m.clicks || 0),
+      cost:          Number(m.costMicros || 0) / 1e6,
+      conversions:   m.conversions == null ? null : Number(m.conversions),
+      quality_score: qi.qualityScore == null ? null : Number(qi.qualityScore)
+    });
+    if (records.length >= BATCH) {
+      post({ secret: SECRET, type: 'keyword_metrics', records: records });
+      records = [];
+    }
+  }
+  if (records.length) post({ secret: SECRET, type: 'keyword_metrics', records: records });
+}
+
+/**
+ * Search term metrics (Tối Ưu Camp P2): truy vấn thật × ngày → gợi ý negative keyword.
+ */
+function syncSearchTerms(cid, range) {
+  var query =
+    'SELECT campaign.id, ad_group.id, search_term_view.search_term, ' +
+    'segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions ' +
+    'FROM search_term_view ' +
+    "WHERE segments.date BETWEEN '" + range.from + "' AND '" + range.to + "' " +
+    'AND metrics.impressions > 0';
+
+  var records = [];
+  var rows = AdsApp.search(query);
+  while (rows.hasNext()) {
+    var r = rows.next();
+    var m = r.metrics || {};
+    records.push({
+      campaign_id:  String(r.campaign.id),
+      ad_group_id:  String(r.adGroup.id),
+      search_term:  r.searchTermView.searchTerm,
+      date:         r.segments.date,
+      impressions:  Number(m.impressions || 0),
+      clicks:       Number(m.clicks || 0),
+      cost:         Number(m.costMicros || 0) / 1e6,
+      conversions:  m.conversions == null ? null : Number(m.conversions)
+    });
+    if (records.length >= BATCH) {
+      post({ secret: SECRET, type: 'search_terms', records: records });
+      records = [];
+    }
+  }
+  if (records.length) post({ secret: SECRET, type: 'search_terms', records: records });
 }
 
 // Map enum device của Google Ads về MOBILE/DESKTOP/TABLET. Còn lại (CONNECTED_TV,

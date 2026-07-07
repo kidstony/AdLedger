@@ -42,10 +42,37 @@ interface CampaignMetricRecord {
   search_rank_lost_is?: number | null
 }
 
+// Số liệu cấp keyword & search term (feature "Tối Ưu Camp" P2).
+interface KeywordMetricRecord {
+  campaign_id: string
+  ad_group_id: string
+  criterion_id: string
+  date: string
+  keyword_text?: string
+  match_type?: string
+  impressions?: number
+  clicks?: number
+  cost?: number
+  conversions?: number | null
+  quality_score?: number | null
+}
+interface SearchTermRecord {
+  campaign_id: string
+  ad_group_id: string
+  search_term: string
+  date: string
+  impressions?: number
+  clicks?: number
+  cost?: number
+  conversions?: number | null
+}
+
 type Body =
   | { secret?: string; type?: 'discover'; campaigns?: CampaignRecord[] }
   | { secret?: string; type: 'spend'; records?: SpendRecord[] }
   | { secret?: string; type: 'campaign_metrics'; records?: CampaignMetricRecord[] }
+  | { secret?: string; type: 'keyword_metrics'; records?: KeywordMetricRecord[] }
+  | { secret?: string; type: 'search_terms'; records?: SearchTermRecord[] }
   | { secret?: string; records?: []; type?: undefined }
 
 async function backfillProjectCidMcc(campaignIds: string[]) {
@@ -162,6 +189,63 @@ export async function POST(req: NextRequest) {
     }
     await supabaseAdmin.from('sync_log').insert({ records: rows.length, status: 'success', message: 'campaign_metrics', organization_id: organizationId })
     return NextResponse.json({ success: true, type: 'campaign_metrics', count: rows.length })
+  }
+
+  // Keyword metrics sync (P2) — keyword × ngày. Bảng riêng keyword_metrics.
+  if ('type' in body && body.type === 'keyword_metrics') {
+    const kRecords = (body as { records?: KeywordMetricRecord[] }).records ?? []
+    if (kRecords.length === 0) return NextResponse.json({ success: true, type: 'keyword_metrics', count: 0, ping: true })
+    const rows = kRecords.map(r => ({
+      campaign_id:     r.campaign_id,
+      ad_group_id:     r.ad_group_id,
+      criterion_id:    r.criterion_id,
+      date:            r.date,
+      keyword_text:    r.keyword_text ?? '',
+      match_type:      r.match_type ?? '',
+      impressions:     Number(r.impressions ?? 0),
+      clicks:          Number(r.clicks ?? 0),
+      cost:            Number(r.cost ?? 0),
+      conversions:     r.conversions == null ? null : Number(r.conversions),
+      quality_score:   r.quality_score == null ? null : Number(r.quality_score),
+      organization_id: organizationId,
+      updated_at:      new Date().toISOString(),
+    }))
+    const { error } = await supabaseAdmin
+      .from('keyword_metrics')
+      .upsert(rows, { onConflict: 'campaign_id,ad_group_id,criterion_id,date' })
+    if (error) {
+      await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: `keyword_metrics: ${error.message}`, organization_id: organizationId })
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    await supabaseAdmin.from('sync_log').insert({ records: rows.length, status: 'success', message: 'keyword_metrics', organization_id: organizationId })
+    return NextResponse.json({ success: true, type: 'keyword_metrics', count: rows.length })
+  }
+
+  // Search term sync (P2) — search term × ngày. Bảng riêng search_term_metrics.
+  if ('type' in body && body.type === 'search_terms') {
+    const sRecords = (body as { records?: SearchTermRecord[] }).records ?? []
+    if (sRecords.length === 0) return NextResponse.json({ success: true, type: 'search_terms', count: 0, ping: true })
+    const rows = sRecords.map(r => ({
+      campaign_id:     r.campaign_id,
+      ad_group_id:     r.ad_group_id,
+      search_term:     r.search_term,
+      date:            r.date,
+      impressions:     Number(r.impressions ?? 0),
+      clicks:          Number(r.clicks ?? 0),
+      cost:            Number(r.cost ?? 0),
+      conversions:     r.conversions == null ? null : Number(r.conversions),
+      organization_id: organizationId,
+      updated_at:      new Date().toISOString(),
+    }))
+    const { error } = await supabaseAdmin
+      .from('search_term_metrics')
+      .upsert(rows, { onConflict: 'campaign_id,ad_group_id,search_term,date' })
+    if (error) {
+      await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: `search_terms: ${error.message}`, organization_id: organizationId })
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    await supabaseAdmin.from('sync_log').insert({ records: rows.length, status: 'success', message: 'search_terms', organization_id: organizationId })
+    return NextResponse.json({ success: true, type: 'search_terms', count: rows.length })
   }
 
   // Spend sync: receive daily spend per campaign
