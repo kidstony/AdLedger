@@ -1,7 +1,7 @@
 'use client'
 
 import { formatVND } from '@/lib/utils'
-import type { KeywordAgg, SearchTermAgg } from '@/lib/types'
+import type { KeywordAgg, SearchTermAgg, SegmentAgg, SegmentType } from '@/lib/types'
 
 const intFmt = new Intl.NumberFormat('en-US')
 const fmtCount = (n: number) => intFmt.format(Math.round(n))
@@ -26,14 +26,49 @@ function TableCard({ title, hint, children }: { title: string; hint: string; chi
   )
 }
 
-export default function BreakdownTables({ keywords, searchTerms }: {
+const SEG_LABEL: Record<SegmentType, string> = { device: 'Thiết bị', hour: 'Khung giờ', geo: 'Vị trí (country id)' }
+const segValue = (s: SegmentAgg) => (s.segment_type === 'hour' ? `${s.segment_value}h` : s.segment_value)
+
+function SegmentTable({ type, rows }: { type: SegmentType; rows: SegmentAgg[] }) {
+  if (rows.length === 0) return null
+  return (
+    <TableCard title={SEG_LABEL[type]} hint="Phân khúc chi phí cao + CTR thấp → cân nhắc điều chỉnh bid / lịch / loại trừ.">
+      <table className="w-full text-xs">
+        <thead className="bg-slate-50">
+          <tr><Th>{SEG_LABEL[type]}</Th><Th right>Hiển thị</Th><Th right>Click</Th><Th right>CTR</Th><Th right>Chi phí</Th></tr>
+        </thead>
+        <tbody className="divide-y divide-slate-50">
+          {rows.map((s, i) => {
+            const wasteful = s.clicks === 0 && s.cost > 0
+            return (
+              <tr key={i} className={wasteful ? 'bg-amber-50/50' : ''}>
+                <td className="px-3 py-2 text-slate-700">{segValue(s)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtCount(s.impressions)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtCount(s.clicks)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-slate-500">{s.ctr.toFixed(1)}%</td>
+                <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-800">{formatVND(s.cost)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </TableCard>
+  )
+}
+
+export default function BreakdownTables({ keywords, searchTerms, segments }: {
   keywords: KeywordAgg[]
   searchTerms: SearchTermAgg[]
+  segments: SegmentAgg[]
 }) {
-  if (keywords.length === 0 && searchTerms.length === 0) {
+  const devices = segments.filter(s => s.segment_type === 'device')
+  const hours = segments.filter(s => s.segment_type === 'hour')
+  const geos = segments.filter(s => s.segment_type === 'geo')
+
+  if (keywords.length === 0 && searchTerms.length === 0 && segments.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center text-xs text-slate-400">
-        Chưa có số liệu keyword / search term. Chạy script &ldquo;Hàng ngày&rdquo; bản mới để đồng bộ (không có ở tab Lịch sử).
+        Chưa có số liệu keyword / search term / phân khúc. Chạy script &ldquo;Hàng ngày&rdquo; bản mới để đồng bộ (không có ở tab Lịch sử).
       </div>
     )
   }
@@ -94,6 +129,10 @@ export default function BreakdownTables({ keywords, searchTerms }: {
           </table>
         </TableCard>
       )}
+
+      <SegmentTable type="device" rows={devices} />
+      <SegmentTable type="hour" rows={hours} />
+      <SegmentTable type="geo" rows={geos} />
     </div>
   )
 }

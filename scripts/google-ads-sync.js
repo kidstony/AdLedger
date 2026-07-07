@@ -50,6 +50,7 @@ function syncAccount() {
   syncCampaignMetrics(cid, range);
   syncKeywords(cid, range);
   syncSearchTerms(cid, range);
+  syncSegments(cid, range);
 }
 
 /**
@@ -232,6 +233,36 @@ function syncSearchTerms(cid, range) {
     }
   }
   if (records.length) post({ secret: SECRET, type: 'search_terms', records: records });
+}
+
+/**
+ * Segment metrics (Tối Ưu Camp P3): phân khúc device/giờ/geo × ngày để gợi ý
+ * bid adjustment & dayparting.
+ */
+function syncSegments(cid, range) {
+  var base = "WHERE segments.date BETWEEN '" + range.from + "' AND '" + range.to + "' AND metrics.impressions > 0";
+  var cols = 'metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions';
+  var records = [];
+
+  function push(campId, date, stype, sval, m) {
+    records.push({
+      campaign_id: String(campId), date: date, segment_type: stype, segment_value: String(sval),
+      impressions: Number(m.impressions || 0), clicks: Number(m.clicks || 0),
+      cost: Number(m.costMicros || 0) / 1e6, conversions: m.conversions == null ? null : Number(m.conversions)
+    });
+    if (records.length >= BATCH) { post({ secret: SECRET, type: 'segment_metrics', records: records }); records = []; }
+  }
+
+  var dr = AdsApp.search('SELECT campaign.id, segments.date, segments.device, ' + cols + ' FROM campaign ' + base);
+  while (dr.hasNext()) { var r = dr.next(); push(r.campaign.id, r.segments.date, 'device', mapDevice(r.segments.device), r.metrics || {}); }
+
+  var hr = AdsApp.search('SELECT campaign.id, segments.date, segments.hour, ' + cols + ' FROM campaign ' + base);
+  while (hr.hasNext()) { var r2 = hr.next(); push(r2.campaign.id, r2.segments.date, 'hour', r2.segments.hour, r2.metrics || {}); }
+
+  var gr = AdsApp.search('SELECT campaign.id, segments.date, geographic_view.country_criterion_id, ' + cols + ' FROM geographic_view ' + base);
+  while (gr.hasNext()) { var r3 = gr.next(); push(r3.campaign.id, r3.segments.date, 'geo', r3.geographicView.countryCriterionId, r3.metrics || {}); }
+
+  if (records.length) post({ secret: SECRET, type: 'segment_metrics', records: records });
 }
 
 // Map enum device của Google Ads về MOBILE/DESKTOP/TABLET. Còn lại (CONNECTED_TV,

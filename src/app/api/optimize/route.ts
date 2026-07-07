@@ -5,7 +5,7 @@ import { computeCidCost } from '@/lib/costs'
 import { optimizeCampaign } from '@/lib/campaign-optimizer'
 import { computeScreenRevenue, PendingRow } from '@/lib/screen-revenue'
 import { splitSpend, AttrProject } from '@/lib/attribution'
-import { CampaignMetric, KeywordMetric, RentalGroup, SearchTermMetric } from '@/lib/types'
+import { CampaignMetric, KeywordMetric, RentalGroup, SearchTermMetric, SegmentMetric } from '@/lib/types'
 
 // GET /api/optimize?project_id=...&from=...&to=...
 // Phân tích 1 camp (theo project) và trả gợi ý tối ưu. Dùng service_role +
@@ -47,7 +47,7 @@ export async function GET(req: Request) {
   }
   const campaign_id = project.google_campaign_id
 
-  const [metricsRes, revenueRes, adSpendRes, otherRes, keywordRes, searchTermRes] = await Promise.all([
+  const [metricsRes, revenueRes, adSpendRes, otherRes, keywordRes, searchTermRes, segmentRes] = await Promise.all([
     supabaseAdmin
       .from('campaign_metrics')
       .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is')
@@ -83,6 +83,12 @@ export async function GET(req: Request) {
       .select('campaign_id, ad_group_id, search_term, date, impressions, clicks, cost, conversions')
       .eq('campaign_id', campaign_id)
       .gte('date', from).lte('date', to),
+
+    supabaseAdmin
+      .from('segment_metrics')
+      .select('campaign_id, date, segment_type, segment_value, impressions, clicks, cost, conversions')
+      .eq('campaign_id', campaign_id)
+      .gte('date', from).lte('date', to),
   ])
 
   const metrics = (metricsRes.data ?? []) as CampaignMetric[]
@@ -91,6 +97,7 @@ export async function GET(req: Request) {
   const others = otherRes.data ?? []
   const keywords = (keywordRes.data ?? []) as KeywordMetric[]
   const searchTerms = (searchTermRes.data ?? []) as SearchTermMetric[]
+  const segments = (segmentRes.data ?? []) as SegmentMetric[]
 
   // Cơ sở phân tích = DT Màn hình (pending). Với project cumulative, cần baseline
   // = dòng pending cuối trước khoảng ngày (mirror usePnlData).
@@ -213,6 +220,7 @@ export async function GET(req: Request) {
     totalSpend,
     keywords,
     searchTerms,
+    segments,
   })
 
   return NextResponse.json({

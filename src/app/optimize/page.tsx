@@ -10,7 +10,7 @@ import DateRangePicker from '@/components/ui/DateRangePicker'
 import HealthScorecard from '@/components/optimize/HealthScorecard'
 import SuggestionCard from '@/components/optimize/SuggestionCard'
 import BreakdownTables from '@/components/optimize/BreakdownTables'
-import type { CampaignHealth, KeywordAgg, OptimizationSuggestion, SearchTermAgg } from '@/lib/types'
+import type { CampaignHealth, KeywordAgg, OptimizationSuggestion, SearchTermAgg, SegmentAgg } from '@/lib/types'
 
 interface OptimizeResponse {
   project: { project_id: string; name: string; cid: string; campaign_id: string }
@@ -21,7 +21,7 @@ interface OptimizeResponse {
   health: CampaignHealth
   suggestions: OptimizationSuggestion[]
   hasConversionTracking: boolean
-  breakdowns: { keywords: KeywordAgg[]; searchTerms: SearchTermAgg[] }
+  breakdowns: { keywords: KeywordAgg[]; searchTerms: SearchTermAgg[]; segments: SegmentAgg[] }
   error?: string
   code?: string
 }
@@ -150,8 +150,8 @@ export default function OptimizePage() {
           </section>
 
           <section>
-            <h2 className="mb-2 text-sm font-semibold text-slate-700">Chi tiết keyword &amp; search term</h2>
-            <BreakdownTables keywords={data.breakdowns.keywords} searchTerms={data.breakdowns.searchTerms} />
+            <h2 className="mb-2 text-sm font-semibold text-slate-700">Chi tiết keyword, search term &amp; phân khúc</h2>
+            <BreakdownTables keywords={data.breakdowns.keywords} searchTerms={data.breakdowns.searchTerms} segments={data.breakdowns.segments} />
           </section>
         </div>
       )}

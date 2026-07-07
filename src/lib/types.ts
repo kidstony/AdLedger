@@ -319,6 +319,15 @@ export interface SearchTermAgg {
   ctr: number
 }
 
+export interface SegmentAgg {
+  segment_type: SegmentType   // device | hour | geo
+  segment_value: string
+  impressions: number
+  clicks: number
+  cost: number
+  ctr: number
+}
+
 export interface CampaignOptimizerResult {
   health: CampaignHealth
   suggestions: OptimizationSuggestion[]
@@ -326,6 +335,7 @@ export interface CampaignOptimizerResult {
   breakdowns: {
     keywords: KeywordAgg[]      // xấu nhất trước (theo chi phí)
     searchTerms: SearchTermAgg[]
+    segments: SegmentAgg[]      // device/hour/geo gộp, theo chi phí
   }
 }
 

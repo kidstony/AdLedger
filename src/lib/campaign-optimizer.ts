@@ -8,6 +8,9 @@ import {
   OptSeverity,
   SearchTermAgg,
   SearchTermMetric,
+  SegmentAgg,
+  SegmentMetric,
+  SegmentType,
 } from './types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,6 +54,7 @@ export interface OptimizerInput {
   totalSpend: number                     // riêng ad spend
   keywords?: KeywordMetric[]             // keyword_metrics theo ngày (P2)
   searchTerms?: SearchTermMetric[]       // search_term_metrics theo ngày (P2)
+  segments?: SegmentMetric[]             // segment_metrics device/hour/geo (P3)
 }
 
 // Gộp keyword theo (criterion, ad_group) trên toàn kỳ. Sắp theo chi phí giảm dần.
@@ -86,6 +90,22 @@ export function aggregateSearchTerms(rows: SearchTermMetric[]): SearchTermAgg[] 
     e.clicks += r.clicks
     e.cost += r.cost
     m.set(r.search_term, e)
+  }
+  const out = [...m.values()]
+  for (const e of out) e.ctr = e.impressions > 0 ? (e.clicks / e.impressions) * 100 : 0
+  return out.sort((a, b) => b.cost - a.cost)
+}
+
+// Gộp segment (device/hour/geo) theo (type, value) trên toàn kỳ. Sắp theo chi phí.
+export function aggregateSegments(rows: SegmentMetric[]): SegmentAgg[] {
+  const m = new Map<string, SegmentAgg>()
+  for (const r of rows) {
+    const key = `${r.segment_type}|${r.segment_value}`
+    const e = m.get(key) ?? { segment_type: r.segment_type, segment_value: r.segment_value, impressions: 0, clicks: 0, cost: 0, ctr: 0 }
+    e.impressions += r.impressions
+    e.clicks += r.clicks
+    e.cost += r.cost
+    m.set(key, e)
   }
   const out = [...m.values()]
   for (const e of out) e.ctr = e.impressions > 0 ? (e.clicks / e.impressions) * 100 : 0
@@ -374,6 +394,40 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     }))
   }
 
+  // 7d. Phân khúc device/giờ/geo (P3) — engagement, gợi ý điều chỉnh bid/lịch.
+  const segAgg = aggregateSegments(input.segments ?? [])
+  const SEG_META: Record<SegmentType, { type: OptimizationSuggestion['type']; noun: string; action: string }> = {
+    device: { type: 'device_adjust', noun: 'thiết bị', action: 'Giảm bid ở thiết bị kém hiệu suất (device bid adjustment).' },
+    hour:   { type: 'daypart',       noun: 'khung giờ', action: 'Giảm bid hoặc tắt lịch ở khung giờ kém (ad schedule).' },
+    geo:    { type: 'device_adjust', noun: 'vị trí',    action: 'Điều chỉnh bid theo vị trí, hoặc loại trừ vị trí kém.' },
+  }
+  const fmtSegVal = (s: SegmentAgg) => (s.segment_type === 'hour' ? `${s.segment_value}h` : s.segment_value)
+  for (const stype of ['device', 'hour', 'geo'] as SegmentType[]) {
+    const segs = segAgg.filter(s => s.segment_type === stype)
+    if (!segs.length) continue
+    const bad = segs.filter(s =>
+      (s.clicks === 0 && s.cost > 0) ||
+      (s.cost >= sigCost && s.ctr < health.ctr * CFG.LOW_CTR_RATIO),
+    )
+    if (!bad.length) continue
+    const wasted = bad.reduce((s, x) => s + x.cost, 0)
+    const meta = SEG_META[stype]
+    const top = bad.slice(0, 3).map(fmtSegVal).join(', ')
+    suggestions.push(makeSuggestion({
+      type: meta.type, severity: roiNeg ? 'medium' : 'low', confidence: 'engagement',
+      scope: { level: 'segment', label: `${bad.length} ${meta.noun}`, campaign_id, project_id, segment_type: stype },
+      title: `${meta.noun[0].toUpperCase()}${meta.noun.slice(1)} hiệu suất kém — ${bad.length} mục`,
+      detail: `Chi phí cao nhưng CTR thấp / không click. Ví dụ: ${top}. Tổng chi phí liên quan ${money(wasted)}.`,
+      evidence: [
+        { metric: `Số ${meta.noun}`, value: String(bad.length) },
+        { metric: 'Chi phí liên quan', value: money(wasted) },
+        { metric: 'CTR campaign', value: pct(health.ctr) },
+      ],
+      recommendedAction: meta.action,
+      impactScore: wasted,
+    }))
+  }
+
   // 8. Luôn nhắc nếu thiếu conversion tracking (mở khóa tối ưu sâu hơn).
   if (!hasConversionTracking) {
     suggestions.push(makeSuggestion({
@@ -396,6 +450,7 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     breakdowns: {
       keywords: kwAgg.slice(0, CFG.BREAKDOWN_LIMIT),
       searchTerms: stAgg.slice(0, CFG.BREAKDOWN_LIMIT),
+      segments: segAgg.slice(0, CFG.BREAKDOWN_LIMIT * 3),
     },
   }
 }

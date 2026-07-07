@@ -257,6 +257,42 @@ function gaqlKwStFn() {
   }`
 }
 
+// Phân khúc device/giờ/geo (Tối Ưu Camp P3). CHỈ dùng ở script Hàng ngày. Dùng
+// lại mapDevice() từ gaqlScanFn (cùng inline vào main) + fromStr/toStr/SECRET/...
+function gaqlSegFn() {
+  return `  var segRecords = [];
+
+  function flushSeg() {
+    for (var i = 0; i < segRecords.length; i += BATCH) {
+      UrlFetchApp.fetch(WEBHOOK, { method: 'post', contentType: 'application/json',
+        payload: JSON.stringify({ secret: SECRET, type: 'segment_metrics', records: segRecords.slice(i, i + BATCH) }) });
+    }
+    segRecords = [];
+  }
+  function pushSeg(campId, date, stype, sval, m) {
+    segRecords.push({
+      campaign_id: String(campId), date: date, segment_type: stype, segment_value: String(sval),
+      impressions: Number(m.impressions || 0), clicks: Number(m.clicks || 0),
+      cost: Number(m.costMicros || 0) / 1e6, conversions: m.conversions == null ? null : Number(m.conversions)
+    });
+    if (segRecords.length >= BATCH) flushSeg();
+  }
+  function scanSegments() {
+    var base = "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' AND metrics.impressions > 0";
+    var metricCols = 'metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions';
+    // Thiết bị
+    var dr = AdsApp.search('SELECT campaign.id, segments.date, segments.device, ' + metricCols + ' FROM campaign ' + base);
+    while (dr.hasNext()) { var r = dr.next(); pushSeg(r.campaign.id, r.segments.date, 'device', mapDevice(r.segments.device), r.metrics || {}); }
+    // Khung giờ (0-23)
+    var hr = AdsApp.search('SELECT campaign.id, segments.date, segments.hour, ' + metricCols + ' FROM campaign ' + base);
+    while (hr.hasNext()) { var r2 = hr.next(); pushSeg(r2.campaign.id, r2.segments.date, 'hour', r2.segments.hour, r2.metrics || {}); }
+    // Vị trí (country criterion id)
+    var gr = AdsApp.search('SELECT campaign.id, segments.date, geographic_view.country_criterion_id, ' + metricCols + ' FROM geographic_view ' + base);
+    while (gr.hasNext()) { var r3 = gr.next(); pushSeg(r3.campaign.id, r3.segments.date, 'geo', r3.geographicView.countryCriterionId, r3.metrics || {}); }
+    flushSeg();
+  }`
+}
+
 function buildBackfillScript(secret: string, webhookUrl: string) {
   return `function main() {
   var SECRET     = '${secret}';
@@ -321,6 +357,8 @@ ${gaqlScanFn()}
 
 ${gaqlKwStFn()}
 
+${gaqlSegFn()}
+
   if (typeof MccApp !== 'undefined') {
     var accountIt = MccApp.accounts().get();
     while (accountIt.hasNext()) {
@@ -328,7 +366,8 @@ ${gaqlKwStFn()}
       MccApp.select(account);
       scanAccount(account.getCustomerId().replace(/-/g, ''));
       flush(); // gửi & giải phóng sau mỗi tài khoản
-      scanKwSt(); // keyword + search term (Tối Ưu Camp P2)
+      scanKwSt();     // keyword + search term (Tối Ưu Camp P2)
+      scanSegments(); // device/giờ/geo (Tối Ưu Camp P3)
     }
   } else {
     mccId = null;
@@ -336,6 +375,7 @@ ${gaqlKwStFn()}
     scanAccount(AdsApp.currentAccount().getCustomerId().replace(/-/g, ''));
     flush();
     scanKwSt();
+    scanSegments();
   }
 
   Logger.log('Spend sync done: ' + sent + ' records (' + fromStr + ' → ' + toStr + ')');
@@ -664,7 +704,7 @@ export default function IntegrationsPage() {
             {scriptTab === 'spend' && (
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs text-slate-400">Đặt lịch: Daily 8:00 AM trong Google Ads Scripts. Đồng bộ chi phí + số liệu hiệu suất (CTR/CPC/Impression Share) + keyword/search term cho <strong>Tối Ưu Camp</strong>.</p>
+                  <p className="text-xs text-slate-400">Đặt lịch: Daily 8:00 AM trong Google Ads Scripts. Đồng bộ chi phí + số liệu hiệu suất (CTR/CPC/Impression Share) + keyword/search term + device/giờ/geo cho <strong>Tối Ưu Camp</strong>.</p>
                   <CopyButton text={buildSpendScript(secret, webhookUrl)} label="Copy code" />
                 </div>
                 <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto overflow-y-auto leading-relaxed font-mono max-h-[400px]">

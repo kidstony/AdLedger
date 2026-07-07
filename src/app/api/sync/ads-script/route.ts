@@ -66,6 +66,17 @@ interface SearchTermRecord {
   cost?: number
   conversions?: number | null
 }
+// Phân khúc device/hour/geo (Tối Ưu Camp P3).
+interface SegmentMetricRecord {
+  campaign_id: string
+  date: string
+  segment_type: string   // 'device' | 'hour' | 'geo'
+  segment_value: string
+  impressions?: number
+  clicks?: number
+  cost?: number
+  conversions?: number | null
+}
 
 type Body =
   | { secret?: string; type?: 'discover'; campaigns?: CampaignRecord[] }
@@ -73,6 +84,7 @@ type Body =
   | { secret?: string; type: 'campaign_metrics'; records?: CampaignMetricRecord[] }
   | { secret?: string; type: 'keyword_metrics'; records?: KeywordMetricRecord[] }
   | { secret?: string; type: 'search_terms'; records?: SearchTermRecord[] }
+  | { secret?: string; type: 'segment_metrics'; records?: SegmentMetricRecord[] }
   | { secret?: string; records?: []; type?: undefined }
 
 async function backfillProjectCidMcc(campaignIds: string[]) {
@@ -246,6 +258,37 @@ export async function POST(req: NextRequest) {
     }
     await supabaseAdmin.from('sync_log').insert({ records: rows.length, status: 'success', message: 'search_terms', organization_id: organizationId })
     return NextResponse.json({ success: true, type: 'search_terms', count: rows.length })
+  }
+
+  // Segment sync (P3) — device/hour/geo × ngày. Bảng riêng segment_metrics.
+  if ('type' in body && body.type === 'segment_metrics') {
+    const gRecords = (body as { records?: SegmentMetricRecord[] }).records ?? []
+    if (gRecords.length === 0) return NextResponse.json({ success: true, type: 'segment_metrics', count: 0, ping: true })
+    const validType = (t: string) => (t === 'device' || t === 'hour' || t === 'geo' ? t : null)
+    const rows = gRecords
+      .filter(r => validType(r.segment_type))
+      .map(r => ({
+        campaign_id:     r.campaign_id,
+        date:            r.date,
+        segment_type:    r.segment_type,
+        segment_value:   String(r.segment_value),
+        impressions:     Number(r.impressions ?? 0),
+        clicks:          Number(r.clicks ?? 0),
+        cost:            Number(r.cost ?? 0),
+        conversions:     r.conversions == null ? null : Number(r.conversions),
+        organization_id: organizationId,
+        updated_at:      new Date().toISOString(),
+      }))
+    if (rows.length === 0) return NextResponse.json({ success: true, type: 'segment_metrics', count: 0 })
+    const { error } = await supabaseAdmin
+      .from('segment_metrics')
+      .upsert(rows, { onConflict: 'campaign_id,date,segment_type,segment_value' })
+    if (error) {
+      await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: `segment_metrics: ${error.message}`, organization_id: organizationId })
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    await supabaseAdmin.from('sync_log').insert({ records: rows.length, status: 'success', message: 'segment_metrics', organization_id: organizationId })
+    return NextResponse.json({ success: true, type: 'segment_metrics', count: rows.length })
   }
 
   // Spend sync: receive daily spend per campaign
