@@ -12,7 +12,8 @@ import SuggestionCard from '@/components/optimize/SuggestionCard'
 import BreakdownTables from '@/components/optimize/BreakdownTables'
 import PortfolioTable, { type OverviewRow } from '@/components/optimize/PortfolioTable'
 import WinDayPanel from '@/components/optimize/WinDayPanel'
-import type { CampaignHealth, CampaignSettings, KeywordAgg, OptimizationSuggestion, SearchTermAgg, SegmentAgg, WinDayAnalysis } from '@/lib/types'
+import LaunchChecklist from '@/components/optimize/LaunchChecklist'
+import type { CampaignHealth, CampaignSettings, KeywordAgg, LaunchPlan, OptimizationSuggestion, SearchTermAgg, SegmentAgg, WinDayAnalysis } from '@/lib/types'
 
 interface OptimizeResponse {
   project: { project_id: string; name: string; cid: string; campaign_id: string }
@@ -27,6 +28,7 @@ interface OptimizeResponse {
   estimatedSavings: number
   dataMaturity: 'young' | 'ok'
   winDayAnalysis: WinDayAnalysis | null
+  launchPlan: LaunchPlan | null
   breakdowns: { keywords: KeywordAgg[]; searchTerms: SearchTermAgg[]; segments: SegmentAgg[] }
   error?: string
   code?: string
@@ -49,6 +51,7 @@ export default function OptimizePage() {
   const [error, setError] = useState<string | null>(null)
   const [overview, setOverview] = useState<OverviewRow[] | null>(null)
   const [ovLoading, setOvLoading] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   // Không setState trong effect để chọn mặc định — dẫn xuất trực tiếp.
   const selectedId = projectId || eligible[0]?.project_id || ''
@@ -77,7 +80,7 @@ export default function OptimizePage() {
     }
     run()
     return () => { cancelled = true }
-  }, [mode, selectedId, fromStr, toStr])
+  }, [mode, selectedId, fromStr, toStr, refreshKey])
 
   // Bảng tổng quan (chế độ overview).
   useEffect(() => {
@@ -164,6 +167,13 @@ export default function OptimizePage() {
         </div>
       )}
 
+      {/* Lộ trình test camp mới — hiện cả khi CHƯA có metrics (lúc cần nhất) */}
+      {!error && data && data.launchPlan && (
+        <div className="mb-5">
+          <LaunchChecklist plan={data.launchPlan} projectId={selectedId} onSaved={() => setRefreshKey(k => k + 1)} />
+        </div>
+      )}
+
       {!error && data && !data.hasMetrics && (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center">
           <Info className="mx-auto mb-2 text-slate-400" size={22} />
@@ -177,16 +187,6 @@ export default function OptimizePage() {
 
       {!error && data && data.hasMetrics && (
         <div className="space-y-5">
-          {data.dataMaturity === 'young' && (
-            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              <Info size={14} className="mt-0.5 shrink-0" />
-              <span>
-                <b>Camp còn non / dữ liệu chưa chín</b> — doanh thu network có thể chưa về đủ. Kết luận
-                lời/lỗ thận trọng; giai đoạn này ưu tiên <b>chặn rác</b> (negative keyword, geo, broad match).
-              </span>
-            </div>
-          )}
-
           <HealthScorecard health={data.health} cost={data.cost} confirmedRevenue={data.revenue.confirmed} settings={data.settings} />
 
           {!data.hasConversionTracking && (

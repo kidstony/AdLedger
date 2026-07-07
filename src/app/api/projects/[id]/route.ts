@@ -81,7 +81,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     ? MEMBER_ALLOWED_FIELDS
     : [
         'category_id', 'affiliate_url', 'affiliate_username', 'affiliate_password',
-        'affiliate_network', 'statuses', 'camp_start_date', 'person_in_charge', 'note',
+        'affiliate_network', 'statuses', 'camp_start_date', 'test_budget', 'person_in_charge', 'note',
         'name', 'cid', 'mcc_id', 'ref_link', 'email_ref', 'bank_account_id',
         'master_project_id', 'screen_revenue_type', 'team_id', 'google_campaign_id',
         // Attribution: tách chi phí QC theo link ref

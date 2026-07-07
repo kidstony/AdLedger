@@ -151,6 +151,7 @@ export interface Project {
   affiliate_network?:  string | null
   statuses?:           ProjectStatus[]
   camp_start_date?:    string | null
+  test_budget?:        number | null   // ngân sách test camp mới (stop-loss) — Lộ trình test
   person_in_charge?:   string | null
   note?:               string | null
   created_by?:         string | null
@@ -393,6 +394,26 @@ export interface WinDayAnalysis {
   lifts: WinDayLift[]    // sắp theo liftPp giảm dần (dương → âm)
 }
 
+// Lộ trình test camp mới (Launch Checklist) — hướng dẫn theo giai đoạn cho camp non.
+export interface LaunchCheckItem {
+  id: string
+  label: string
+  status: 'pass' | 'warn' | 'todo' | 'info'   // info = mục manual, chỉ hướng dẫn
+  detail?: string
+}
+
+export interface LaunchPlan {
+  stage: 1 | 2 | 3
+  stageLabel: string
+  stageGuide: string
+  campAgeDays: number | null
+  lifetimeSpend: number      // chi phí lũy kế từ khi start camp (cho stop-loss)
+  lifetimeRevenue: number    // DT Màn hình lũy kế
+  testBudget: number | null  // projects.test_budget — null = chưa đặt
+  stopLossHit: boolean       // spend ≥ budget mà DT lũy kế = 0
+  items: LaunchCheckItem[]
+}
+
 export interface CampaignOptimizerResult {
   health: CampaignHealth
   suggestions: OptimizationSuggestion[]
@@ -400,6 +421,7 @@ export interface CampaignOptimizerResult {
   estimatedSavings: number   // ước tính chi phí có thể tiết kiệm/kỳ (chặn search-term rác)
   dataMaturity: 'young' | 'ok'   // 'young' = camp mới/ít ngày dữ liệu → kết luận thận trọng
   winDayAnalysis: WinDayAnalysis | null   // null khi chưa đủ ngày chín / thiếu nhóm win-lose
+  launchPlan: LaunchPlan | null           // chỉ khác null khi camp còn non — lộ trình test
   breakdowns: {
     keywords: KeywordAgg[]      // xấu nhất trước (theo chi phí)
     searchTerms: SearchTermAgg[]

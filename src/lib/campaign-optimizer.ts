@@ -16,6 +16,7 @@ import {
 } from './types'
 import { countryNameByGeoId } from './geo-targets'
 import { mineWinDayInsights } from './insight-miner'
+import { buildLaunchPlan } from './launch-checklist'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Rule engine tối ưu campaign — DETERMINISTIC, giải thích được, KHÔNG dùng LLM.
@@ -81,6 +82,8 @@ export interface OptimizerInput {
   prev?: PeriodTotals                    // kỳ trước cùng độ dài — để so xu hướng WoW (D2)
   settings?: CampaignSettings            // ngân sách + chiến lược giá thầu (D3)
   campStartDate?: string | null          // projects.camp_start_date — cờ "camp non" (playbook 0)
+  testBudget?: number | null             // projects.test_budget — stop-loss test camp mới
+  lifetime?: { spend: number; revenue: number }  // lũy kế từ start camp (cho stop-loss)
 }
 
 // Chiến lược giá thầu tự động (không đặt bid tay được) → đổi lời khuyên "tăng bid".
@@ -693,6 +696,32 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     }))
   }
 
+  // Dữ liệu non (playbook 0): camp mới chạy hoặc quá ít ngày metrics → chỉ nên
+  // chặn rác, đừng kết luận lời/lỗ vội.
+  const campAgeDays = input.campStartDate
+    ? Math.floor((Date.now() - new Date(input.campStartDate + 'T00:00:00Z').getTime()) / 86400000)
+    : null
+  const dataMaturity: 'young' | 'ok' =
+    days < CFG.MIN_DAYS_TO_JUDGE || (campAgeDays != null && campAgeDays >= 0 && campAgeDays < CFG.CAMP_YOUNG_DAYS)
+      ? 'young' : 'ok'
+
+  // Lộ trình test camp mới (Launch Checklist) — chỉ khác null khi camp còn non.
+  const { plan: launchPlan, suggestions: launchSuggestions } = buildLaunchPlan({
+    campaign_id, campaignLabel, project_id,
+    dataMaturity, campAgeDays,
+    hasMetrics: metrics.length > 0,
+    hasCampStartDate: !!input.campStartDate,
+    hasConversionTracking,
+    settings: input.settings ?? null,
+    broadCount: broadKws.length,
+    badTermCount: badTerms.length,
+    revenueEntered: totalRevenue > 0,
+    testBudget: input.testBudget ?? null,
+    lifetimeSpend: input.lifetime?.spend ?? totalSpend,
+    lifetimeRevenue: input.lifetime?.revenue ?? totalRevenue,
+  })
+  suggestions.push(...launchSuggestions)
+
   // Insight Miner: phân tích ngày thắng/thua → giả thuyết tách camp / test mới.
   const { analysis: winDayAnalysis, suggestions: insightSuggestions } = mineWinDayInsights({
     campaign_id, campaignLabel, project_id,
@@ -709,15 +738,6 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   const estimatedSavings =
     badTerms.reduce((s, t) => s + t.cost, 0) || badKws.reduce((s, k) => s + k.cost, 0)
 
-  // Dữ liệu non (playbook 0): camp mới chạy hoặc quá ít ngày metrics → chỉ nên
-  // chặn rác, đừng kết luận lời/lỗ vội.
-  const campAgeDays = input.campStartDate
-    ? Math.floor((Date.now() - new Date(input.campStartDate + 'T00:00:00Z').getTime()) / 86400000)
-    : null
-  const dataMaturity: 'young' | 'ok' =
-    days < CFG.MIN_DAYS_TO_JUDGE || (campAgeDays != null && campAgeDays >= 0 && campAgeDays < CFG.CAMP_YOUNG_DAYS)
-      ? 'young' : 'ok'
-
   return {
     health,
     suggestions,
@@ -725,6 +745,7 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     estimatedSavings,
     dataMaturity,
     winDayAnalysis,
+    launchPlan,
     breakdowns: {
       keywords: kwAgg.slice(0, CFG.BREAKDOWN_LIMIT),
       searchTerms: stAgg.slice(0, CFG.BREAKDOWN_LIMIT),

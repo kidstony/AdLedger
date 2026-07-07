@@ -36,7 +36,7 @@ export async function GET(req: Request) {
 
   const { data: project } = await supabaseAdmin
     .from('projects')
-    .select('project_id, name, cid, google_campaign_id, screen_revenue_type, camp_start_date')
+    .select('project_id, name, cid, google_campaign_id, screen_revenue_type, camp_start_date, test_budget')
     .eq('project_id', project_id)
     .single()
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
@@ -246,6 +246,17 @@ export async function GET(req: Request) {
   const hasPrev = prevSpend > 0 || prevMetrics.length > 0 || prevRevenue > 0
   const prev = hasPrev ? { metrics: prevMetrics, totalRevenue: prevRevenue, totalCost: prevTotalCost, totalSpend: prevSpend } : undefined
 
+  // ── Lũy kế từ khi start camp (cho stop-loss ở Lộ trình test camp mới) ─────
+  const lifeFrom = project.camp_start_date ?? '2000-01-01'
+  const [lifeSpendRes, lifePendingRes] = await Promise.all([
+    supabaseAdmin.from('ad_spend').select('spend').eq('campaign_id', campaign_id).gte('date', lifeFrom),
+    supabaseAdmin.from('affiliate_revenue').select('date, amount, cycle_end')
+      .eq('project_id', project_id).eq('type', 'pending').gte('date', lifeFrom),
+  ])
+  const lifetimeSpend = (lifeSpendRes.data ?? []).reduce((s, r) => s + (r.spend ?? 0), 0)
+  const lifePendingRows: PendingRow[] = (lifePendingRes.data ?? []).map(r => ({ date: r.date, amount: r.amount ?? 0, cycle_end: r.cycle_end }))
+  const { total: lifetimeRevenue } = computeScreenRevenue(lifePendingRows, isCumulative, 0)
+
   const result = optimizeCampaign({
     campaign_id,
     campaignLabel: project.name,
@@ -262,6 +273,8 @@ export async function GET(req: Request) {
     prev,
     settings,
     campStartDate: project.camp_start_date ?? null,
+    testBudget: project.test_budget ?? null,
+    lifetime: { spend: lifetimeSpend, revenue: lifetimeRevenue },
   })
 
   return NextResponse.json({
