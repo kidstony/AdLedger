@@ -704,7 +704,7 @@ export default function IntegrationsPage() {
             {scriptTab === 'spend' && (
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs text-slate-400">Đặt lịch: Daily 8:00 AM trong Google Ads Scripts. Đồng bộ chi phí + số liệu hiệu suất (CTR/CPC/Impression Share) + keyword/search term + device/giờ/geo cho <strong>Tối Ưu Camp</strong>.</p>
+                  <p className="text-xs text-slate-400">Đặt lịch: Daily 1:00 AM - 2:00 AM trong Google Ads Scripts. Đồng bộ chi phí + số liệu hiệu suất (CTR/CPC/Impression Share) + keyword/search term + device/giờ/geo cho <strong>Tối Ưu Camp</strong>.</p>
                   <CopyButton text={buildSpendScript(secret, webhookUrl)} label="Copy code" />
                 </div>
                 <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto overflow-y-auto leading-relaxed font-mono max-h-[400px]">
@@ -729,7 +729,7 @@ export default function IntegrationsPage() {
               <p className="font-medium text-amber-800">Cách cài đặt trong Google Ads MCC:</p>
               <p>1. Vào <strong>Tools &amp; Settings → Scripts → + Create</strong></p>
               <p>2. Dán script quét, click <strong>Run</strong> → sau đó dán script hàng ngày</p>
-              <p>3. Đặt lịch script hàng ngày: <strong>Daily — 8:00 AM</strong> → Save</p>
+              <p>3. Đặt lịch script hàng ngày: <strong>Daily — 1:00 AM - 2:00 AM</strong> → Save</p>
               <p>4. <strong>Lần đầu:</strong> chạy script lịch sử 1 lần để backfill dữ liệu quá khứ (đã có device/ad group để tách chi phí)</p>
             </div>
           </div>
