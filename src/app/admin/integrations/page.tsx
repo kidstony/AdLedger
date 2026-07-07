@@ -172,7 +172,7 @@ function gaqlScanFn() {
       });
       if (records.length >= 5000) flush(); // giải phóng bộ nhớ định kỳ
     }
-    scanCampaignMetrics(); // đồng bộ thêm số liệu hiệu suất cho Tối Ưu Camp
+    try { scanCampaignMetrics(); } catch (e) { Logger.log('campaign_metrics lỗi: ' + e); } // Tối Ưu Camp — không chặn spend nếu lỗi
   }`
 }
 
@@ -199,61 +199,65 @@ function gaqlKwStFn() {
   }
 
   function scanKwSt() {
-    var kq =
-      'SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, ' +
-      'ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ' +
-      'ad_group_criterion.quality_info.quality_score, ' +
-      'segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions ' +
-      'FROM keyword_view ' +
-      "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' " +
-      'AND metrics.impressions > 0';
-    var kr = AdsApp.search(kq);
-    while (kr.hasNext()) {
-      var r = kr.next();
-      var c = r.adGroupCriterion || {};
-      var kw = c.keyword || {};
-      var qi = c.qualityInfo || {};
-      var m = r.metrics || {};
-      kwRecords.push({
-        campaign_id:   String(r.campaign.id),
-        ad_group_id:   String(r.adGroup.id),
-        criterion_id:  String(c.criterionId),
-        date:          r.segments.date,
-        keyword_text:  kw.text || '',
-        match_type:    kw.matchType || '',
-        impressions:   Number(m.impressions || 0),
-        clicks:        Number(m.clicks || 0),
-        cost:          Number(m.costMicros || 0) / 1e6,
-        conversions:   m.conversions == null ? null : Number(m.conversions),
-        quality_score: qi.qualityScore == null ? null : Number(qi.qualityScore)
-      });
-      if (kwRecords.length >= BATCH) flushKw();
-    }
-    flushKw();
+    try {
+      var kq =
+        'SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, ' +
+        'ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ' +
+        'ad_group_criterion.quality_info.quality_score, ' +
+        'segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions ' +
+        'FROM keyword_view ' +
+        "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' " +
+        'AND metrics.impressions > 0';
+      var kr = AdsApp.search(kq);
+      while (kr.hasNext()) {
+        var r = kr.next();
+        var c = r.adGroupCriterion || {};
+        var kw = c.keyword || {};
+        var qi = c.qualityInfo || {};
+        var m = r.metrics || {};
+        kwRecords.push({
+          campaign_id:   String(r.campaign.id),
+          ad_group_id:   String(r.adGroup.id),
+          criterion_id:  String(c.criterionId),
+          date:          r.segments.date,
+          keyword_text:  kw.text || '',
+          match_type:    kw.matchType || '',
+          impressions:   Number(m.impressions || 0),
+          clicks:        Number(m.clicks || 0),
+          cost:          Number(m.costMicros || 0) / 1e6,
+          conversions:   m.conversions == null ? null : Number(m.conversions),
+          quality_score: qi.qualityScore == null ? null : Number(qi.qualityScore)
+        });
+        if (kwRecords.length >= BATCH) flushKw();
+      }
+      flushKw();
+    } catch (e) { Logger.log('keyword_metrics lỗi: ' + e); }
 
-    var sq =
-      'SELECT campaign.id, ad_group.id, search_term_view.search_term, ' +
-      'segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions ' +
-      'FROM search_term_view ' +
-      "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' " +
-      'AND metrics.impressions > 0';
-    var sr = AdsApp.search(sq);
-    while (sr.hasNext()) {
-      var r2 = sr.next();
-      var m2 = r2.metrics || {};
-      stRecords.push({
-        campaign_id:  String(r2.campaign.id),
-        ad_group_id:  String(r2.adGroup.id),
-        search_term:  r2.searchTermView.searchTerm,
-        date:         r2.segments.date,
-        impressions:  Number(m2.impressions || 0),
-        clicks:       Number(m2.clicks || 0),
-        cost:         Number(m2.costMicros || 0) / 1e6,
-        conversions:  m2.conversions == null ? null : Number(m2.conversions)
-      });
-      if (stRecords.length >= BATCH) flushSt();
-    }
-    flushSt();
+    try {
+      var sq =
+        'SELECT campaign.id, ad_group.id, search_term_view.search_term, ' +
+        'segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions ' +
+        'FROM search_term_view ' +
+        "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' " +
+        'AND metrics.impressions > 0';
+      var sr = AdsApp.search(sq);
+      while (sr.hasNext()) {
+        var r2 = sr.next();
+        var m2 = r2.metrics || {};
+        stRecords.push({
+          campaign_id:  String(r2.campaign.id),
+          ad_group_id:  String(r2.adGroup.id),
+          search_term:  r2.searchTermView.searchTerm,
+          date:         r2.segments.date,
+          impressions:  Number(m2.impressions || 0),
+          clicks:       Number(m2.clicks || 0),
+          cost:         Number(m2.costMicros || 0) / 1e6,
+          conversions:  m2.conversions == null ? null : Number(m2.conversions)
+        });
+        if (stRecords.length >= BATCH) flushSt();
+      }
+      flushSt();
+    } catch (e) { Logger.log('search_terms lỗi: ' + e); }
   }`
 }
 
@@ -281,14 +285,20 @@ function gaqlSegFn() {
     var base = "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' AND metrics.impressions > 0";
     var metricCols = 'metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions';
     // Thiết bị
-    var dr = AdsApp.search('SELECT campaign.id, segments.date, segments.device, ' + metricCols + ' FROM campaign ' + base);
-    while (dr.hasNext()) { var r = dr.next(); pushSeg(r.campaign.id, r.segments.date, 'device', mapDevice(r.segments.device), r.metrics || {}); }
+    try {
+      var dr = AdsApp.search('SELECT campaign.id, segments.date, segments.device, ' + metricCols + ' FROM campaign ' + base);
+      while (dr.hasNext()) { var r = dr.next(); pushSeg(r.campaign.id, r.segments.date, 'device', mapDevice(r.segments.device), r.metrics || {}); }
+    } catch (e) { Logger.log('segment device lỗi: ' + e); }
     // Khung giờ (0-23)
-    var hr = AdsApp.search('SELECT campaign.id, segments.date, segments.hour, ' + metricCols + ' FROM campaign ' + base);
-    while (hr.hasNext()) { var r2 = hr.next(); pushSeg(r2.campaign.id, r2.segments.date, 'hour', r2.segments.hour, r2.metrics || {}); }
+    try {
+      var hr = AdsApp.search('SELECT campaign.id, segments.date, segments.hour, ' + metricCols + ' FROM campaign ' + base);
+      while (hr.hasNext()) { var r2 = hr.next(); pushSeg(r2.campaign.id, r2.segments.date, 'hour', r2.segments.hour, r2.metrics || {}); }
+    } catch (e) { Logger.log('segment hour lỗi: ' + e); }
     // Vị trí (country criterion id)
-    var gr = AdsApp.search('SELECT campaign.id, segments.date, geographic_view.country_criterion_id, ' + metricCols + ' FROM geographic_view ' + base);
-    while (gr.hasNext()) { var r3 = gr.next(); pushSeg(r3.campaign.id, r3.segments.date, 'geo', r3.geographicView.countryCriterionId, r3.metrics || {}); }
+    try {
+      var gr = AdsApp.search('SELECT campaign.id, segments.date, geographic_view.country_criterion_id, ' + metricCols + ' FROM geographic_view ' + base);
+      while (gr.hasNext()) { var r3 = gr.next(); pushSeg(r3.campaign.id, r3.segments.date, 'geo', r3.geographicView.countryCriterionId, r3.metrics || {}); }
+    } catch (e) { Logger.log('segment geo lỗi: ' + e); }
     flushSeg();
   }`
 }

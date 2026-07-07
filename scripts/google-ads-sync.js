@@ -46,11 +46,14 @@ function syncAccount() {
   Logger.log('Sync CID ' + cid + ' | ' + range.from + ' → ' + range.to);
 
   discoverCampaigns(cid);
-  syncSpend(cid, range);
-  syncCampaignMetrics(cid, range);
-  syncKeywords(cid, range);
-  syncSearchTerms(cid, range);
-  syncSegments(cid, range);
+  syncSpend(cid, range); // P&L (spend) — cốt lõi, không bọc để lỗi nổi rõ
+
+  // Các phần Tối Ưu Camp: bọc riêng để một truy vấn lỗi KHÔNG chặn spend/P&L,
+  // và log rõ phần nào lỗi (xem Logs của Google Ads Script).
+  try { syncCampaignMetrics(cid, range); } catch (e) { Logger.log('campaign_metrics lỗi: ' + e); }
+  try { syncKeywords(cid, range); }        catch (e) { Logger.log('keyword_metrics lỗi: ' + e); }
+  try { syncSearchTerms(cid, range); }     catch (e) { Logger.log('search_terms lỗi: ' + e); }
+  try { syncSegments(cid, range); }        catch (e) { Logger.log('segment_metrics lỗi: ' + e); }
 }
 
 /**
