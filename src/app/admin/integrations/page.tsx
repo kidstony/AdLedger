@@ -79,10 +79,16 @@ function buildDiscoverScript(secret: string, webhookUrl: string) {
 }`
 }
 
-// Đoạn helper GAQL dùng chung cho cả spend hằng ngày lẫn backfill: quét chi phí
-// theo campaign × ngày × device × ad_group để tách được chi phí cho từng link ref.
+// Đoạn helper GAQL dùng chung cho cả spend hằng ngày lẫn backfill:
+//  • quét chi phí theo campaign × ngày × device × ad_group (type:'spend') để tách
+//    chi phí cho từng link ref (nguồn P&L);
+//  • quét số liệu hiệu suất cấp campaign (type:'campaign_metrics') cho tính năng
+//    "Tối Ưu Camp": impressions/clicks/CTR/CPC/Search Impression Share. Tách bảng
+//    riêng campaign_metrics — KHÔNG ảnh hưởng P&L.
 function gaqlScanFn() {
-  return `  function mapDevice(d) {
+  return `  var metricRecords = [];
+
+  function mapDevice(d) {
     d = String(d || '').toUpperCase();
     return (d === 'MOBILE' || d === 'DESKTOP' || d === 'TABLET') ? d : 'OTHER';
   }
@@ -97,6 +103,50 @@ function gaqlScanFn() {
     }
     sent += records.length;
     records = [];
+  }
+
+  function flushMetrics() {
+    for (var i = 0; i < metricRecords.length; i += BATCH) {
+      UrlFetchApp.fetch(WEBHOOK, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify({ secret: SECRET, type: 'campaign_metrics', records: metricRecords.slice(i, i + BATCH) })
+      });
+    }
+    metricRecords = [];
+  }
+
+  // Số liệu hiệu suất cấp campaign × ngày (Tối Ưu Camp). Google trả IS = null nếu
+  // không đủ dữ liệu; conversions thường 0 vì affiliate không có conversion tracking.
+  function scanCampaignMetrics() {
+    var q =
+      'SELECT campaign.id, segments.date, metrics.impressions, metrics.clicks, ' +
+      'metrics.cost_micros, metrics.conversions, metrics.conversions_value, ' +
+      'metrics.search_impression_share, ' +
+      'metrics.search_budget_lost_impression_share, ' +
+      'metrics.search_rank_lost_impression_share ' +
+      'FROM campaign ' +
+      "WHERE segments.date BETWEEN '" + fromStr + "' AND '" + toStr + "' " +
+      'AND metrics.impressions > 0';
+    var rows = AdsApp.search(q);
+    while (rows.hasNext()) {
+      var r = rows.next();
+      var m = r.metrics || {};
+      metricRecords.push({
+        campaign_id:             String(r.campaign.id),
+        date:                    r.segments.date,
+        impressions:             Number(m.impressions || 0),
+        clicks:                  Number(m.clicks || 0),
+        cost:                    Number(m.costMicros || 0) / 1e6,
+        conversions:             m.conversions == null ? null : Number(m.conversions),
+        conversions_value:       m.conversionsValue == null ? null : Number(m.conversionsValue),
+        search_impression_share: m.searchImpressionShare == null ? null : Number(m.searchImpressionShare),
+        search_budget_lost_is:   m.searchBudgetLostImpressionShare == null ? null : Number(m.searchBudgetLostImpressionShare),
+        search_rank_lost_is:     m.searchRankLostImpressionShare == null ? null : Number(m.searchRankLostImpressionShare)
+      });
+      if (metricRecords.length >= 5000) flushMetrics();
+    }
+    flushMetrics();
   }
 
   function scanAccount(customerId) {
@@ -122,6 +172,7 @@ function gaqlScanFn() {
       });
       if (records.length >= 5000) flush(); // giải phóng bộ nhớ định kỳ
     }
+    scanCampaignMetrics(); // đồng bộ thêm số liệu hiệu suất cho Tối Ưu Camp
   }`
 }
 
@@ -528,7 +579,7 @@ export default function IntegrationsPage() {
             {scriptTab === 'spend' && (
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs text-slate-400">Đặt lịch: Daily 8:00 AM trong Google Ads Scripts</p>
+                  <p className="text-xs text-slate-400">Đặt lịch: Daily 8:00 AM trong Google Ads Scripts. Đồng bộ chi phí + số liệu hiệu suất (CTR/CPC/Impression Share) cho <strong>Tối Ưu Camp</strong>.</p>
                   <CopyButton text={buildSpendScript(secret, webhookUrl)} label="Copy code" />
                 </div>
                 <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto overflow-y-auto leading-relaxed font-mono max-h-[400px]">
@@ -540,7 +591,7 @@ export default function IntegrationsPage() {
             {scriptTab === 'backfill' && (
               <div className="border border-dashed border-slate-200 rounded-lg p-4 space-y-3 bg-slate-50/50">
                 <div className="flex items-center justify-between">
-                  <p className="text-xs text-slate-400">Đổ toàn bộ dữ liệu (kèm device/ad group) từ <code className="bg-slate-100 px-1 rounded">START_DATE</code> (đã set sẵn 2020) đến hôm qua. Chạy 1 lần để tách chi phí lịch sử.</p>
+                  <p className="text-xs text-slate-400">Đổ toàn bộ dữ liệu (kèm device/ad group + số liệu hiệu suất cho Tối Ưu Camp) từ <code className="bg-slate-100 px-1 rounded">START_DATE</code> (đã set sẵn 2020) đến hôm qua. Chạy 1 lần để tách chi phí lịch sử.</p>
                   <CopyButton text={buildBackfillScript(secret, webhookUrl)} label="Copy code" />
                 </div>
                 <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto overflow-y-auto leading-relaxed font-mono max-h-[400px]">
