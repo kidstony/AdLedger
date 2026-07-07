@@ -3,7 +3,7 @@
 import {
   TrendingUp, Scissors, Wallet, ArrowUpCircle, ArrowDownCircle,
   Ban, PauseCircle, Sparkles, AlertTriangle, MonitorSmartphone,
-  CalendarClock, Target, type LucideIcon,
+  CalendarClock, Target, Filter, Sprout, MapPin, type LucideIcon,
 } from 'lucide-react'
 import { cn, formatVND } from '@/lib/utils'
 import type { OptimizationSuggestion, OptSuggestionType, OptSeverity } from '@/lib/types'
@@ -21,6 +21,9 @@ const ICONS: Record<OptSuggestionType, LucideIcon> = {
   device_adjust: MonitorSmartphone,
   daypart: CalendarClock,
   setup_tracking: Target,
+  tighten_match: Filter,
+  harvest_keyword: Sprout,
+  fix_geo_setting: MapPin,
 }
 
 // Màu theo mức độ (bám DESIGN_SYSTEM: đỏ=nguy, amber=cần chú ý, slate=thông tin).

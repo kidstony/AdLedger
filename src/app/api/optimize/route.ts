@@ -36,7 +36,7 @@ export async function GET(req: Request) {
 
   const { data: project } = await supabaseAdmin
     .from('projects')
-    .select('project_id, name, cid, google_campaign_id, screen_revenue_type')
+    .select('project_id, name, cid, google_campaign_id, screen_revenue_type, camp_start_date')
     .eq('project_id', project_id)
     .single()
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
@@ -261,6 +261,7 @@ export async function GET(req: Request) {
     segments,
     prev,
     settings,
+    campStartDate: project.camp_start_date ?? null,
   })
 
   return NextResponse.json({

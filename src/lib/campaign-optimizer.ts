@@ -49,6 +49,12 @@ export const CFG = {
   WOW_ROI_DROP: 20,             // ROI giảm > 20 điểm % vs kỳ trước → cảnh báo
   WOW_SPEND_UP: 15,             // chi phí tăng > 15%
   WOW_REV_DOWN: 10,             // DT Màn hình giảm > 10% (đi kèm spend tăng → xấu)
+  // Playbook E1/E2:
+  BID_CEILING_RATIO: 0.6,       // CPC an toàn ≤ 60% giá trị DT Màn hình mỗi click (playbook 3c)
+  HARVEST_MIN_CLICKS: 10,       // search term cần ≥ N click mới đáng gặt (playbook 4a)
+  HARVEST_CTR_RATIO: 1.2,       // CTR term ≥ 120% CTR campaign = đúng intent
+  CAMP_YOUNG_DAYS: 7,           // camp chạy < N ngày = dữ liệu còn non (playbook 0)
+  ABS_TOP_HIGH: 0.7,            // Abs-top IS ≥ 70% + margin mỏng → đua top vô ích (playbook 2c)
 } as const
 
 interface PeriodTotals {
@@ -73,6 +79,7 @@ export interface OptimizerInput {
   segments?: SegmentMetric[]             // segment_metrics device/hour/geo (P3)
   prev?: PeriodTotals                    // kỳ trước cùng độ dài — để so xu hướng WoW (D2)
   settings?: CampaignSettings            // ngân sách + chiến lược giá thầu (D3)
+  campStartDate?: string | null          // projects.camp_start_date — cờ "camp non" (playbook 0)
 }
 
 // Chiến lược giá thầu tự động (không đặt bid tay được) → đổi lời khuyên "tăng bid".
@@ -329,6 +336,29 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     }))
   }
 
+  // 4b. Trần bid theo lời-mỗi-click (playbook 3c) — "kim chỉ nam bid" khi không có
+  //     conversion tracking: CPC trung bình không nên vượt BID_CEILING_RATIO của giá
+  //     trị DT Màn hình mỗi click.
+  if (enoughData && totalRevenue > 0 && health.clicks > 0 && health.avgCpc > 0) {
+    const revPerClick = totalRevenue / health.clicks
+    const ceiling = revPerClick * CFG.BID_CEILING_RATIO
+    if (health.avgCpc > ceiling) {
+      const ratio = (health.avgCpc / revPerClick) * 100
+      suggestions.push(makeSuggestion({
+        type: 'lower_bid', severity: health.roi != null && health.roi < 0 ? 'high' : 'medium', confidence: 'roi', scope,
+        title: 'CPC vượt trần an toàn — giảm bid từng nấc',
+        detail: `Mỗi click tạo ~${money(revPerClick)} DT Màn hình nhưng đang trả ${money(health.avgCpc)}/click (${ratio.toFixed(0)}% giá trị click, trần an toàn ${CFG.BID_CEILING_RATIO * 100}%). Biên không đủ nuôi chi phí.`,
+        evidence: [
+          { metric: 'CPC trung bình', value: money(health.avgCpc) },
+          { metric: 'DT/click', value: money(revPerClick) },
+          { metric: 'Trần an toàn', value: money(ceiling) },
+        ],
+        recommendedAction: `Giảm bid từng nấc (−15–20%/lần) tới khi CPC ≤ ~${money(ceiling)}; theo dõi 5–7 ngày dữ liệu chín rồi chỉnh tiếp.`,
+        impactScore: (health.avgCpc - ceiling) * health.clicks,
+      }))
+    }
+  }
+
   // 5. CPC tăng nhanh + biên mỏng → CẢNH BÁO MARGIN.
   if (health.cpcTrendPct != null && health.cpcTrendPct > CFG.CPC_TREND_ALERT
       && (health.roi == null || health.roi < CFG.TARGET_ROI)) {
@@ -503,6 +533,53 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     }))
   }
 
+  // 7c-2. Broad match thả cửa (playbook 1c): không có conversion signal, broad match
+  //       chỉ tối ưu "click rẻ" chứ không phải "click ra tiền" → siết phrase/exact.
+  const broadKws = kwAgg.filter(k => k.match_type === 'BROAD' && k.cost >= sigCost)
+  if (broadKws.length) {
+    const broadCost = broadKws.reduce((s, k) => s + k.cost, 0)
+    suggestions.push(makeSuggestion({
+      type: 'tighten_match', severity: roiNeg ? 'high' : 'medium', confidence: 'engagement',
+      scope: { level: 'keyword', label: `${broadKws.length} broad keyword`, campaign_id, project_id },
+      title: `${broadKws.length} keyword broad match đang chi tiêu lớn — siết về phrase/exact`,
+      detail: `Không có conversion signal về Google nên broad match không thể tự học "click ra tiền" — chỉ tối ưu click rẻ. ${money(broadCost)} đang chạy broad.`,
+      evidence: [
+        { metric: 'Keyword broad', value: String(broadKws.length) },
+        { metric: 'Chi phí broad', value: money(broadCost) },
+      ],
+      recommendedAction: 'Chuyển keyword chi tiêu lớn về phrase/exact; giữ broad chỉ khi kèm negative dày và theo dõi search terms sát.',
+      impactScore: broadCost * 0.4,
+      items: broadKws.slice(0, 8).map(k => ({ label: k.keyword_text || '(?)', cost: k.cost, meta: `CTR ${pct(k.ctr)}` })),
+    }))
+  }
+
+  // 7c-3. Harvesting (playbook 4a): search term volume ổn + CTR cao + CHƯA là keyword
+  //       → thêm exact riêng để kiểm soát bid cho đúng cụm ăn tiền.
+  const kwTextSet = new Set(kwAgg.map(k => (k.keyword_text || '').toLowerCase().trim()).filter(Boolean))
+  const winners = stAgg.filter(t =>
+    t.clicks >= CFG.HARVEST_MIN_CLICKS &&
+    t.cost >= sigCost &&
+    health.ctr > 0 && t.ctr >= health.ctr * CFG.HARVEST_CTR_RATIO &&
+    !kwTextSet.has(t.search_term.toLowerCase().trim()),
+  )
+  if (winners.length) {
+    const winCost = winners.reduce((s, t) => s + t.cost, 0)
+    suggestions.push(makeSuggestion({
+      type: 'harvest_keyword', severity: 'medium', confidence: 'engagement',
+      scope: { level: 'search_term', label: `${winners.length} cụm thắng`, campaign_id, project_id },
+      title: `${winners.length} search term đang thắng — thêm làm keyword exact riêng`,
+      detail: `Cụm khách gõ nhiều, CTR vượt trung bình camp, nhưng chưa là keyword — đang trôi trong match rộng, không kiểm soát được bid. Chi phí liên quan ${money(winCost)}.`,
+      evidence: [
+        { metric: 'Cụm thắng', value: String(winners.length) },
+        { metric: 'Chi phí liên quan', value: money(winCost) },
+        { metric: 'CTR campaign', value: pct(health.ctr) },
+      ],
+      recommendedAction: 'Thêm các cụm này làm keyword [exact] (ad group riêng nếu đủ lớn); cụm nghi là mỏ chính → tách campaign riêng để P&L đo độc lập.',
+      impactScore: winCost,
+      items: winners.slice(0, 8).map(t => ({ label: t.search_term, cost: t.cost, meta: `${count(t.clicks)} click · CTR ${pct(t.ctr)}` })),
+    }))
+  }
+
   // 7d. Phân khúc device/giờ/geo (P3) — engagement, gợi ý điều chỉnh bid/lịch.
   const segAgg = aggregateSegments(input.segments ?? [])
   const SEG_META: Record<SegmentType, { type: OptimizationSuggestion['type']; noun: string; action: string }> = {
@@ -564,11 +641,21 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   const estimatedSavings =
     badTerms.reduce((s, t) => s + t.cost, 0) || badKws.reduce((s, k) => s + k.cost, 0)
 
+  // Dữ liệu non (playbook 0): camp mới chạy hoặc quá ít ngày metrics → chỉ nên
+  // chặn rác, đừng kết luận lời/lỗ vội.
+  const campAgeDays = input.campStartDate
+    ? Math.floor((Date.now() - new Date(input.campStartDate + 'T00:00:00Z').getTime()) / 86400000)
+    : null
+  const dataMaturity: 'young' | 'ok' =
+    days < CFG.MIN_DAYS_TO_JUDGE || (campAgeDays != null && campAgeDays >= 0 && campAgeDays < CFG.CAMP_YOUNG_DAYS)
+      ? 'young' : 'ok'
+
   return {
     health,
     suggestions,
     hasConversionTracking,
     estimatedSavings,
+    dataMaturity,
     breakdowns: {
       keywords: kwAgg.slice(0, CFG.BREAKDOWN_LIMIT),
       searchTerms: stAgg.slice(0, CFG.BREAKDOWN_LIMIT),

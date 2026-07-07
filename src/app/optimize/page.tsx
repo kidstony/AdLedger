@@ -24,6 +24,7 @@ interface OptimizeResponse {
   suggestions: OptimizationSuggestion[]
   hasConversionTracking: boolean
   estimatedSavings: number
+  dataMaturity: 'young' | 'ok'
   breakdowns: { keywords: KeywordAgg[]; searchTerms: SearchTermAgg[]; segments: SegmentAgg[] }
   error?: string
   code?: string
@@ -174,6 +175,16 @@ export default function OptimizePage() {
 
       {!error && data && data.hasMetrics && (
         <div className="space-y-5">
+          {data.dataMaturity === 'young' && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <Info size={14} className="mt-0.5 shrink-0" />
+              <span>
+                <b>Camp còn non / dữ liệu chưa chín</b> — doanh thu network có thể chưa về đủ. Kết luận
+                lời/lỗ thận trọng; giai đoạn này ưu tiên <b>chặn rác</b> (negative keyword, geo, broad match).
+              </span>
+            </div>
+          )}
+
           <HealthScorecard health={data.health} cost={data.cost} confirmedRevenue={data.revenue.confirmed} settings={data.settings} />
 
           {!data.hasConversionTracking && (

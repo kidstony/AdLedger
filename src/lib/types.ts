@@ -253,6 +253,9 @@ export type OptSuggestionType =
   | 'scale' | 'cut' | 'raise_budget' | 'raise_bid' | 'lower_bid'
   | 'add_negative' | 'pause_keyword' | 'fix_creative' | 'margin_alert'
   | 'device_adjust' | 'daypart' | 'setup_tracking'
+  | 'tighten_match'    // siết broad match về phrase/exact (playbook 1c)
+  | 'harvest_keyword'  // gặt search term thắng thành keyword exact (playbook 4a)
+  | 'fix_geo_setting'  // Presence-or-interest → đổi sang Presence (playbook 1a-phụ)
 
 export type OptSeverity = 'high' | 'medium' | 'low'
 // 'roi' = dựa trên doanh thu thật (chắc chắn); 'engagement' = chỉ tín hiệu hiệu
@@ -363,6 +366,7 @@ export interface CampaignOptimizerResult {
   suggestions: OptimizationSuggestion[]
   hasConversionTracking: boolean
   estimatedSavings: number   // ước tính chi phí có thể tiết kiệm/kỳ (chặn search-term rác)
+  dataMaturity: 'young' | 'ok'   // 'young' = camp mới/ít ngày dữ liệu → kết luận thận trọng
   breakdowns: {
     keywords: KeywordAgg[]      // xấu nhất trước (theo chi phí)
     searchTerms: SearchTermAgg[]
