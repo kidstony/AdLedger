@@ -1,0 +1,294 @@
+import {
+  CampaignHealth,
+  CampaignMetric,
+  CampaignOptimizerResult,
+  OptimizationSuggestion,
+  OptSeverity,
+} from './types'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rule engine tối ưu campaign — DETERMINISTIC, giải thích được, KHÔNG dùng LLM.
+//
+// Bối cảnh affiliate KHÔNG có conversion tracking: doanh thu thật chỉ biết ở mức
+// project × ngày (affiliate_revenue). Vì vậy:
+//   • confidence 'roi'        → dùng doanh thu thật → gợi ý CHẮC (scale/cut/budget).
+//   • confidence 'engagement' → chỉ tín hiệu hiệu suất (CTR/CPC/IS) → "cần xem xét".
+//
+// Ngưỡng gom ở CFG để chỉnh 1 chỗ. Đơn vị tiền = đơn vị tài khoản Google Ads.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const CFG = {
+  MIN_SPEND_TO_JUDGE: 200_000,   // dưới mức này chưa đủ dữ liệu để kết luận cắt
+  MIN_DAYS_TO_JUDGE: 3,          // cần ít nhất N ngày dữ liệu
+  LOSS_ROI: -20,                 // ROI% dưới mức này = đang lỗ nặng → cắt
+  TARGET_ROI: 20,                // ROI% trên mức này = đủ lãi để scale
+  IS_BUDGET_THRESHOLD: 0.10,     // IS mất do budget > 10% → tăng budget
+  IS_RANK_THRESHOLD: 0.15,       // IS mất do rank > 15% → tăng bid
+  CPC_TREND_ALERT: 25,           // CPC nửa sau tăng > 25% so nửa đầu → cảnh báo margin
+  CTR_FLOOR: 1.0,                // CTR% dưới mức này (search) → nghi mẫu QC kém
+  MIN_IMPR_FOR_CTR: 500,         // cần đủ impression mới kết luận CTR
+} as const
+
+export interface OptimizerInput {
+  campaign_id: string
+  campaignLabel: string
+  project_id?: string
+  metrics: CampaignMetric[]              // campaign_metrics theo ngày (đã lọc kỳ)
+  revenueByDate: Record<string, number>  // doanh thu confirmed theo ngày (project)
+  spendByDate: Record<string, number>    // ad_spend theo ngày (nguồn P&L)
+  totalRevenue: number                   // doanh thu confirmed trong kỳ
+  totalCost: number                      // spend + rental + other (P&L cost)
+  totalSpend: number                     // riêng ad spend
+}
+
+const fmtInt = new Intl.NumberFormat('vi-VN')
+const money = (n: number) => fmtInt.format(Math.round(n))
+const pct = (n: number, digits = 1) => `${n.toFixed(digits)}%`
+
+// Trung bình có trọng số theo impressions, bỏ qua null.
+function weightedRate(metrics: CampaignMetric[], pick: (m: CampaignMetric) => number | null): number | null {
+  let num = 0, den = 0
+  for (const m of metrics) {
+    const v = pick(m)
+    if (v == null) continue
+    num += v * m.impressions
+    den += m.impressions
+  }
+  return den > 0 ? num / den : null
+}
+
+// Xu hướng CPC: CPC nửa sau vs nửa đầu kỳ (% thay đổi). Null nếu thiếu clicks.
+function cpcTrend(metrics: CampaignMetric[]): number | null {
+  const sorted = [...metrics].sort((a, b) => a.date.localeCompare(b.date))
+  if (sorted.length < 4) return null
+  const mid = Math.floor(sorted.length / 2)
+  const cpc = (rows: CampaignMetric[]) => {
+    const c = rows.reduce((s, r) => s + r.clicks, 0)
+    const cost = rows.reduce((s, r) => s + r.cost, 0)
+    return c > 0 ? cost / c : null
+  }
+  const first = cpc(sorted.slice(0, mid))
+  const second = cpc(sorted.slice(mid))
+  if (first == null || second == null || first === 0) return null
+  return ((second - first) / first) * 100
+}
+
+function computeHealth(input: OptimizerInput): CampaignHealth {
+  const { metrics, totalRevenue, totalCost, totalSpend } = input
+  const impressions = metrics.reduce((s, m) => s + m.impressions, 0)
+  const clicks = metrics.reduce((s, m) => s + m.clicks, 0)
+  const conversions = metrics.reduce((s, m) => s + (m.conversions ?? 0), 0)
+  const metricCost = metrics.reduce((s, m) => s + m.cost, 0)
+
+  const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0
+  const avgCpc = clicks > 0 ? metricCost / clicks : 0
+  const roi = totalCost > 0 ? ((totalRevenue - totalCost) / totalCost) * 100 : null
+
+  const isRate = weightedRate(metrics, m => m.search_impression_share)
+  const isBudget = weightedRate(metrics, m => m.search_budget_lost_is)
+  const isRank = weightedRate(metrics, m => m.search_rank_lost_is)
+
+  // Health score 0..100 (heuristic, minh bạch):
+  //   ROI (±40), CTR (±20), Impression Share (±20), xu hướng CPC (±20).
+  let score = 50
+  if (roi != null) score += Math.max(-40, Math.min(40, roi * 0.8))
+  score += Math.max(-20, Math.min(20, (ctr - CFG.CTR_FLOOR) * 8))
+  if (isRate != null) score += (isRate - 0.5) * 40
+  const trend = cpcTrend(metrics)
+  if (trend != null) score -= Math.max(0, Math.min(20, trend * 0.4))
+
+  return {
+    roi,
+    ctr,
+    avgCpc,
+    cpcTrendPct: trend,
+    impressionShare: isRate != null ? isRate * 100 : null,
+    isLostBudget: isBudget != null ? isBudget * 100 : null,
+    isLostRank: isRank != null ? isRank * 100 : null,
+    spend: totalSpend,
+    revenue: totalRevenue,
+    clicks,
+    impressions,
+    conversions: conversions > 0 ? conversions : null,
+    score: Math.round(Math.max(0, Math.min(100, score))),
+  }
+}
+
+let seq = 0
+function makeSuggestion(
+  s: Omit<OptimizationSuggestion, 'id'> & { id?: string },
+): OptimizationSuggestion {
+  return { id: s.id ?? `sug-${++seq}`, ...s }
+}
+
+export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult {
+  seq = 0
+  const health = computeHealth(input)
+  const suggestions: OptimizationSuggestion[] = []
+
+  const { metrics, totalRevenue, totalCost, totalSpend, campaign_id, campaignLabel, project_id } = input
+  const days = new Set(metrics.map(m => m.date)).size
+  const hasConversionTracking = metrics.some(m => (m.conversions ?? 0) > 0)
+  const scope = { level: 'campaign' as const, label: campaignLabel, campaign_id, project_id }
+  const enoughData = totalSpend >= CFG.MIN_SPEND_TO_JUDGE && days >= CFG.MIN_DAYS_TO_JUDGE
+
+  // ── ROI-based (confidence 'roi') ──────────────────────────────────────────
+
+  // 1. Chi tiêu đáng kể nhưng KHÔNG có doanh thu → CẮT.
+  if (enoughData && totalRevenue === 0) {
+    suggestions.push(makeSuggestion({
+      type: 'cut', severity: 'high', confidence: 'roi', scope,
+      title: 'Cắt camp — tiêu tiền nhưng chưa có doanh thu',
+      detail: `Đã chi ${money(totalSpend)} trong ${days} ngày mà doanh thu = 0. Camp đang lỗ toàn bộ chi phí.`,
+      evidence: [
+        { metric: 'Chi phí QC', value: money(totalSpend) },
+        { metric: 'Doanh thu', value: '0' },
+        { metric: 'Số ngày', value: String(days) },
+      ],
+      recommendedAction: 'Tạm dừng camp; rà lại targeting/keyword/landing trước khi bật lại.',
+      impactScore: totalSpend,
+    }))
+  }
+
+  // 2. Có doanh thu nhưng ROI âm nặng → CẮT / thu hẹp.
+  if (enoughData && totalRevenue > 0 && health.roi != null && health.roi < CFG.LOSS_ROI) {
+    const loss = totalCost - totalRevenue
+    suggestions.push(makeSuggestion({
+      type: 'cut', severity: 'high', confidence: 'roi', scope,
+      title: 'Camp lỗ — ROI âm sâu',
+      detail: `ROI ${pct(health.roi)} (dưới ngưỡng ${CFG.LOSS_ROI}%). Lỗ khoảng ${money(loss)} trong kỳ.`,
+      evidence: [
+        { metric: 'ROI', value: pct(health.roi) },
+        { metric: 'Doanh thu', value: money(totalRevenue) },
+        { metric: 'Tổng chi phí', value: money(totalCost) },
+      ],
+      recommendedAction: 'Cắt hoặc thu hẹp về khung keyword/thời điểm còn lãi; giảm bid mạnh.',
+      impactScore: loss,
+    }))
+  }
+
+  // 3. Đủ lãi + IS mất do NGÂN SÁCH cao → TĂNG BUDGET (scale).
+  if (health.roi != null && health.roi > CFG.TARGET_ROI
+      && health.isLostBudget != null && health.isLostBudget / 100 > CFG.IS_BUDGET_THRESHOLD) {
+    const lostFrac = health.isLostBudget / 100
+    const upside = totalRevenue * (lostFrac / Math.max(0.01, 1 - lostFrac))
+    suggestions.push(makeSuggestion({
+      type: 'raise_budget', severity: 'high', confidence: 'roi', scope,
+      title: 'Scale — tăng ngân sách để giành thêm hiển thị',
+      detail: `Camp đang lãi (ROI ${pct(health.roi)}) nhưng mất ${pct(health.isLostBudget)} hiển thị vì hết ngân sách. Đang bỏ lỡ traffic sinh lời.`,
+      evidence: [
+        { metric: 'ROI', value: pct(health.roi) },
+        { metric: 'IS mất do ngân sách', value: pct(health.isLostBudget) },
+        { metric: 'Doanh thu hiện tại', value: money(totalRevenue) },
+      ],
+      recommendedAction: `Tăng ngân sách từng bước (15–25%/lần), theo dõi ROI giữ trên ${CFG.TARGET_ROI}%.`,
+      impactScore: Math.max(upside, totalRevenue * 0.2),
+    }))
+  }
+
+  // 4. Đủ lãi + IS mất do THỨ HẠNG cao → TĂNG BID / cải thiện QS.
+  if (health.roi != null && health.roi > CFG.TARGET_ROI
+      && health.isLostRank != null && health.isLostRank / 100 > CFG.IS_RANK_THRESHOLD) {
+    suggestions.push(makeSuggestion({
+      type: 'raise_bid', severity: 'medium', confidence: 'roi', scope,
+      title: 'Tăng bid — đang thua thứ hạng dù có lãi',
+      detail: `Mất ${pct(health.isLostRank)} hiển thị do Ad Rank thấp trong khi camp vẫn lãi (ROI ${pct(health.roi)}).`,
+      evidence: [
+        { metric: 'ROI', value: pct(health.roi) },
+        { metric: 'IS mất do thứ hạng', value: pct(health.isLostRank) },
+      ],
+      recommendedAction: 'Tăng bid ở keyword sinh lời và/hoặc cải thiện Quality Score (mẫu QC + landing).',
+      impactScore: totalRevenue * 0.15,
+    }))
+  }
+
+  // 5. CPC tăng nhanh + biên mỏng → CẢNH BÁO MARGIN.
+  if (health.cpcTrendPct != null && health.cpcTrendPct > CFG.CPC_TREND_ALERT
+      && (health.roi == null || health.roi < CFG.TARGET_ROI)) {
+    suggestions.push(makeSuggestion({
+      type: 'margin_alert', severity: 'medium', confidence: 'roi', scope,
+      title: 'Cảnh báo margin — CPC đang tăng',
+      detail: `CPC nửa sau kỳ tăng ${pct(health.cpcTrendPct)} so nửa đầu, trong khi ROI chưa vượt ${CFG.TARGET_ROI}%. Biên lợi nhuận đang bị bào mòn.`,
+      evidence: [
+        { metric: 'Xu hướng CPC', value: `+${pct(health.cpcTrendPct)}` },
+        { metric: 'CPC trung bình', value: money(health.avgCpc) },
+        { metric: 'ROI', value: health.roi != null ? pct(health.roi) : '—' },
+      ],
+      recommendedAction: 'Rà bid strategy, thêm negative keyword, kiểm giá thầu đối thủ; cân nhắc giảm bid.',
+      impactScore: totalSpend * 0.5,
+    }))
+  }
+
+  // 6. Lãi theo THỨ trong tuần (ROI ở mức ngày vẫn hợp lệ) → gợi ý dayparting.
+  //    Xấp xỉ profit ngày = doanh thu − ad_spend (bỏ qua rental/other để bắt tín hiệu).
+  {
+    const byWeekday = new Map<number, { profit: number; spend: number }>()
+    const allDates = new Set([...Object.keys(input.revenueByDate), ...Object.keys(input.spendByDate)])
+    for (const d of allDates) {
+      const wd = new Date(d + 'T00:00:00').getDay()
+      const rev = input.revenueByDate[d] ?? 0
+      const sp = input.spendByDate[d] ?? 0
+      const cur = byWeekday.get(wd) ?? { profit: 0, spend: 0 }
+      cur.profit += rev - sp
+      cur.spend += sp
+      byWeekday.set(wd, cur)
+    }
+    const WD = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7']
+    const losers = [...byWeekday.entries()]
+      .filter(([, v]) => v.profit < 0 && v.spend >= CFG.MIN_SPEND_TO_JUDGE)
+      .sort((a, b) => a[1].profit - b[1].profit)
+    if (enoughData && totalRevenue > 0 && losers.length) {
+      const [wd, v] = losers[0]
+      suggestions.push(makeSuggestion({
+        type: 'daypart', severity: 'medium', confidence: 'roi', scope,
+        title: 'Dayparting — có ngày trong tuần đang lỗ',
+        detail: `${WD[wd]} lỗ khoảng ${money(-v.profit)} (chi ${money(v.spend)}). Cân nhắc giảm bid/tắt lịch ngày này.`,
+        evidence: [
+          { metric: 'Ngày lỗ nhất', value: WD[wd] },
+          { metric: 'Lỗ', value: money(-v.profit) },
+          { metric: 'Chi phí ngày đó', value: money(v.spend) },
+        ],
+        recommendedAction: `Đặt ad schedule giảm bid ${WD[wd]}, hoặc tắt nếu vẫn lỗ sau khi giảm.`,
+        impactScore: -v.profit,
+      }))
+    }
+  }
+
+  // ── Engagement-based (confidence 'engagement' — "cần xem xét") ─────────────
+
+  // 7. CTR thấp → nghi mẫu quảng cáo kém.
+  if (health.impressions >= CFG.MIN_IMPR_FOR_CTR && health.ctr < CFG.CTR_FLOOR) {
+    suggestions.push(makeSuggestion({
+      type: 'fix_creative', severity: 'medium', confidence: 'engagement', scope,
+      title: 'CTR thấp — xem lại mẫu quảng cáo',
+      detail: `CTR ${pct(health.ctr)} dưới ngưỡng ${CFG.CTR_FLOOR}% với ${money(health.impressions)} hiển thị. Quảng cáo có thể chưa đủ hấp dẫn/đúng truy vấn.`,
+      evidence: [
+        { metric: 'CTR', value: pct(health.ctr) },
+        { metric: 'Hiển thị', value: money(health.impressions) },
+        { metric: 'Click', value: money(health.clicks) },
+      ],
+      recommendedAction: 'Viết lại tiêu đề/mô tả bám sát ý định tìm kiếm; A/B test 2–3 biến thể.',
+      impactScore: totalSpend * 0.2,
+    }))
+  }
+
+  // 8. Luôn nhắc nếu thiếu conversion tracking (mở khóa tối ưu sâu hơn).
+  if (!hasConversionTracking) {
+    suggestions.push(makeSuggestion({
+      type: 'setup_tracking', severity: 'low', confidence: 'engagement', scope,
+      title: 'Chưa có conversion tracking — tối ưu sâu bị giới hạn',
+      detail: 'Google Ads không thấy doanh thu (chuyển đổi ở site merchant qua link ref). ROI thật chỉ biết ở mức project × ngày. Keyword/search term/device/giờ/geo chỉ tối ưu bằng tín hiệu hiệu suất.',
+      evidence: [{ metric: 'Conversion trong kỳ', value: '0' }],
+      recommendedAction: 'Cân nhắc import postback/conversion từ network để mở khóa tối ưu ở mức keyword.',
+      impactScore: 0,
+    }))
+  }
+
+  const rank: Record<OptSeverity, number> = { high: 3, medium: 2, low: 1 }
+  suggestions.sort((a, b) => rank[b.severity] - rank[a.severity] || b.impactScore - a.impactScore)
+
+  return { health, suggestions, hasConversionTracking }
+}
+
+// tiện ích cho test/nơi khác nếu cần format bằng chứng thủ công
+export const _fmt = { money, pct }

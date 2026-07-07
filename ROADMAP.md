@@ -63,6 +63,10 @@ Dashboard / Revenue grid / Project detail (Next.js)
 | **Chi phí QC** | `ad_spend` | PK `(campaign_id, date, device, ad_group_id)` | Webhook (auto) |
 | | `campaign_discoveries` | PK `campaign_id`; `customer_id`(=cid), `mcc_id` | Webhook (auto) |
 | | `sync_log` | log mỗi lần sync; `organization_id` | Webhook (auto) |
+| **Tối ưu camp** | `campaign_metrics` | PK `(campaign_id, date)`; impressions/clicks/cost/conversions/Search IS | Webhook (auto) |
+| | `keyword_metrics` | PK `(campaign_id, ad_group_id, criterion_id, date)`; +quality_score *(P2)* | Webhook (auto) |
+| | `search_term_metrics` | PK `(campaign_id, ad_group_id, search_term, date)` *(P2)* | Webhook (auto) |
+| | `segment_metrics` | PK `(campaign_id, date, segment_type, segment_value)`; device/hour/geo *(P3)* | Webhook (auto) |
 | **Dự án** | `projects` | PK `project_id`; FK `cid`, `google_campaign_id`, `team_id`, `master_project_id`, `category_id`, `bank_account_id` | UI |
 | | `master_projects` | gom nhiều `projects` thành 1 dự án mẹ | UI |
 | | `project_categories`, `affiliate_networks` | phân loại; `organization_id` | UI |
@@ -133,12 +137,14 @@ src/
 | [`lib/types.ts`](src/lib/types.ts) | Toàn bộ interface + hằng số (STATUS_CONFIG, ACCESS_LEVEL_DEFAULTS…) | Mọi nơi |
 | [`lib/attribution.ts`](src/lib/attribution.ts) | Chia spend theo tier ad_group > device > date_window > campaign/manual_pct; đảm bảo **tổng spend bất biến** | Dashboard, project detail |
 | [`lib/costs.ts`](src/lib/costs.ts) | Quy đổi rate thuê TK ra tiền theo khoảng ngày | Dashboard, pnl-summary |
+| [`lib/campaign-optimizer.ts`](src/lib/campaign-optimizer.ts) | Rule engine tối ưu camp (deterministic): metrics + P&L thật → gợi ý; ngưỡng ở `CFG` | Trang `/optimize` |
 | [`hooks/usePnlData.ts`](src/hooks/usePnlData.ts) | Ghép spend+revenue+cost thành P&L cho dashboard (client-side) | Trang dashboard |
 | [`app/api/sync/ads-script/route.ts`](src/app/api/sync/ads-script/route.ts) | Webhook nhận spend + discovery, chống double-count | Toàn bộ dữ liệu spend |
 
 ### 3.2 Bản đồ API (42 route, dưới `src/app/api/`)
 
-- **Ingest/Integrations:** `sync/ads-script` (webhook), `integrations/{campaigns, secret, sync-log}`
+- **Ingest/Integrations:** `sync/ads-script` (webhook — spend + `campaign_metrics` + discovery), `integrations/{campaigns, secret, sync-log}`
+- **Tối ưu camp:** `optimize` (GET — phân tích 1 camp theo project, chạy `campaign-optimizer`)
 - **Projects:** `projects/[id]/{route, history, pnl-summary, password, reminder, my-permissions, shares, shares/[shareId]}`, `projects/{categories, networks, next-id, reminders-active, team-users}`, `project-members`
 - **Master projects:** `master-projects`, `master-projects/[id]`
 - **Doanh thu:** `revenue`
@@ -175,6 +181,9 @@ Công thức: `cost = spend(QC) + rentalDay(thuê TK) + otherDay(CP khác)`; `pr
 
 ### 4.4 Nhập doanh thu
 Trang `/revenue` dùng [`useRevenueGrid.ts`](src/hooks/useRevenueGrid.ts): grid kiểu Excel (hàng = project, cột = ngày), gõ ô → upsert `affiliate_revenue`. Có `status` pending/confirmed + chu kỳ payout.
+
+### 4.5 Tối ưu camp
+`google-ads-sync.js` gửi thêm `type:'campaign_metrics'` (impressions/clicks/CTR/CPC/Search IS) → webhook upsert `campaign_metrics` (KHÔNG đụng `ad_spend`). Trang `/optimize` gọi [`api/optimize`](src/app/api/optimize/route.ts): ghép `campaign_metrics` + doanh thu thật (`affiliate_revenue`) + cost (spend+rental+other, dùng lại `computeCidCost`) → [`campaign-optimizer.ts`](src/lib/campaign-optimizer.ts) chạy rule engine ra `health` + `suggestions[]`. Vì affiliate **không có conversion tracking**, ROI thật chỉ ở mức project×ngày → gợi ý chia 2 độ tin cậy `roi` (chắc) vs `engagement` (cần xem xét).
 
 ---
 
@@ -214,6 +223,11 @@ Lọc dữ liệu theo role diễn ra ở **2 tầng**:
 - [x] **Banks / tài khoản thanh toán** (traditional + crypto), mã hóa mật khẩu affiliate
 - [x] **Nhắc lịch + thông báo** in-app + Telegram; **lịch sử thay đổi** project
 - [x] **screen_revenue** vs **revenue** (tín hiệu sớm) + trạng thái payout pending/confirmed
+
+### Tối Ưu Camp (Campaign Optimizer) — đang triển khai theo giai đoạn
+- [x] **P1 — ROI core:** bảng `campaign_metrics` + ingest (`type:'campaign_metrics'`) + `campaign-optimizer.ts` (rule ROI-based: cut/scale/raise_budget/raise_bid/margin_alert/daypart + fix_creative + setup_tracking) + `api/optimize` + trang `/optimize` (scorecard + thẻ gợi ý). Migration [`migration_campaign_optimizer.sql`](supabase/migration_campaign_optimizer.sql) tạo sẵn cả 4 bảng.
+- [ ] **P2 — keyword & search term:** ingest `keyword_metrics`/`search_term_metrics` + rule engagement (negative keyword, pause keyword) + bảng breakdown.
+- [ ] **P3 — device/giờ/geo:** ingest `segment_metrics` + rule bid-adjust/dayparting theo phân khúc + charts.
 
 ### Việc còn mở / ý tưởng tiếp theo — ☐ Chưa làm
 - [ ] Tự động lấy doanh thu từ **network API** (thay nhập tay) — ghi thẳng vào `affiliate_revenue`, **không đổi** phần tính P&L phía sau

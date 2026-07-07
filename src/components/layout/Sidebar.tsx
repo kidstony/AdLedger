@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { BarChart3, FolderOpen, DollarSign, LogOut, Plug, Receipt, Building2, Users, UsersRound, ChevronDown, Settings } from 'lucide-react'
+import { BarChart3, FolderOpen, DollarSign, LogOut, Plug, Receipt, Building2, Users, UsersRound, ChevronDown, Settings, Gauge } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/context/AuthContext'
 import { useProjectsContext } from '@/context/ProjectsContext'
@@ -35,6 +35,7 @@ export default function Sidebar() {
   const mainItems = [
     { href: '/dashboard',          label: 'Dashboard P&L',    icon: BarChart3,  roles: ['super_admin', 'manager', 'member', 'admin', 'employee'] },
     { href: '/projects',           label: 'Quản lý dự án',    icon: FolderOpen, roles: ['super_admin', 'manager', 'member', 'admin', 'employee'] },
+    { href: '/optimize',           label: 'Tối Ưu Camp',      icon: Gauge,      roles: ['super_admin', 'manager', 'admin'] },
     { href: '/revenue',            label: 'Nhập doanh thu',   icon: DollarSign, roles: ['super_admin', 'manager', 'admin', 'member'] },
     { href: '/expenses',           label: 'Nhập Chi Phí',     icon: Receipt,    roles: ['super_admin', 'manager', 'admin', 'member'] },
     { href: '/banks',              label: 'Quản lý Bank',     icon: Building2,  roles: ['super_admin', 'manager', 'admin'] },

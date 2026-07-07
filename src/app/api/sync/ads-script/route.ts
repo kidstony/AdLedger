@@ -28,9 +28,24 @@ interface SpendRecord extends CampaignRecord {
   ad_group_id?: string  // id ad group (mặc định 'ALL' nếu script chưa segment)
 }
 
+// Số liệu hiệu suất cấp campaign (feature "Tối Ưu Camp"). Tách khỏi ad_spend.
+interface CampaignMetricRecord {
+  campaign_id: string
+  date: string
+  impressions?: number
+  clicks?: number
+  cost?: number
+  conversions?: number | null
+  conversions_value?: number | null
+  search_impression_share?: number | null
+  search_budget_lost_is?: number | null
+  search_rank_lost_is?: number | null
+}
+
 type Body =
   | { secret?: string; type?: 'discover'; campaigns?: CampaignRecord[] }
   | { secret?: string; type: 'spend'; records?: SpendRecord[] }
+  | { secret?: string; type: 'campaign_metrics'; records?: CampaignMetricRecord[] }
   | { secret?: string; records?: []; type?: undefined }
 
 async function backfillProjectCidMcc(campaignIds: string[]) {
@@ -114,6 +129,39 @@ export async function POST(req: NextRequest) {
       await backfillProjectCidMcc(ids)
     }
     return NextResponse.json({ success: true, type: 'discover', count: campaigns.length })
+  }
+
+  // Campaign metrics sync: số liệu hiệu suất cấp campaign × ngày (Tối Ưu Camp).
+  // KHÔNG đụng ad_spend — bảng riêng campaign_metrics.
+  if ('type' in body && body.type === 'campaign_metrics') {
+    const mRecords = (body as { records?: CampaignMetricRecord[] }).records ?? []
+    if (mRecords.length === 0) {
+      return NextResponse.json({ success: true, type: 'campaign_metrics', count: 0, ping: true })
+    }
+    const num = (v: unknown) => (v == null ? null : Number(v))
+    const rows = mRecords.map(r => ({
+      campaign_id:             r.campaign_id,
+      date:                    r.date,
+      impressions:             Number(r.impressions ?? 0),
+      clicks:                  Number(r.clicks ?? 0),
+      cost:                    Number(r.cost ?? 0),
+      conversions:             num(r.conversions),
+      conversions_value:       num(r.conversions_value),
+      search_impression_share: num(r.search_impression_share),
+      search_budget_lost_is:   num(r.search_budget_lost_is),
+      search_rank_lost_is:     num(r.search_rank_lost_is),
+      organization_id:         organizationId,
+      updated_at:              new Date().toISOString(),
+    }))
+    const { error } = await supabaseAdmin
+      .from('campaign_metrics')
+      .upsert(rows, { onConflict: 'campaign_id,date' })
+    if (error) {
+      await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: `campaign_metrics: ${error.message}`, organization_id: organizationId })
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    await supabaseAdmin.from('sync_log').insert({ records: rows.length, status: 'success', message: 'campaign_metrics', organization_id: organizationId })
+    return NextResponse.json({ success: true, type: 'campaign_metrics', count: rows.length })
   }
 
   // Spend sync: receive daily spend per campaign

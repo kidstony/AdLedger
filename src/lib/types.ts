@@ -182,6 +182,127 @@ export interface AdSpend {
   ad_group_id: string   // 'ALL' cho row cũ / không segment theo ad group
 }
 
+// ─── Campaign Optimizer: số liệu hiệu suất Google Ads ────────────────────────
+// Tách KHỎI ad_spend (ad_spend chỉ giữ `spend` — nguồn P&L, không đụng).
+// conversions/conversions_value NULLABLE: affiliate thường KHÔNG có conversion
+// tracking (chuyển đổi xảy ra ở site merchant qua link ref) → thường null/0.
+
+export interface CampaignMetric {
+  campaign_id: string
+  date: string
+  impressions: number
+  clicks: number
+  cost: number
+  conversions: number | null
+  conversions_value: number | null
+  search_impression_share: number | null   // 0..1 (tỉ lệ)
+  search_budget_lost_is: number | null      // 0..1 — IS mất do ngân sách
+  search_rank_lost_is: number | null        // 0..1 — IS mất do thứ hạng (Ad Rank)
+}
+
+export interface KeywordMetric {
+  campaign_id: string
+  ad_group_id: string
+  criterion_id: string
+  date: string
+  keyword_text: string
+  match_type: string
+  impressions: number
+  clicks: number
+  cost: number
+  conversions: number | null
+  quality_score: number | null
+}
+
+export interface SearchTermMetric {
+  campaign_id: string
+  ad_group_id: string
+  search_term: string
+  date: string
+  impressions: number
+  clicks: number
+  cost: number
+  conversions: number | null
+}
+
+export type SegmentType = 'device' | 'hour' | 'geo'
+
+export interface SegmentMetric {
+  campaign_id: string
+  date: string
+  segment_type: SegmentType
+  segment_value: string
+  impressions: number
+  clicks: number
+  cost: number
+  conversions: number | null
+}
+
+// ── Kết quả engine tối ưu (deterministic rule engine) ──
+export type OptSuggestionType =
+  | 'scale' | 'cut' | 'raise_budget' | 'raise_bid' | 'lower_bid'
+  | 'add_negative' | 'pause_keyword' | 'fix_creative' | 'margin_alert'
+  | 'device_adjust' | 'daypart' | 'setup_tracking'
+
+export type OptSeverity = 'high' | 'medium' | 'low'
+// 'roi' = dựa trên doanh thu thật (chắc chắn); 'engagement' = chỉ tín hiệu hiệu
+// suất (CTR/CPC/IS), không có doanh thu ở mức này → "cần xem xét".
+export type OptConfidence = 'roi' | 'engagement'
+export type OptScopeLevel = 'campaign' | 'keyword' | 'search_term' | 'segment'
+
+export interface OptEvidence {
+  metric: string
+  value: string     // đã format sẵn để render
+  context?: string
+}
+
+export interface OptScope {
+  level: OptScopeLevel
+  label: string
+  campaign_id?: string
+  project_id?: string
+  ad_group_id?: string
+  criterion_id?: string
+  search_term?: string
+  segment_type?: SegmentType
+  segment_value?: string
+}
+
+export interface OptimizationSuggestion {
+  id: string
+  type: OptSuggestionType
+  severity: OptSeverity
+  confidence: OptConfidence
+  scope: OptScope
+  title: string
+  detail: string
+  evidence: OptEvidence[]
+  recommendedAction: string
+  impactScore: number   // ~ chi phí đang đặt cược × mức độ → xếp hạng giảm dần
+}
+
+export interface CampaignHealth {
+  roi: number | null           // % ; null nếu chưa có chi phí
+  ctr: number                  // %
+  avgCpc: number               // đơn vị tiền tài khoản
+  cpcTrendPct: number | null   // % thay đổi CPC nửa sau vs nửa đầu kỳ
+  impressionShare: number | null   // %
+  isLostBudget: number | null      // %
+  isLostRank: number | null        // %
+  spend: number
+  revenue: number
+  clicks: number
+  impressions: number
+  conversions: number | null
+  score: number                // 0..100
+}
+
+export interface CampaignOptimizerResult {
+  health: CampaignHealth
+  suggestions: OptimizationSuggestion[]
+  hasConversionTracking: boolean
+}
+
 // Quy tắc quy chi phí QC của một campaign về từng ref-link project (sub-project).
 export type AttributionType =
   | 'campaign'    // nhận toàn bộ chi phí campaign (mặc định)

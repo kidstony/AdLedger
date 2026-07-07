@@ -47,6 +47,7 @@ function syncAccount() {
 
   discoverCampaigns(cid);
   syncSpend(cid, range);
+  syncCampaignMetrics(cid, range);
 }
 
 /**
@@ -109,6 +110,49 @@ function syncSpend(cid, range) {
     }
   }
   if (records.length) post({ secret: SECRET, records: records });
+}
+
+/**
+ * Campaign metrics: số liệu hiệu suất cấp campaign × ngày cho tính năng "Tối Ưu
+ * Camp" (impressions, clicks, cost, conversions, Search Impression Share...).
+ * Tách riêng khỏi syncSpend — KHÔNG ảnh hưởng P&L.
+ */
+function syncCampaignMetrics(cid, range) {
+  var query =
+    'SELECT campaign.id, segments.date, ' +
+    'metrics.impressions, metrics.clicks, metrics.cost_micros, ' +
+    'metrics.conversions, metrics.conversions_value, ' +
+    'metrics.search_impression_share, ' +
+    'metrics.search_budget_lost_impression_share, ' +
+    'metrics.search_rank_lost_impression_share ' +
+    'FROM campaign ' +
+    "WHERE segments.date BETWEEN '" + range.from + "' AND '" + range.to + "' " +
+    'AND metrics.impressions > 0';
+
+  var records = [];
+  var rows = AdsApp.search(query);
+  while (rows.hasNext()) {
+    var r = rows.next();
+    var m = r.metrics || {};
+    records.push({
+      campaign_id:             String(r.campaign.id),
+      date:                    r.segments.date,
+      impressions:             Number(m.impressions || 0),
+      clicks:                  Number(m.clicks || 0),
+      cost:                    Number(m.costMicros || 0) / 1e6,
+      conversions:             m.conversions == null ? null : Number(m.conversions),
+      conversions_value:       m.conversionsValue == null ? null : Number(m.conversionsValue),
+      // IS metrics là tỉ lệ 0..1; Google trả null nếu không đủ dữ liệu.
+      search_impression_share: m.searchImpressionShare == null ? null : Number(m.searchImpressionShare),
+      search_budget_lost_is:   m.searchBudgetLostImpressionShare == null ? null : Number(m.searchBudgetLostImpressionShare),
+      search_rank_lost_is:     m.searchRankLostImpressionShare == null ? null : Number(m.searchRankLostImpressionShare),
+    });
+    if (records.length >= BATCH) {
+      post({ secret: SECRET, type: 'campaign_metrics', records: records });
+      records = [];
+    }
+  }
+  if (records.length) post({ secret: SECRET, type: 'campaign_metrics', records: records });
 }
 
 // Map enum device của Google Ads về MOBILE/DESKTOP/TABLET. Còn lại (CONNECTED_TV,
