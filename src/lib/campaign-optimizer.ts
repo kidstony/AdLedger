@@ -114,8 +114,11 @@ export function aggregateSegments(rows: SegmentMetric[]): SegmentAgg[] {
   return out.sort((a, b) => b.cost - a.cost)
 }
 
-const fmtInt = new Intl.NumberFormat('vi-VN')
-const money = (n: number) => fmtInt.format(Math.round(n))
+// Định dạng tiền khớp UI (formatVND = '$' + 2 số lẻ, đơn vị tài khoản Google Ads).
+const usdFmt = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const intFmt = new Intl.NumberFormat('en-US')
+const money = (n: number) => '$' + usdFmt.format(n)
+const count = (n: number) => intFmt.format(Math.round(n))
 const pct = (n: number, digits = 1) => `${n.toFixed(digits)}%`
 
 // Trung bình có trọng số theo impressions, bỏ qua null.
@@ -337,11 +340,11 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     suggestions.push(makeSuggestion({
       type: 'fix_creative', severity: 'medium', confidence: 'engagement', scope,
       title: 'CTR thấp — xem lại mẫu quảng cáo',
-      detail: `CTR ${pct(health.ctr)} dưới ngưỡng ${CFG.CTR_FLOOR}% với ${money(health.impressions)} hiển thị. Quảng cáo có thể chưa đủ hấp dẫn/đúng truy vấn.`,
+      detail: `CTR ${pct(health.ctr)} dưới ngưỡng ${CFG.CTR_FLOOR}% với ${count(health.impressions)} hiển thị. Quảng cáo có thể chưa đủ hấp dẫn/đúng truy vấn.`,
       evidence: [
         { metric: 'CTR', value: pct(health.ctr) },
-        { metric: 'Hiển thị', value: money(health.impressions) },
-        { metric: 'Click', value: money(health.clicks) },
+        { metric: 'Hiển thị', value: count(health.impressions) },
+        { metric: 'Click', value: count(health.clicks) },
       ],
       recommendedAction: 'Viết lại tiêu đề/mô tả bám sát ý định tìm kiếm; A/B test 2–3 biến thể.',
       impactScore: totalSpend * 0.2,
@@ -374,6 +377,10 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
       ],
       recommendedAction: 'Rà bảng bên dưới; tắt/giảm bid keyword kém hiệu suất; xem lại match type.',
       impactScore: wasted,
+      items: badKws.slice(0, 8).map(k => ({
+        label: k.keyword_text || '(?)', cost: k.cost,
+        meta: `${k.match_type} · CTR ${pct(k.ctr)}${k.quality_score != null ? ` · QS ${k.quality_score}` : ''}`,
+      })),
     }))
   }
 
@@ -396,6 +403,10 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
       ],
       recommendedAction: 'Rà bảng bên dưới; thêm negative keyword cho truy vấn không liên quan.',
       impactScore: wasted,
+      items: badTerms.slice(0, 8).map(t => ({
+        label: t.search_term, cost: t.cost,
+        meta: `${count(t.clicks)} click · CTR ${pct(t.ctr)}`,
+      })),
     }))
   }
 
@@ -433,6 +444,10 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
       ],
       recommendedAction: meta.action,
       impactScore: wasted,
+      items: bad.slice(0, 8).map(s => ({
+        label: fmtSegVal(s), cost: s.cost,
+        meta: `${count(s.clicks)} click · CTR ${pct(s.ctr)}`,
+      })),
     }))
   }
 
@@ -451,10 +466,16 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   const rank: Record<OptSeverity, number> = { high: 3, medium: 2, low: 1 }
   suggestions.sort((a, b) => rank[b.severity] - rank[a.severity] || b.impactScore - a.impactScore)
 
+  // Ước tính tiết kiệm/kỳ: chi phí search-term rác (chặn negative là bỏ được ngay);
+  // nếu không có search term thì lấy chi phí keyword kém làm proxy.
+  const estimatedSavings =
+    badTerms.reduce((s, t) => s + t.cost, 0) || badKws.reduce((s, k) => s + k.cost, 0)
+
   return {
     health,
     suggestions,
     hasConversionTracking,
+    estimatedSavings,
     breakdowns: {
       keywords: kwAgg.slice(0, CFG.BREAKDOWN_LIMIT),
       searchTerms: stAgg.slice(0, CFG.BREAKDOWN_LIMIT),

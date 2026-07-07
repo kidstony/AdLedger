@@ -5,7 +5,7 @@ import { Gauge, Info, RefreshCw } from 'lucide-react'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { useDateRange } from '@/context/DateRangeContext'
 import { supabase } from '@/lib/supabase'
-import { formatCid } from '@/lib/utils'
+import { formatCid, formatVND } from '@/lib/utils'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import HealthScorecard from '@/components/optimize/HealthScorecard'
 import SuggestionCard from '@/components/optimize/SuggestionCard'
@@ -21,6 +21,7 @@ interface OptimizeResponse {
   health: CampaignHealth
   suggestions: OptimizationSuggestion[]
   hasConversionTracking: boolean
+  estimatedSavings: number
   breakdowns: { keywords: KeywordAgg[]; searchTerms: SearchTermAgg[]; segments: SegmentAgg[] }
   error?: string
   code?: string
@@ -135,9 +136,16 @@ export default function OptimizePage() {
           )}
 
           <section>
-            <h2 className="mb-2 text-sm font-semibold text-slate-700">
-              Gợi ý tối ưu {data.suggestions.length > 0 && <span className="text-slate-400">({data.suggestions.length})</span>}
-            </h2>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-700">
+                Kế hoạch hành động {data.suggestions.length > 0 && <span className="text-slate-400">({data.suggestions.length})</span>}
+              </h2>
+              {data.estimatedSavings >= 0.5 && (
+                <span className="rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-green-200">
+                  Ước tính tiết kiệm ~{formatVND(data.estimatedSavings)}/kỳ nếu chặn search-term rác
+                </span>
+              )}
+            </div>
             {data.suggestions.length === 0 ? (
               <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-6 text-center text-sm text-green-700">
                 Không có cảnh báo nào — camp đang ổn trong khoảng thời gian này. 🎉

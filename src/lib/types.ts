@@ -268,6 +268,13 @@ export interface OptScope {
   segment_value?: string
 }
 
+// Mục cụ thể cần xử lý trong 1 gợi ý (keyword/search-term/phân khúc...).
+export interface OptItem {
+  label: string
+  cost: number
+  meta?: string   // ghi chú ngắn (vd CTR, match type, click)
+}
+
 export interface OptimizationSuggestion {
   id: string
   type: OptSuggestionType
@@ -278,7 +285,8 @@ export interface OptimizationSuggestion {
   detail: string
   evidence: OptEvidence[]
   recommendedAction: string
-  impactScore: number   // ~ chi phí đang đặt cược × mức độ → xếp hạng giảm dần
+  impactScore: number   // ~ chi phí đang đặt cược (đơn vị tiền tài khoản) → xếp hạng + hiển thị $
+  items?: OptItem[]      // các mục cụ thể cần xử lý (top offenders)
 }
 
 export interface CampaignHealth {
@@ -332,6 +340,7 @@ export interface CampaignOptimizerResult {
   health: CampaignHealth
   suggestions: OptimizationSuggestion[]
   hasConversionTracking: boolean
+  estimatedSavings: number   // ước tính chi phí có thể tiết kiệm/kỳ (chặn search-term rác)
   breakdowns: {
     keywords: KeywordAgg[]      // xấu nhất trước (theo chi phí)
     searchTerms: SearchTermAgg[]

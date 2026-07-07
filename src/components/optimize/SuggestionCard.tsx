@@ -5,7 +5,7 @@ import {
   Ban, PauseCircle, Sparkles, AlertTriangle, MonitorSmartphone,
   CalendarClock, Target, type LucideIcon,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, formatVND } from '@/lib/utils'
 import type { OptimizationSuggestion, OptSuggestionType, OptSeverity } from '@/lib/types'
 
 const ICONS: Record<OptSuggestionType, LucideIcon> = {
@@ -54,9 +54,26 @@ export default function SuggestionCard({ s }: { s: OptimizationSuggestion }) {
               Cần xem xét
             </span>
           )}
+          {s.impactScore >= 0.5 && (
+            <span className="ml-auto shrink-0 rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-white">
+              Tác động ~{formatVND(s.impactScore)}
+            </span>
+          )}
         </div>
 
         <p className="mt-1 text-xs leading-relaxed text-slate-600">{s.detail}</p>
+
+        {s.items && s.items.length > 0 && (
+          <div className="mt-2 divide-y divide-slate-50 overflow-hidden rounded-md ring-1 ring-slate-100">
+            {s.items.map((it, i) => (
+              <div key={i} className="flex items-center gap-2 px-2.5 py-1.5 text-[11px]">
+                <span className="min-w-0 flex-1 truncate text-slate-700" title={it.label}>{it.label}</span>
+                {it.meta && <span className="hidden shrink-0 text-slate-400 sm:inline">{it.meta}</span>}
+                <span className="shrink-0 font-semibold tabular-nums text-slate-800">{formatVND(it.cost)}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {s.evidence.length > 0 && (
           <div className="mt-2.5 flex flex-wrap gap-1.5">
