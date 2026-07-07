@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { TrendingUp, Trophy, CalendarDays, Layers } from 'lucide-react'
-import { formatVND } from '@/lib/utils'
+import { formatVND, cn } from '@/lib/utils'
 import type { ViewMode } from '@/hooks/useRevenueGrid'
 
 interface ProjectTotal {
@@ -17,6 +17,7 @@ interface Props {
   dates: string[]
   viewMode: ViewMode
   anchorDate: string
+  isScreen?: boolean          // screen-revenue view → amber money, matching Dashboard P&L
 }
 
 function periodLabel(viewMode: ViewMode, anchorDate: string, dates: string[]): string {
@@ -30,7 +31,7 @@ function periodLabel(viewMode: ViewMode, anchorDate: string, dates: string[]): s
   return ''
 }
 
-export default function RevenueSummaryCards({ projectTotals, totalProjectCount, dates, viewMode, anchorDate }: Props) {
+export default function RevenueSummaryCards({ projectTotals, totalProjectCount, dates, viewMode, anchorDate, isScreen = false }: Props) {
   const { grandTotal, topProject, avgPerDay, activeCount, filteredCount } = useMemo(() => {
     const grand = projectTotals.reduce((s, p) => s + p.total, 0)
     const sorted = [...projectTotals].sort((a, b) => b.total - a.total)
@@ -46,15 +47,15 @@ export default function RevenueSummaryCards({ projectTotals, totalProjectCount, 
   return (
     <div className="grid grid-cols-4 gap-2.5 mb-3">
       {/* Card 1: Total */}
-      <div className="bg-white border border-blue-200 rounded-xl px-4 py-3 shadow-sm">
-        <div className="flex items-center gap-1.5 text-[11px] text-blue-500 font-medium mb-1.5">
+      <div className={cn('bg-white border rounded-xl px-4 py-3 shadow-sm', isScreen ? 'border-amber-200' : 'border-blue-200')}>
+        <div className={cn('flex items-center gap-1.5 text-[11px] font-medium mb-1.5', isScreen ? 'text-amber-500' : 'text-blue-500')}>
           <TrendingUp size={11} />
           Tổng {period}
           {filteredCount < totalProjectCount && (
-            <span className="ml-1 text-blue-400">({filteredCount} dự án)</span>
+            <span className={cn('ml-1', isScreen ? 'text-amber-400' : 'text-blue-400')}>({filteredCount} dự án)</span>
           )}
         </div>
-        <div className="text-xl font-bold text-blue-600">{grandTotal > 0 ? formatVND(grandTotal) : <span className="opacity-30">$0.00</span>}</div>
+        <div className={cn('text-xl font-bold', isScreen ? 'text-amber-500' : 'text-blue-600')}>{grandTotal > 0 ? formatVND(grandTotal) : <span className="opacity-30">$0.00</span>}</div>
         <div className="text-[11px] text-slate-400 mt-1">{activeCount} dự án đang hoạt động</div>
       </div>
 
@@ -65,7 +66,7 @@ export default function RevenueSummaryCards({ projectTotals, totalProjectCount, 
           Dự án dẫn đầu
         </div>
         <div className="text-sm font-bold text-slate-800 truncate">{topProject?.name ?? '—'}</div>
-        <div className="text-[11px] text-green-600 font-semibold mt-1">
+        <div className={cn('text-[11px] font-semibold mt-1', isScreen ? 'text-amber-500' : 'text-green-600')}>
           {topProject && topProject.total > 0 ? formatVND(topProject.total) : <span className="text-slate-300">$0.00</span>}
         </div>
       </div>
@@ -76,7 +77,7 @@ export default function RevenueSummaryCards({ projectTotals, totalProjectCount, 
           <CalendarDays size={11} />
           Trung bình / ngày
         </div>
-        <div className="text-xl font-bold text-slate-800">
+        <div className={cn('text-xl font-bold', isScreen ? 'text-amber-500' : 'text-slate-800')}>
           {avgPerDay > 0 ? formatVND(avgPerDay) : <span className="opacity-30">$0.00</span>}
         </div>
         <div className="text-[11px] text-slate-400 mt-1">

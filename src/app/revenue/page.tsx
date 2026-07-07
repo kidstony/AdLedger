@@ -425,7 +425,7 @@ export default function RevenuePage() {
           <button
             onClick={() => setActiveTab('screen')}
             className={cn('flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
-              activeTab === 'screen' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
+              activeTab === 'screen' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
           >
             <Monitor size={12} /> Tiền màn hình
           </button>
@@ -462,6 +462,7 @@ export default function RevenuePage() {
         dates={dates}
         viewMode={viewMode}
         anchorDate={anchorDate}
+        isScreen={activeTab === 'screen'}
       />
 
       {/* ── Search + Table ─────────────────────────────────────────────────── */}
@@ -582,7 +583,7 @@ export default function RevenuePage() {
                                 onPaste={handlePaste}
                                 displayValue={isConfirmed ? 0 : (hasDelta && delta !== 0 ? delta : undefined)}
                                 valueSubtitle={isConfirmed ? '✓ đã nhận' : (hasDelta && delta !== 0 ? `${formatVND(cumulative)} cộng dồn` : undefined)}
-                                valueColorClass={isConfirmed ? 'text-slate-300' : (delta < 0 ? 'text-red-600' : 'text-slate-700')}
+                                valueColorClass={isConfirmed ? 'text-slate-300' : (delta < 0 ? 'text-red-600' : 'text-amber-500')}
                                 hasNote={hasNote}
                                 onNoteClick={() => setNoteModal({ projectId: project.project_id, date, current: noteMap.get(key) ?? '' })}
                                 isCycleEnd={cycleEndMap.get(key) ?? false}
@@ -618,7 +619,7 @@ export default function RevenuePage() {
                         >
                           <div data-cell={key} className={confirmedSub ? 'h-11' : 'h-9'}>
                             {isReadOnly ? (
-                              <div className="w-full h-full px-2 py-1.5 text-right font-mono text-xs font-medium text-slate-700">
+                              <div className={cn('w-full h-full px-2 py-1.5 text-right font-mono text-xs font-medium', activeTab === 'screen' ? 'text-amber-500' : 'text-slate-700')}>
                                 {cellValue ? formatVND(cellValue) : <span className="opacity-30">$0.00</span>}
                               </div>
                             ) : (
@@ -630,6 +631,7 @@ export default function RevenuePage() {
                                 onFocus={() => { focusedCellRef.current = { pi, di } }}
                                 onPaste={handlePaste}
                                 valueSubtitle={confirmedSub}
+                                valueColorClass={activeTab === 'screen' ? 'text-amber-500' : 'text-slate-700'}
                                 hasPayout={hasPayout}
                                 onDoubleClick={isRevTab ? () => {
                                   const ex = payoutMap.get(key)
@@ -654,7 +656,7 @@ export default function RevenuePage() {
                 {dateTotals.map((total, i) => (
                   <td key={dates[i]} className={cn('px-3 py-2 text-center text-xs font-semibold', dates[i] === today && 'bg-blue-50/50')}>
                     {total > 0
-                      ? <span className="text-green-700">{formatVND(total)}</span>
+                      ? <span className={activeTab === 'screen' ? 'text-amber-500' : 'text-green-700'}>{formatVND(total)}</span>
                       : total < 0
                         ? <span className="text-red-500">-{formatVND(Math.abs(total))}</span>
                         : <span className="opacity-20">$0.00</span>

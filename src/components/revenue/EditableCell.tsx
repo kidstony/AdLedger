@@ -88,7 +88,7 @@ export default function EditableCell({
   const isEmpty      = mainValue === undefined || mainValue === 0
   const mainColorClass = isCumulative
     ? (valueColorClass ?? (displayValue! >= 0 ? 'text-slate-700' : 'text-red-600'))
-    : 'text-slate-700'
+    : (valueColorClass ?? 'text-slate-700')
 
   function fmt(n: number) {
     return '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
