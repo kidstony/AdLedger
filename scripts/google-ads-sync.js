@@ -54,6 +54,30 @@ function syncAccount() {
   try { syncKeywords(cid, range); }        catch (e) { Logger.log('keyword_metrics lỗi: ' + e); }
   try { syncSearchTerms(cid, range); }     catch (e) { Logger.log('search_terms lỗi: ' + e); }
   try { syncSegments(cid, range); }        catch (e) { Logger.log('segment_metrics lỗi: ' + e); }
+  try { syncSettings(cid); }               catch (e) { Logger.log('campaign_settings lỗi: ' + e); }
+}
+
+/**
+ * Campaign settings (Tối Ưu Camp D3): ngân sách + chiến lược giá thầu + currency.
+ * Trạng thái hiện tại (không theo ngày) → không cần range.
+ */
+function syncSettings(cid) {
+  var cur = String(AdsApp.currentAccount().getCurrencyCode() || '');
+  var records = [];
+  var rows = AdsApp.search('SELECT campaign.id, campaign.bidding_strategy_type, campaign_budget.amount_micros FROM campaign ' +
+    "WHERE campaign.status IN ('ENABLED', 'PAUSED')");
+  while (rows.hasNext()) {
+    var r = rows.next();
+    var cb = r.campaignBudget || {};
+    records.push({
+      campaign_id:      String(r.campaign.id),
+      bidding_strategy: r.campaign.biddingStrategyType || null,
+      daily_budget:     cb.amountMicros == null ? null : Number(cb.amountMicros) / 1e6,
+      currency_code:    cur
+    });
+    if (records.length >= BATCH) { post({ secret: SECRET, type: 'campaign_settings', records: records }); records = []; }
+  }
+  if (records.length) post({ secret: SECRET, type: 'campaign_settings', records: records });
 }
 
 /**

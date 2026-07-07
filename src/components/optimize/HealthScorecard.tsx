@@ -1,10 +1,18 @@
 'use client'
 
 import { cn, formatVND } from '@/lib/utils'
-import type { CampaignHealth } from '@/lib/types'
+import type { CampaignHealth, CampaignSettings } from '@/lib/types'
 
 const intFmt = new Intl.NumberFormat('en-US')
 const fmtCount = (n: number) => intFmt.format(Math.round(n))
+
+const BID_LABEL: Record<string, string> = {
+  MANUAL_CPC: 'Manual CPC', MAXIMIZE_CONVERSIONS: 'Tối đa chuyển đổi',
+  MAXIMIZE_CONVERSION_VALUE: 'Tối đa giá trị CĐ', TARGET_CPA: 'Target CPA',
+  TARGET_ROAS: 'Target ROAS', TARGET_SPEND: 'Tối đa click',
+  TARGET_IMPRESSION_SHARE: 'Target IS', MANUAL_CPM: 'Manual CPM', MANUAL_CPV: 'Manual CPV',
+  PERCENT_CPC: 'Percent CPC', COMMISSION: 'Commission',
+}
 
 function scoreColor(score: number): string {
   if (score >= 70) return 'text-green-600'
@@ -39,10 +47,11 @@ function Tile({ label, value, sub, tone = 'default', delta }: {
   )
 }
 
-export default function HealthScorecard({ health, cost, confirmedRevenue }: {
+export default function HealthScorecard({ health, cost, confirmedRevenue, settings }: {
   health: CampaignHealth
   cost: { spend: number; rental: number; other: number; total: number }
   confirmedRevenue: number
+  settings?: CampaignSettings | null
 }) {
   const roiTone = health.roi == null ? 'default' : health.roi >= 20 ? 'good' : health.roi < 0 ? 'bad' : 'warn'
   const cpcWithin = health.cpcTrendPct
@@ -67,6 +76,12 @@ export default function HealthScorecard({ health, cost, confirmedRevenue }: {
           {cost.rental > 0 && <span className="text-slate-500">Thuê TK: <b className="text-slate-800">{formatVND(cost.rental)}</b></span>}
           {cost.other > 0 && <span className="text-slate-500">CP khác: <b className="text-slate-800">{formatVND(cost.other)}</b></span>}
           <span className="text-slate-500">Tổng chi phí: <b className="text-slate-800">{formatVND(cost.total)}</b></span>
+          {settings?.daily_budget != null && (
+            <span className="text-slate-500">Ngân sách/ngày: <b className="text-slate-800">{formatVND(settings.daily_budget)}</b></span>
+          )}
+          {settings?.bidding_strategy && (
+            <span className="text-slate-500">Bid: <b className="text-slate-800">{BID_LABEL[settings.bidding_strategy] ?? settings.bidding_strategy}</b></span>
+          )}
         </div>
       </div>
 

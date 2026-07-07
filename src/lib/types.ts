@@ -225,6 +225,16 @@ export interface SearchTermMetric {
   conversions: number | null
 }
 
+// Ngân sách + chiến lược giá thầu của campaign (Tối Ưu Camp D3).
+export interface CampaignSettings {
+  campaign_id: string
+  daily_budget: number | null
+  bidding_strategy: string | null   // MANUAL_CPC / MAXIMIZE_CONVERSIONS / TARGET_CPA ...
+  target_cpa: number | null
+  target_roas: number | null
+  currency_code: string | null
+}
+
 export type SegmentType = 'device' | 'hour' | 'geo'
 
 export interface SegmentMetric {

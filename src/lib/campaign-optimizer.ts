@@ -2,6 +2,7 @@ import {
   CampaignHealth,
   CampaignMetric,
   CampaignOptimizerResult,
+  CampaignSettings,
   HealthTrend,
   KeywordAgg,
   KeywordMetric,
@@ -71,6 +72,13 @@ export interface OptimizerInput {
   searchTerms?: SearchTermMetric[]       // search_term_metrics theo ngày (P2)
   segments?: SegmentMetric[]             // segment_metrics device/hour/geo (P3)
   prev?: PeriodTotals                    // kỳ trước cùng độ dài — để so xu hướng WoW (D2)
+  settings?: CampaignSettings            // ngân sách + chiến lược giá thầu (D3)
+}
+
+// Chiến lược giá thầu tự động (không đặt bid tay được) → đổi lời khuyên "tăng bid".
+const MANUAL_BID_STRATEGIES = ['MANUAL_CPC', 'MANUAL_CPM', 'MANUAL_CPV']
+function isAutomatedBidding(strategy: string | null | undefined): boolean {
+  return strategy != null && strategy !== '' && !MANUAL_BID_STRATEGIES.includes(strategy)
 }
 
 // Gộp keyword theo (criterion, ad_group) trên toàn kỳ. Sắp theo chi phí giảm dần.
@@ -277,6 +285,12 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
       && health.isLostBudget != null && health.isLostBudget / 100 > CFG.IS_BUDGET_THRESHOLD) {
     const lostFrac = health.isLostBudget / 100
     const upside = totalRevenue * (lostFrac / Math.max(0.01, 1 - lostFrac))
+    const budget = input.settings?.daily_budget ?? null
+    const suggestedBudget = budget != null ? budget * (1 + Math.min(0.3, lostFrac + 0.1)) : null
+    const budgetEvidence = budget != null ? [{ metric: 'Ngân sách/ngày', value: money(budget) }] : []
+    const budgetAction = suggestedBudget != null
+      ? `Tăng ngân sách từ ${money(budget!)} → thử ~${money(suggestedBudget)}/ngày (từng bước 15–25%), giữ ROI trên ${CFG.TARGET_ROI}%.`
+      : `Tăng ngân sách từng bước (15–25%/lần), theo dõi ROI giữ trên ${CFG.TARGET_ROI}%.`
     suggestions.push(makeSuggestion({
       type: 'raise_budget', severity: 'high', confidence: 'roi', scope,
       title: 'Scale — tăng ngân sách để giành thêm hiển thị',
@@ -284,25 +298,33 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
       evidence: [
         { metric: 'ROI', value: pct(health.roi) },
         { metric: 'IS mất do ngân sách', value: pct(health.isLostBudget) },
-        { metric: 'DT Màn hình', value: money(totalRevenue) },
+        ...budgetEvidence,
       ],
-      recommendedAction: `Tăng ngân sách từng bước (15–25%/lần), theo dõi ROI giữ trên ${CFG.TARGET_ROI}%.`,
+      recommendedAction: budgetAction,
       impactScore: Math.max(upside, totalRevenue * 0.2),
     }))
   }
 
   // 4. Đủ lãi + IS mất do THỨ HẠNG cao → TĂNG BID / cải thiện QS.
+  //    Nếu đang dùng bid tự động (Maximize/tCPA/tROAS) thì "tăng bid tay" vô nghĩa
+  //    → đổi thành nới target / tăng ngân sách.
   if (health.roi != null && health.roi > CFG.TARGET_ROI
       && health.isLostRank != null && health.isLostRank / 100 > CFG.IS_RANK_THRESHOLD) {
+    const strategy = input.settings?.bidding_strategy ?? null
+    const automated = isAutomatedBidding(strategy)
+    const strategyEvidence = strategy ? [{ metric: 'Chiến lược bid', value: strategy }] : []
     suggestions.push(makeSuggestion({
       type: 'raise_bid', severity: 'medium', confidence: 'roi', scope,
-      title: 'Tăng bid — đang thua thứ hạng dù có lãi',
-      detail: `Mất ${pct(health.isLostRank)} hiển thị do Ad Rank thấp trong khi camp vẫn lãi (ROI ${pct(health.roi)}).`,
+      title: automated ? 'Nới target — đang thua thứ hạng dù có lãi' : 'Tăng bid — đang thua thứ hạng dù có lãi',
+      detail: `Mất ${pct(health.isLostRank)} hiển thị do Ad Rank thấp trong khi camp vẫn lãi (ROI ${pct(health.roi)}).${automated ? ` Camp dùng bid tự động (${strategy}) nên không đặt bid tay được.` : ''}`,
       evidence: [
         { metric: 'ROI', value: pct(health.roi) },
         { metric: 'IS mất do thứ hạng', value: pct(health.isLostRank) },
+        ...strategyEvidence,
       ],
-      recommendedAction: 'Tăng bid ở keyword sinh lời và/hoặc cải thiện Quality Score (mẫu QC + landing).',
+      recommendedAction: automated
+        ? 'Nới target CPA (tăng tCPA) / giảm target ROAS, hoặc tăng ngân sách; cải thiện Quality Score.'
+        : 'Tăng bid ở keyword sinh lời và/hoặc cải thiện Quality Score (mẫu QC + landing).',
       impactScore: totalRevenue * 0.15,
     }))
   }

@@ -303,6 +303,37 @@ function gaqlSegFn() {
   }`
 }
 
+// Ngân sách + chiến lược giá thầu + currency (Tối Ưu Camp D3). CHỈ ở script Hàng ngày.
+function gaqlSettingsFn() {
+  return `  var settingsRecords = [];
+  function flushSettings() {
+    for (var i = 0; i < settingsRecords.length; i += BATCH) {
+      UrlFetchApp.fetch(WEBHOOK, { method: 'post', contentType: 'application/json',
+        payload: JSON.stringify({ secret: SECRET, type: 'campaign_settings', records: settingsRecords.slice(i, i + BATCH) }) });
+    }
+    settingsRecords = [];
+  }
+  function scanSettings() {
+    try {
+      var cur = String(AdsApp.currentAccount().getCurrencyCode() || '');
+      var rows = AdsApp.search('SELECT campaign.id, campaign.bidding_strategy_type, campaign_budget.amount_micros FROM campaign ' +
+        "WHERE campaign.status IN ('ENABLED', 'PAUSED')");
+      while (rows.hasNext()) {
+        var r = rows.next();
+        var cb = r.campaignBudget || {};
+        settingsRecords.push({
+          campaign_id:      String(r.campaign.id),
+          bidding_strategy: r.campaign.biddingStrategyType || null,
+          daily_budget:     cb.amountMicros == null ? null : Number(cb.amountMicros) / 1e6,
+          currency_code:    cur
+        });
+        if (settingsRecords.length >= BATCH) flushSettings();
+      }
+      flushSettings();
+    } catch (e) { Logger.log('campaign_settings lỗi: ' + e); }
+  }`
+}
+
 function buildBackfillScript(secret: string, webhookUrl: string) {
   return `function main() {
   var SECRET     = '${secret}';
@@ -369,6 +400,8 @@ ${gaqlKwStFn()}
 
 ${gaqlSegFn()}
 
+${gaqlSettingsFn()}
+
   if (typeof MccApp !== 'undefined') {
     var accountIt = MccApp.accounts().get();
     while (accountIt.hasNext()) {
@@ -378,6 +411,7 @@ ${gaqlSegFn()}
       flush(); // gửi & giải phóng sau mỗi tài khoản
       scanKwSt();     // keyword + search term (Tối Ưu Camp P2)
       scanSegments(); // device/giờ/geo (Tối Ưu Camp P3)
+      scanSettings(); // ngân sách + bid strategy (Tối Ưu Camp D3)
     }
   } else {
     mccId = null;
@@ -386,6 +420,7 @@ ${gaqlSegFn()}
     flush();
     scanKwSt();
     scanSegments();
+    scanSettings();
   }
 
   Logger.log('Spend sync done: ' + sent + ' records (' + fromStr + ' → ' + toStr + ')');
@@ -714,7 +749,7 @@ export default function IntegrationsPage() {
             {scriptTab === 'spend' && (
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs text-slate-400">Đặt lịch: Daily 1:00 AM - 2:00 AM trong Google Ads Scripts. Đồng bộ chi phí + số liệu hiệu suất (CTR/CPC/Impression Share) + keyword/search term + device/giờ/geo cho <strong>Tối Ưu Camp</strong>.</p>
+                  <p className="text-xs text-slate-400">Đặt lịch: Daily 1:00 AM - 2:00 AM trong Google Ads Scripts. Đồng bộ chi phí + hiệu suất (CTR/CPC/IS) + keyword/search term + device/giờ/geo + ngân sách/bid strategy cho <strong>Tối Ưu Camp</strong>.</p>
                   <CopyButton text={buildSpendScript(secret, webhookUrl)} label="Copy code" />
                 </div>
                 <pre className="text-xs bg-slate-900 text-slate-100 rounded-lg p-4 overflow-x-auto overflow-y-auto leading-relaxed font-mono max-h-[400px]">

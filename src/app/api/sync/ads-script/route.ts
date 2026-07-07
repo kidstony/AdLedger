@@ -66,6 +66,15 @@ interface SearchTermRecord {
   cost?: number
   conversions?: number | null
 }
+// Ngân sách + chiến lược giá thầu (Tối Ưu Camp D3).
+interface CampaignSettingsRecord {
+  campaign_id: string
+  daily_budget?: number | null
+  bidding_strategy?: string | null
+  target_cpa?: number | null
+  target_roas?: number | null
+  currency_code?: string | null
+}
 // Phân khúc device/hour/geo (Tối Ưu Camp P3).
 interface SegmentMetricRecord {
   campaign_id: string
@@ -85,6 +94,7 @@ type Body =
   | { secret?: string; type: 'keyword_metrics'; records?: KeywordMetricRecord[] }
   | { secret?: string; type: 'search_terms'; records?: SearchTermRecord[] }
   | { secret?: string; type: 'segment_metrics'; records?: SegmentMetricRecord[] }
+  | { secret?: string; type: 'campaign_settings'; records?: CampaignSettingsRecord[] }
   | { secret?: string; records?: []; type?: undefined }
 
 // Gộp các dòng trùng khóa (cộng dồn metric) TRƯỚC khi upsert. Bắt buộc vì Postgres
@@ -310,6 +320,32 @@ export async function POST(req: NextRequest) {
     }
     await supabaseAdmin.from('sync_log').insert({ records: rows.length, status: 'success', message: 'segment_metrics', organization_id: organizationId })
     return NextResponse.json({ success: true, type: 'segment_metrics', count: rows.length })
+  }
+
+  // Campaign settings sync (D3) — ngân sách + chiến lược giá thầu + currency.
+  if ('type' in body && body.type === 'campaign_settings') {
+    const cRecords = (body as { records?: CampaignSettingsRecord[] }).records ?? []
+    if (cRecords.length === 0) return NextResponse.json({ success: true, type: 'campaign_settings', count: 0, ping: true })
+    const num = (v: unknown) => (v == null ? null : Number(v))
+    const rows = cRecords.map(r => ({
+      campaign_id:      r.campaign_id,
+      daily_budget:     num(r.daily_budget),
+      bidding_strategy: r.bidding_strategy ?? null,
+      target_cpa:       num(r.target_cpa),
+      target_roas:      num(r.target_roas),
+      currency_code:    r.currency_code ?? null,
+      organization_id:  organizationId,
+      updated_at:       new Date().toISOString(),
+    }))
+    const { error } = await supabaseAdmin
+      .from('campaign_settings')
+      .upsert(dedupeRows(rows, ['campaign_id']), { onConflict: 'campaign_id' })
+    if (error) {
+      await supabaseAdmin.from('sync_log').insert({ records: 0, status: 'error', message: `campaign_settings: ${error.message}`, organization_id: organizationId })
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    await supabaseAdmin.from('sync_log').insert({ records: rows.length, status: 'success', message: 'campaign_settings', organization_id: organizationId })
+    return NextResponse.json({ success: true, type: 'campaign_settings', count: rows.length })
   }
 
   // Spend sync: receive daily spend per campaign

@@ -10,13 +10,14 @@ import DateRangePicker from '@/components/ui/DateRangePicker'
 import HealthScorecard from '@/components/optimize/HealthScorecard'
 import SuggestionCard from '@/components/optimize/SuggestionCard'
 import BreakdownTables from '@/components/optimize/BreakdownTables'
-import type { CampaignHealth, KeywordAgg, OptimizationSuggestion, SearchTermAgg, SegmentAgg } from '@/lib/types'
+import type { CampaignHealth, CampaignSettings, KeywordAgg, OptimizationSuggestion, SearchTermAgg, SegmentAgg } from '@/lib/types'
 
 interface OptimizeResponse {
   project: { project_id: string; name: string; cid: string; campaign_id: string }
   range: { from: string; to: string }
   cost: { spend: number; rental: number; other: number; total: number }
   revenue: { screen: number; confirmed: number }
+  settings: CampaignSettings | null
   hasMetrics: boolean
   health: CampaignHealth
   suggestions: OptimizationSuggestion[]
@@ -123,7 +124,7 @@ export default function OptimizePage() {
 
       {!error && data && data.hasMetrics && (
         <div className="space-y-5">
-          <HealthScorecard health={data.health} cost={data.cost} confirmedRevenue={data.revenue.confirmed} />
+          <HealthScorecard health={data.health} cost={data.cost} confirmedRevenue={data.revenue.confirmed} settings={data.settings} />
 
           {!data.hasConversionTracking && (
             <div className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
