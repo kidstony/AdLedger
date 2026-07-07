@@ -263,6 +263,7 @@ export type OptSuggestionType =
   | 'tighten_match'    // siết broad match về phrase/exact (playbook 1c)
   | 'harvest_keyword'  // gặt search term thắng thành keyword exact (playbook 4a)
   | 'fix_geo_setting'  // Presence-or-interest → đổi sang Presence (playbook 1a-phụ)
+  | 'split_test'       // giả thuyết từ phân tích ngày thắng/thua — tách camp/test mới
 
 export type OptSeverity = 'high' | 'medium' | 'low'
 // 'roi' = dựa trên doanh thu thật (chắc chắn); 'engagement' = chỉ tín hiệu hiệu
@@ -372,12 +373,33 @@ export interface SegmentAgg {
   ctr: number
 }
 
+// Phân tích ngày thắng/thua (Insight Miner): so cơ cấu chi phí phân khúc giữa nhóm
+// ngày lãi và nhóm ngày lỗ → giả thuyết tách camp / test mới. TƯƠNG QUAN, không nhân quả.
+export interface WinDayLift {
+  dim: 'geo' | 'device' | 'hour' | 'search_term'
+  value: string          // giá trị gốc (geo id, MOBILE, '18', term)
+  label: string          // đã format (tên nước, '18h'...)
+  shareWinPct: number    // % chi phí trong nhóm ngày thắng
+  shareLosePct: number   // % chi phí trong nhóm ngày thua
+  liftPp: number         // shareWinPct − shareLosePct (điểm %)
+  cost: number           // chi phí phân khúc trong toàn kỳ chín
+}
+
+export interface WinDayAnalysis {
+  matureDays: number
+  winDays: string[]
+  loseDays: string[]
+  days: Array<{ date: string; profit: number; revenue: number; spend: number }>
+  lifts: WinDayLift[]    // sắp theo liftPp giảm dần (dương → âm)
+}
+
 export interface CampaignOptimizerResult {
   health: CampaignHealth
   suggestions: OptimizationSuggestion[]
   hasConversionTracking: boolean
   estimatedSavings: number   // ước tính chi phí có thể tiết kiệm/kỳ (chặn search-term rác)
   dataMaturity: 'young' | 'ok'   // 'young' = camp mới/ít ngày dữ liệu → kết luận thận trọng
+  winDayAnalysis: WinDayAnalysis | null   // null khi chưa đủ ngày chín / thiếu nhóm win-lose
   breakdowns: {
     keywords: KeywordAgg[]      // xấu nhất trước (theo chi phí)
     searchTerms: SearchTermAgg[]

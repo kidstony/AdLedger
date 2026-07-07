@@ -15,6 +15,7 @@ import {
   SegmentType,
 } from './types'
 import { countryNameByGeoId } from './geo-targets'
+import { mineWinDayInsights } from './insight-miner'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Rule engine tối ưu campaign — DETERMINISTIC, giải thích được, KHÔNG dùng LLM.
@@ -692,6 +693,14 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     }))
   }
 
+  // Insight Miner: phân tích ngày thắng/thua → giả thuyết tách camp / test mới.
+  const { analysis: winDayAnalysis, suggestions: insightSuggestions } = mineWinDayInsights({
+    campaign_id, campaignLabel, project_id,
+    revenueByDate: input.revenueByDate, spendByDate: input.spendByDate,
+    segments: input.segments, searchTerms: input.searchTerms,
+  })
+  suggestions.push(...insightSuggestions)
+
   const rank: Record<OptSeverity, number> = { high: 3, medium: 2, low: 1 }
   suggestions.sort((a, b) => rank[b.severity] - rank[a.severity] || b.impactScore - a.impactScore)
 
@@ -715,6 +724,7 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     hasConversionTracking,
     estimatedSavings,
     dataMaturity,
+    winDayAnalysis,
     breakdowns: {
       keywords: kwAgg.slice(0, CFG.BREAKDOWN_LIMIT),
       searchTerms: stAgg.slice(0, CFG.BREAKDOWN_LIMIT),

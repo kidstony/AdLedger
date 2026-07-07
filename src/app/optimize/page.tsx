@@ -11,7 +11,8 @@ import HealthScorecard from '@/components/optimize/HealthScorecard'
 import SuggestionCard from '@/components/optimize/SuggestionCard'
 import BreakdownTables from '@/components/optimize/BreakdownTables'
 import PortfolioTable, { type OverviewRow } from '@/components/optimize/PortfolioTable'
-import type { CampaignHealth, CampaignSettings, KeywordAgg, OptimizationSuggestion, SearchTermAgg, SegmentAgg } from '@/lib/types'
+import WinDayPanel from '@/components/optimize/WinDayPanel'
+import type { CampaignHealth, CampaignSettings, KeywordAgg, OptimizationSuggestion, SearchTermAgg, SegmentAgg, WinDayAnalysis } from '@/lib/types'
 
 interface OptimizeResponse {
   project: { project_id: string; name: string; cid: string; campaign_id: string }
@@ -25,6 +26,7 @@ interface OptimizeResponse {
   hasConversionTracking: boolean
   estimatedSavings: number
   dataMaturity: 'young' | 'ok'
+  winDayAnalysis: WinDayAnalysis | null
   breakdowns: { keywords: KeywordAgg[]; searchTerms: SearchTermAgg[]; segments: SegmentAgg[] }
   error?: string
   code?: string
@@ -217,6 +219,11 @@ export default function OptimizePage() {
                 {data.suggestions.map(s => <SuggestionCard key={s.id} s={s} />)}
               </div>
             )}
+          </section>
+
+          <section>
+            <h2 className="mb-2 text-sm font-semibold text-slate-700">Phân tích ngày lãi / ngày lỗ</h2>
+            <WinDayPanel analysis={data.winDayAnalysis} />
           </section>
 
           <section>

@@ -3,7 +3,7 @@
 import {
   TrendingUp, Scissors, Wallet, ArrowUpCircle, ArrowDownCircle,
   Ban, PauseCircle, Sparkles, AlertTriangle, MonitorSmartphone,
-  CalendarClock, Target, Filter, Sprout, MapPin, type LucideIcon,
+  CalendarClock, Target, Filter, Sprout, MapPin, FlaskConical, type LucideIcon,
 } from 'lucide-react'
 import { cn, formatVND } from '@/lib/utils'
 import type { OptimizationSuggestion, OptSuggestionType, OptSeverity } from '@/lib/types'
@@ -24,6 +24,7 @@ const ICONS: Record<OptSuggestionType, LucideIcon> = {
   tighten_match: Filter,
   harvest_keyword: Sprout,
   fix_geo_setting: MapPin,
+  split_test: FlaskConical,
 }
 
 // Màu theo mức độ (bám DESIGN_SYSTEM: đỏ=nguy, amber=cần chú ý, slate=thông tin).
@@ -48,7 +49,11 @@ export default function SuggestionCard({ s }: { s: OptimizationSuggestion }) {
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold text-slate-800">{s.title}</h3>
           <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', sev.badge)}>{sev.label}</span>
-          {s.confidence === 'roi' ? (
+          {s.type === 'split_test' ? (
+            <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-700">
+              Giả thuyết test
+            </span>
+          ) : s.confidence === 'roi' ? (
             <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-medium text-green-700">
               Dựa trên ROI thật
             </span>

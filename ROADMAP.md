@@ -238,7 +238,8 @@ Lọc dữ liệu theo role diễn ra ở **2 tầng**:
 - [x] **D4** `optimize/overview` + trang tab **Tổng quan** (bảng tất cả camp xếp theo cấp thiết) / **Chi tiết camp**.
 - [x] **E1 (playbook)** `tighten_match` (broad match chi tiêu lớn), `lower_bid` theo trần lời-mỗi-click (60% DT/click), `harvest_keyword` (gặt search term thắng thành exact), `dataMaturity` (banner camp non).
 - [x] **E2 (playbook)** [`migration_optimizer_deep.sql`](supabase/migration_optimizer_deep.sql): `campaign_metrics.top_is/abs_top_is` → rule "đua top vô ích khi margin mỏng"; `campaign_settings.geo_target_type` → `fix_geo_setting` (Presence-or-interest); `keyword_metrics.qs_*` (3 thành phần QS) → items ghi VÌ SAO QS thấp + tooltip bảng keyword.
-- [ ] Ceiling (để sau): conversion signal từ network (postback/OCI) → ROI mức keyword; phân tích ad/RSA; charts.
+- [x] **Insight Miner** [`insight-miner.ts`](src/lib/insight-miner.ts): phân tích ngày lãi/lỗ (win-day mix) — so cơ cấu chi phí geo/device/giờ/search-term giữa nhóm ngày lãi và ngày lỗ → thẻ `split_test` "Giả thuyết test" (tách camp/tăng bid phân khúc nghiêng win; giảm/loại trừ phân khúc nghiêng lose; đột biến ngày lãi nhất). Panel `WinDayPanel` (dải ngày + bảng lift). Chỉ xét ngày "chín"; gate ≥6 ngày có cả 2 nhóm. Thuần engine+UI, không đổi DB/script.
+- [ ] Ceiling (để sau): conversion signal từ network (postback/OCI) → ROI mức keyword; phân tích ad/RSA; audience (cần GAQL audience_view); charts.
 
 ### Việc còn mở / ý tưởng tiếp theo — ☐ Chưa làm
 - [ ] Tự động lấy doanh thu từ **network API** (thay nhập tay) — ghi thẳng vào `affiliate_revenue`, **không đổi** phần tính P&L phía sau
