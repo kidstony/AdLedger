@@ -27,8 +27,9 @@ import { countryNameByGeoId } from './geo-targets'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const CFG = {
-  MIN_SPEND_TO_JUDGE: 200_000,   // dưới mức này chưa đủ dữ liệu để kết luận cắt
+  MIN_CLICKS_TO_JUDGE: 20,       // cần ít nhất N click mới đủ để kết luận (currency-agnostic)
   MIN_DAYS_TO_JUDGE: 3,          // cần ít nhất N ngày dữ liệu
+  DAYPART_SPEND_FRACTION: 0.05,  // 1 thứ trong tuần "đáng kể" nếu ≥ 5% tổng chi phí
   LOSS_ROI: -20,                 // ROI% dưới mức này = đang lỗ nặng → cắt
   TARGET_ROI: 20,                // ROI% trên mức này = đủ lãi để scale
   IS_BUDGET_THRESHOLD: 0.10,     // IS mất do budget > 10% → tăng budget
@@ -202,7 +203,9 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   const days = new Set(metrics.map(m => m.date)).size
   const hasConversionTracking = metrics.some(m => (m.conversions ?? 0) > 0)
   const scope = { level: 'campaign' as const, label: campaignLabel, campaign_id, project_id }
-  const enoughData = totalSpend >= CFG.MIN_SPEND_TO_JUDGE && days >= CFG.MIN_DAYS_TO_JUDGE
+  // Gate "đủ dữ liệu để kết luận" theo SỐ CLICK (không phụ thuộc tiền tệ — trước
+  // đây dùng ngưỡng VND nên tài khoản USD không bao giờ vượt → chặn hết rule cut).
+  const enoughData = health.clicks >= CFG.MIN_CLICKS_TO_JUDGE && days >= CFG.MIN_DAYS_TO_JUDGE
 
   // ── ROI-based (confidence 'roi') ──────────────────────────────────────────
 
@@ -306,8 +309,9 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
       byWeekday.set(wd, cur)
     }
     const WD = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7']
+    const daypartMinSpend = totalSpend * CFG.DAYPART_SPEND_FRACTION
     const losers = [...byWeekday.entries()]
-      .filter(([, v]) => v.profit < 0 && v.spend >= CFG.MIN_SPEND_TO_JUDGE)
+      .filter(([, v]) => v.profit < 0 && v.spend >= daypartMinSpend)
       .sort((a, b) => a[1].profit - b[1].profit)
     if (enoughData && totalRevenue > 0 && losers.length) {
       const [wd, v] = losers[0]
