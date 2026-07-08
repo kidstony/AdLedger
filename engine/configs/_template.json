@@ -1,0 +1,102 @@
+{
+  "_comment": "TEMPLATE — copy thành <network_id>.json rồi sửa. Các key _comment chỉ để giải thích, engine bỏ qua. File bắt đầu bằng '_' không được chạy tự động (chỉ chạy khi gọi đích danh --network=...).",
+
+  "network_id": "my_network",
+  "_comment_network_id": "Slug duy nhất: chữ thường/số/_/-. Dùng làm tên thư mục profile Chrome và cột network_id trong DB.",
+
+  "network_name": "My Network",
+  "enabled": true,
+  "_comment_enabled": "false = fetch-all.js bỏ qua network này (vẫn chạy được bằng --network=...).",
+
+  "window_days": 30,
+  "timezone": "Asia/Ho_Chi_Minh",
+  "_comment_timezone": "Timezone để tính cửa sổ ngày. Bỏ trống/null = timezone máy.",
+
+  "sync_pnl": true,
+  "_comment_sync_pnl": "true = sau khi ghi revenue_raw, cộng dồn theo (project, ngày) và upsert vào affiliate_revenue type='pending' (số trên P&L). false = chỉ ghi staging revenue_raw.",
+
+  "project_mapping": {
+    "_comment": "Map doanh thu về project trên dashboard P&L. Duyệt rules theo thứ tự, rule nào khớp regex trước thì lấy project đó; không khớp rule nào → default_project_id (hoặc project_id của account nếu có). project_id phải tồn tại trong bảng projects.",
+    "default_project_id": "du-an-mac-dinh",
+    "rules": [
+      { "match_field": "offer_name", "pattern": "Shopee.*", "project_id": "du-an-shopee" }
+    ]
+  },
+
+  "_comment_accounts": "Tùy chọn. Nhiều tài khoản/ref CÙNG nền tảng này, mỗi tài khoản 1 profile Chrome riêng (thư mục = account.id) và gán về 1 dự án riêng. Bỏ trống → 1 tài khoản ngầm = network_id, gán theo default_project_id. Đăng nhập: node login.js --network=<network_id> (lặp từng account) hoặc --account=<account_id>. reports/mapping/login_check/fx dùng chung cho mọi account.",
+  "accounts": [
+    { "id": "my_network_main", "label": "Tài khoản chính", "project_id": "du-an-mac-dinh" },
+    { "id": "my_network_ref2", "label": "Ref B",          "project_id": "du-an-khac" }
+  ],
+
+  "fx_to_usd": 1,
+  "_comment_fx_to_usd": "Hệ số nhân TĨNH đưa doanh thu về USD trước khi ghi affiliate_revenue (dashboard hiển thị $). Network trả USD thì để 1.",
+
+  "fx_auto_from": null,
+  "_comment_fx_auto_from": "Tùy chọn. Khai mã tiền tệ (VD 'EUR') → engine TỰ lấy tỷ giá realtime <cur>→USD (frankfurter.dev, fallback open.er-api.com) và bỏ qua fx_to_usd. Để null nếu doanh thu đã là USD hoặc muốn dùng tỷ giá tĩnh. Nếu nguồn tỷ giá chết: revenue_raw vẫn ghi, nhưng bỏ qua đồng bộ P&L lần đó (chạy lại sau).",
+
+  "login_check": {
+    "_comment": "Dấu hiệu nhận biết đã bị đăng xuất (khi 0 response hứng được). Khớp URL cuối cùng hoặc selector tồn tại trên trang → lỗi NO_CAPTURE reason session_expired.",
+    "logged_out_url_patterns": ["/login", "/signin"],
+    "logged_out_selectors": ["input[type='password']"]
+  },
+
+  "login_url": "https://app.example.com/login",
+  "_comment_login_url": "Tùy chọn — URL mà login.js sẽ mở. Bỏ trống = dùng url của report đầu tiên.",
+
+  "reports": [
+    {
+      "name": "conversions",
+      "_comment_name": "Tên report để hiện trong log. Một network có thể có nhiều report — tất cả gộp chung 1 batch.",
+
+      "url": "https://app.example.com/reports?start={start_date}&end={end_date}",
+      "_comment_url": "Trang báo cáo. {start_date}/{end_date} được thay bằng cửa sổ window_days theo url_date_format. Nếu trang không nhận ngày qua URL: bỏ placeholder, engine hứng range mặc định của trang (hoặc dùng thẳng URL XHR có param ngày).",
+
+      "url_date_format": "YYYY-MM-DD",
+      "_comment_url_date_format": "Token dayjs (YYYY-MM-DD, MM/DD/YYYY, DD-MM-YYYY...) hoặc 'unix' / 'unix_ms'.",
+
+      "capture": {
+        "url_pattern": "api/publisher/report",
+        "_comment_url_pattern": "Hứng mọi response có URL khớp pattern này (xem DevTools → Network → XHR để tìm). Engine gom TẤT CẢ response khớp, không dừng ở cái đầu (chống thiếu trang pagination).",
+        "pattern_type": "substring",
+        "_comment_pattern_type": "'substring' (chứa chuỗi) hoặc 'regex'.",
+        "methods": ["GET", "POST"],
+        "_comment_methods": "Lọc method của request. Bỏ key này = nhận mọi method."
+      },
+
+      "wait": {
+        "strategy": "networkidle",
+        "_comment_strategy": "'networkidle' (đợi mạng im) hoặc 'fixed' (chỉ đợi load + post_load_wait_ms).",
+        "navigation_timeout_ms": 60000,
+        "post_load_wait_ms": 5000,
+        "capture_settle_ms": 3000,
+        "_comment_settle": "Sau khi load, engine đợi thêm post_load_wait_ms rồi poll đến khi KHÔNG có response khớp mới nào trong capture_settle_ms — chống SPA bắn XHR muộn."
+      },
+
+      "rows_path": "data.results[]",
+      "_comment_rows_path": "Đường dẫn dot-notation tới mảng dòng dữ liệu trong JSON hứng được. Hậu tố [] = flatten mảng rồi đi tiếp vào từng phần tử (VD 'data.pages[].rows'). Giá trị cuối phải là mảng.",
+
+      "mapping": {
+        "_comment": "path = dot-notation trong 1 dòng dữ liệu. date/offer_name/revenue là bắt buộc. required:false + default = dùng default khi thiếu.",
+        "date":        { "path": "conversion_date", "formats": ["YYYY-MM-DD HH:mm:ss", "YYYY-MM-DD"], "_comment": "formats thử lần lượt; hỗ trợ thêm 'unix', 'unix_ms', 'iso'." },
+        "offer_id":    { "path": "offer.id", "required": false, "default": "" },
+        "offer_name":  { "path": "offer.name", "required": true },
+        "revenue":     { "path": "publisher_commission", "divisor": 1, "thousands_separator": ",", "decimal_separator": ".", "_comment": "divisor=100 nếu API tính bằng cents. Engine tự strip ký hiệu tiền tệ/khoảng trắng." },
+        "currency":    { "path": "currency", "required": false, "default": "USD" },
+        "clicks":      { "path": "clicks", "required": false },
+        "conversions": { "path": "total_conversions", "required": false },
+        "status":      { "path": "status", "required": false, "value_map": { "approved": "confirmed", "pending": "pending", "rejected": "rejected" }, "default": "pending" }
+      },
+
+      "duplicate_strategy": "sum",
+      "_comment_duplicate_strategy": "Khi nhiều dòng trùng khóa (network+ngày+offer): 'sum' = cộng dồn revenue/clicks/conversions (dòng conversion-level); 'last' = dòng sau đè dòng trước (dòng tổng theo ngày bị lặp qua các trang pagination).",
+
+      "validation": {
+        "min_mapped_rows": 1,
+        "_comment_min": "Map được ít hơn số này → lỗi MAPPING_FAILED. Để 0 nếu network có thể không có doanh thu.",
+        "max_invalid_row_ratio": 0.2,
+        "_comment_ratio": "Tỷ lệ dòng lỗi (thiếu field bắt buộc/parse fail) vượt ngưỡng → MAPPING_FAILED."
+      }
+    }
+  ]
+}

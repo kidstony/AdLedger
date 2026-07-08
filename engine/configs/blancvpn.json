@@ -1,0 +1,53 @@
+{
+  "network_id": "blancvpn",
+  "network_name": "BlancVPN Partner",
+  "enabled": true,
+  "window_days": 30,
+  "timezone": "Asia/Ho_Chi_Minh",
+
+  "sync_pnl": true,
+  "project_mapping": {
+    "default_project_id": "proj011"
+  },
+  "fx_auto_from": "EUR",
+  "_comment_fx": "Hoa hồng tính bằng EUR; engine tự lấy tỷ giá EUR→USD realtime để đổ vào P&L (hiển thị $).",
+
+  "login_check": {
+    "logged_out_url_patterns": ["/login", "/signin", "/auth", "/sign-in"],
+    "logged_out_selectors": ["input[type='password']"]
+  },
+  "login_url": "https://partner.blancvpn.com/reports",
+
+  "reports": [
+    {
+      "name": "commissions_daily",
+      "_comment_url": "Gọi thẳng API chart theo ngày — trả mảng {date, total_commission} mỗi ngày. Engine tự set cửa sổ 30 ngày qua date_from/date_to.",
+      "_comment_gross_vs_approved": "LƯU Ý: total_commission ở đây là hoa hồng GROSS (gồm cả pending). Con số 'đã duyệt' trên dashboard (VD €624.65) THẤP hơn và BlancVPN không phát qua bất kỳ API nào (chỉ tính ở giao diện, gộp theo tháng). Ta cố ý dùng gross theo ngày → ghi type='pending'. Chênh lệch gross vs approved là BÌNH THƯỜNG, không phải lỗi.",
+      "url": "https://partner.blancvpn.com/api/data/reports-chart?date_to={end_date}&date_from={start_date}&chart=commissions-chart",
+      "url_date_format": "YYYY-MM-DD",
+      "capture": {
+        "url_pattern": "chart=commissions-chart",
+        "pattern_type": "substring"
+      },
+      "wait": {
+        "strategy": "networkidle",
+        "navigation_timeout_ms": 60000,
+        "post_load_wait_ms": 3000,
+        "capture_settle_ms": 3000
+      },
+      "rows_path": "data",
+      "mapping": {
+        "date":       { "path": "date", "formats": ["iso"] },
+        "offer_id":   { "path": "__const__", "required": false, "default": "" },
+        "offer_name": { "path": "__const__", "required": false, "default": "BlancVPN" },
+        "revenue":    { "path": "total_commission", "divisor": 100, "_comment": "API trả cents EUR → chia 100 ra euro. Đã đối chiếu: 62454 → €624.54 khớp dashboard." },
+        "currency":   { "path": "__const__", "required": false, "default": "EUR" }
+      },
+      "duplicate_strategy": "last",
+      "validation": {
+        "min_mapped_rows": 1,
+        "max_invalid_row_ratio": 0.2
+      }
+    }
+  ]
+}

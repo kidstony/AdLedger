@@ -1,0 +1,6 @@
+# Chrome profiles chứa cookie đăng nhập MỌI network — tuyệt đối không commit
+profiles/
+logs/
+.env
+.lock
+node_modules/

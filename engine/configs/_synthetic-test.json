@@ -1,0 +1,49 @@
+{
+  "_comment": "Config test pipeline KHÔNG cần đăng nhập: trỏ thẳng vào JSON công khai của GitHub API (releases của repo React). Dùng: node fetch-all.js --network=_synthetic_test --dry-run. sync_pnl=false nên không chạm affiliate_revenue. Xóa dữ liệu test: DELETE FROM revenue_raw WHERE network_id='_synthetic_test';",
+
+  "network_id": "_synthetic_test",
+  "network_name": "Synthetic Test (GitHub API)",
+  "enabled": false,
+  "window_days": 30,
+  "sync_pnl": false,
+
+  "project_mapping": {
+    "default_project_id": "synthetic-test"
+  },
+
+  "login_check": {
+    "logged_out_url_patterns": [],
+    "logged_out_selectors": []
+  },
+
+  "reports": [
+    {
+      "name": "github_releases",
+      "url": "https://api.github.com/repos/facebook/react/releases?per_page=30",
+      "capture": {
+        "url_pattern": "releases?per_page=30",
+        "pattern_type": "substring"
+      },
+      "wait": {
+        "strategy": "fixed",
+        "navigation_timeout_ms": 30000,
+        "post_load_wait_ms": 1000,
+        "capture_settle_ms": 1000
+      },
+      "rows_path": "",
+      "_comment_rows_path": "Response gốc đã là mảng → rows_path rỗng.",
+      "mapping": {
+        "date":       { "path": "published_at", "formats": ["iso"] },
+        "offer_id":   { "path": "tag_name", "required": false, "default": "" },
+        "offer_name": { "path": "name", "required": true },
+        "revenue":    { "path": "id", "divisor": 1000000 },
+        "currency":   { "path": "__missing__", "required": false, "default": "USD" }
+      },
+      "duplicate_strategy": "last",
+      "validation": {
+        "min_mapped_rows": 1,
+        "max_invalid_row_ratio": 0.5
+      }
+    }
+  ]
+}

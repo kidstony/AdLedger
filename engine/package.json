@@ -1,0 +1,20 @@
+{
+  "name": "revenue-fetch-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hứng doanh thu affiliate từ dashboard các network về Supabase (Playwright, config-driven)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "fetch": "node fetch-all.js",
+    "login": "node login.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "dayjs": "^1.11.13",
+    "dotenv": "^16.4.5",
+    "playwright": "^1.50.0"
+  }
+}
