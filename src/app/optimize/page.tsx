@@ -13,6 +13,7 @@ import BreakdownTables from '@/components/optimize/BreakdownTables'
 import PortfolioTable, { type OverviewRow } from '@/components/optimize/PortfolioTable'
 import WinDayPanel from '@/components/optimize/WinDayPanel'
 import LaunchChecklist from '@/components/optimize/LaunchChecklist'
+import NextSteps from '@/components/optimize/NextSteps'
 import type { CampaignHealth, CampaignSettings, KeywordAgg, LaunchPlan, OptimizationSuggestion, SearchTermAgg, SegmentAgg, WinDayAnalysis } from '@/lib/types'
 
 interface OptimizeResponse {
@@ -188,6 +189,8 @@ export default function OptimizePage() {
       {!error && data && data.hasMetrics && (
         <div className="space-y-5">
           <HealthScorecard health={data.health} cost={data.cost} confirmedRevenue={data.revenue.confirmed} settings={data.settings} />
+
+          <NextSteps suggestions={data.suggestions} />
 
           {!data.hasConversionTracking && (
             <div className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">

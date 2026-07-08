@@ -138,7 +138,7 @@ export function mineWinDayInsights(input: MinerInput): {
     suggestions.push(sug({
       type: 'split_test', severity: 'medium', confidence: 'engagement', scope,
       title: `Giả thuyết — ngày thắng nghiêng về ${top.slice(0, 3).map(l => l.label).join(', ')}`,
-      detail: `So ${winDays.length} ngày lãi với ${loseDays.length} ngày lỗ: các phân khúc này chiếm tỉ trọng chi phí cao hơn hẳn trong ngày lãi. Tương quan (chưa phải nhân quả) — đáng tách ra để P&L đo độc lập.`,
+      detail: `So ${winDays.length} ngày lãi với ${loseDays.length} ngày lỗ: ngày nào tiền quảng cáo dồn vào các phân khúc này thì ngày đó thường LÃI. Mới là tương quan (chưa chắc nhân quả) — đáng tách ra chạy riêng để biết chắc.`,
       evidence: [
         { metric: 'Ngày lãi / lỗ', value: `${winDays.length} / ${loseDays.length}` },
         { metric: 'Phân khúc nghiêng win', value: String(positives.length) },
@@ -148,7 +148,7 @@ export function mineWinDayInsights(input: MinerInput): {
       items: top.map(l => ({
         label: `${l.label} (${l.dim === 'search_term' ? 'term' : l.dim})`,
         cost: l.cost,
-        meta: `share win ${pct0(l.shareWinPct)} vs lose ${pct0(l.shareLosePct)} · +${l.liftPp.toFixed(0)}pp`,
+        meta: `chiếm ${pct0(l.shareWinPct)} chi phí ngày lãi, chỉ ${pct0(l.shareLosePct)} ngày lỗ`,
       })),
     }))
   }
@@ -160,7 +160,7 @@ export function mineWinDayInsights(input: MinerInput): {
     suggestions.push(sug({
       type: 'split_test', severity: 'medium', confidence: 'engagement', scope,
       title: `Giả thuyết — ${top.slice(0, 3).map(l => l.label).join(', ')} gắn với ngày lỗ`,
-      detail: `Các phân khúc này chiếm tỉ trọng chi phí cao hơn hẳn trong ${loseDays.length} ngày lỗ. Cân nhắc giảm bid / loại trừ thử rồi quan sát P&L.`,
+      detail: `Ngày nào tiền quảng cáo dồn vào các phân khúc này thì ngày đó thường LỖ (so ${loseDays.length} ngày lỗ với ${winDays.length} ngày lãi). Cân nhắc giảm bid / loại trừ thử rồi quan sát P&L.`,
       evidence: [
         { metric: 'Ngày lãi / lỗ', value: `${winDays.length} / ${loseDays.length}` },
         { metric: 'Phân khúc nghiêng lose', value: String(negatives.length) },
@@ -170,7 +170,7 @@ export function mineWinDayInsights(input: MinerInput): {
       items: top.map(l => ({
         label: `${l.label} (${l.dim === 'search_term' ? 'term' : l.dim})`,
         cost: l.cost,
-        meta: `share lose ${pct0(l.shareLosePct)} vs win ${pct0(l.shareWinPct)} · ${l.liftPp.toFixed(0)}pp`,
+        meta: `chiếm ${pct0(l.shareLosePct)} chi phí ngày lỗ, còn ngày lãi chỉ ${pct0(l.shareWinPct)}`,
       })),
     }))
   }
