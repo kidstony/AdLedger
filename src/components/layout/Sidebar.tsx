@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { BarChart3, FolderOpen, DollarSign, LogOut, Plug, Receipt, Building2, Users, UsersRound, ChevronDown, Settings, Gauge } from 'lucide-react'
+import { BarChart3, FolderOpen, DollarSign, LogOut, Plug, Receipt, Building2, Users, UsersRound, ChevronDown, Settings, Gauge, Database } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/context/AuthContext'
 import { useProjectsContext } from '@/context/ProjectsContext'
@@ -41,6 +41,7 @@ export default function Sidebar() {
     { href: '/banks',              label: 'Quản lý Bank',     icon: Building2,  roles: ['super_admin', 'manager', 'admin'] },
     { href: teamId ? `/teams/${teamId}` : '#', label: 'Quản lý Team', icon: UsersRound, roles: ['manager'] },
     { href: '/admin/integrations', label: 'Tích hợp',         icon: Plug,       roles: ['super_admin', 'admin'] },
+    { href: '/admin/revenue-engine', label: 'Quản lý Doanh thu Engine', icon: Database, roles: ['super_admin', 'manager'] },
   ]
 
   const adminItems = [
