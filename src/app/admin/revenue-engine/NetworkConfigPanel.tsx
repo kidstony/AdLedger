@@ -63,6 +63,7 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
   // Tiền tệ nguồn (config-level): nếu ≠ USD → engine tự đổi sang USD khi sync (fx_auto_from).
   const [fxFrom, setFxFrom] = useState('USD')
   const [fxRate, setFxRate] = useState<number | null>(1) // tỷ giá <fxFrom>→USD (để preview quy đổi)
+  const [fxLoading, setFxLoading] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const patchCard = (t: RType, p: Partial<Card>) => setCards(cs => ({ ...cs, [t]: { ...cs[t], ...p } }))
@@ -121,16 +122,17 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Lấy tỷ giá <fxFrom>→USD (frankfurter, free) để hiện preview quy đổi. USD → 1.
+  // Lấy tỷ giá <fxFrom>→USD qua API route CÙNG ORIGIN (server fetch hộ, tránh CORS). USD → 1.
   useEffect(() => {
-    if (fxFrom === 'USD') { setFxRate(1); return }
+    if (fxFrom === 'USD') { setFxRate(1); setFxLoading(false); return }
     let ok = true
-    setFxRate(null)
-    fetch(`https://api.frankfurter.dev/v1/latest?base=${fxFrom}&symbols=USD`)
-      .then(r => r.json()).then(d => { if (ok) setFxRate(d?.rates?.USD ?? null) })
-      .catch(() => { if (ok) setFxRate(null) })
+    setFxLoading(true); setFxRate(null)
+    authFetch(`/api/admin/revenue-engine/fx-rate?from=${encodeURIComponent(fxFrom)}`)
+      .then(r => r.ok ? r.json() : { rate: null })
+      .then(d => { if (ok) { setFxRate(typeof d?.rate === 'number' ? d.rate : null); setFxLoading(false) } })
+      .catch(() => { if (ok) { setFxRate(null); setFxLoading(false) } })
     return () => { ok = false }
-  }, [fxFrom])
+  }, [fxFrom, authFetch])
 
   const startDiscover = async (type: RType) => {
     setError(null); setDiscovering(type)
@@ -349,7 +351,11 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
                 <select value={fxFrom} onChange={e => setFxFrom(e.target.value)} className="border border-slate-200 rounded px-2 py-1 text-slate-700">
                   {['USD', 'EUR', 'GBP', 'VND', 'AUD', 'CAD', 'JPY', 'RUB'].map(c => <option key={c} value={c}>{c}{c === 'USD' ? ' (không đổi)' : ''}</option>)}
                 </select>
-                {fxFrom !== 'USD' && <span className="text-slate-400">{fxRate ? `1 ${fxFrom} ≈ $${fxRate.toFixed(3)} → P&L quy USD khi sync` : 'đang lấy tỷ giá…'}</span>}
+                {fxFrom !== 'USD' && (
+                  <span className="text-slate-400">
+                    {fxLoading ? 'đang lấy tỷ giá…' : fxRate ? `1 ${fxFrom} ≈ $${fxRate.toFixed(3)} → P&L quy USD khi sync` : 'chưa lấy được tỷ giá (vẫn tự đổi khi sync)'}
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500">2 nguồn doanh thu ngang cấp — mỗi nguồn 1 URL riêng. Cấu hình rồi bấm <b>Lưu cấu hình</b>.</p>
               {renderCard('pending')}
