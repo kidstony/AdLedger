@@ -129,7 +129,10 @@ function isTrackerUrl(url: string): boolean {
 }
 
 function pickRevenueField(rows: Row[], dateField: string | null): string | null {
-  const keys = Object.keys(rows[0] ?? {}).filter((k) => k !== dateField)
+  // Loại cột ngày (dateField + cột date-like khác, vd col_2 trùng "Created"): ngày parse ra
+  // số khổng lồ (20260613102049) dễ bị nhầm là doanh thu.
+  const isDateCol = (k: string) => rows.filter((r) => isDateLike(r[k])).length / rows.length >= 0.6
+  const keys = Object.keys(rows[0] ?? {}).filter((k) => k !== dateField && !isDateCol(k))
   // Cột "số": phần lớn giá trị parse ra số (0.6 — chừa dòng tổng/header lẫn trong bảng).
   const numeric = keys.filter((k) => rows.filter((r) => toNum(r[k]) !== null).length / rows.length >= 0.6)
   if (numeric.length === 0) return null
@@ -226,7 +229,9 @@ export async function POST(req: Request) {
     const revenueField = pickRevenueField(c.arr, dateField)
     // +0.5 nếu cột doanh thu có ký hiệu tiền → nguồn "tiền thật" thắng nguồn số đếm.
     const revHasSym = !!revenueField && MONEY_SYM.test(c.arr.map((r) => String(r[revenueField] ?? '')).join(' '))
-    return { ...c, dateField, revenueField, score: (dateField ? 2 : 0) + (revenueField ? 2 : 0) + (revHasSym ? 0.5 : 0) + Math.min(c.arr.length, 100) / 100 }
+    // +1 nếu là XHR: dữ liệu có cấu trúc, bắt ỔN ĐỊNH lúc sync tự động (bảng DOM dễ vỡ/render trễ).
+    const xhrBonus = c.kind === 'xhr' ? 1 : 0
+    return { ...c, dateField, revenueField, score: (dateField ? 2 : 0) + (revenueField ? 2 : 0) + (revHasSym ? 0.5 : 0) + xhrBonus + Math.min(c.arr.length, 100) / 100 }
   }).sort((a, b) => b.score - a.score)
 
   let chosen = scored[0]
