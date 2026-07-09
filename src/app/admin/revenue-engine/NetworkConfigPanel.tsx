@@ -60,6 +60,9 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
   const [discoverCmdId, setDiscoverCmdId] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [saving, setSaving] = useState(false)
+  // Tiền tệ nguồn (config-level): nếu ≠ USD → engine tự đổi sang USD khi sync (fx_auto_from).
+  const [fxFrom, setFxFrom] = useState('USD')
+  const [fxRate, setFxRate] = useState<number | null>(1) // tỷ giá <fxFrom>→USD (để preview quy đổi)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const patchCard = (t: RType, p: Partial<Card>) => setCards(cs => ({ ...cs, [t]: { ...cs[t], ...p } }))
@@ -100,6 +103,7 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
       const res = await authFetch(`${CFG_API}?network_id=${encodeURIComponent(networkId)}`)
       if (res.ok) {
         const { config } = await res.json().catch(() => ({ config: null }))
+        if (config?.config?.fx_auto_from) setFxFrom(String(config.config.fx_auto_from).toUpperCase())
         const reps: SavedReport[] = Array.isArray(config?.config?.reports) ? config.config.reports : []
         for (const r of reps) {
           const u = r.url === '{base}' ? '' : (r.url ?? '')
@@ -116,6 +120,17 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Lấy tỷ giá <fxFrom>→USD (frankfurter, free) để hiện preview quy đổi. USD → 1.
+  useEffect(() => {
+    if (fxFrom === 'USD') { setFxRate(1); return }
+    let ok = true
+    setFxRate(null)
+    fetch(`https://api.frankfurter.dev/v1/latest?base=${fxFrom}&symbols=USD`)
+      .then(r => r.json()).then(d => { if (ok) setFxRate(d?.rates?.USD ?? null) })
+      .catch(() => { if (ok) setFxRate(null) })
+    return () => { ok = false }
+  }, [fxFrom])
 
   const startDiscover = async (type: RType) => {
     setError(null); setDiscovering(type)
@@ -176,7 +191,8 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
       .filter(Boolean)
     if (!reports.length) { setError('Chưa có nguồn nào phân tích được để lưu.'); setSaving(false); return }
     const base = (cards.pending.det?.draft ?? cards.confirmed.det?.draft) as Record<string, unknown>
-    const config = { ...base, reports }
+    // fx_auto_from: nguồn ≠ USD → engine tự đổi sang USD khi sync.
+    const config = { ...base, reports, fx_auto_from: fxFrom && fxFrom !== 'USD' ? fxFrom : null }
     const res = await authFetch(CFG_API, { method: 'PUT', body: JSON.stringify({ network_id: networkId, config }) })
     setSaving(false)
     if (res.ok) onSaved()
@@ -275,7 +291,7 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
             <div className="border border-slate-200 rounded overflow-hidden">
               <div className="bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600 flex justify-between">
                 <span>Preview: {det.preview.length} ngày</span>
-                <span>Tổng: {total.toLocaleString('en-US', { maximumFractionDigits: 2 })}</span>
+                <span>Tổng: {total.toLocaleString('en-US', { maximumFractionDigits: 2 })} {fxFrom}{fxFrom !== 'USD' && fxRate ? ` ≈ $${(total * fxRate).toLocaleString('en-US', { maximumFractionDigits: 2 })}` : ''}</span>
               </div>
               <div className="max-h-40 overflow-auto">
                 {det.preview.length === 0 ? (
@@ -328,6 +344,13 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
             </div>
           ) : (
             <>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-500">Tiền tệ nguồn (tự đổi ra USD):</span>
+                <select value={fxFrom} onChange={e => setFxFrom(e.target.value)} className="border border-slate-200 rounded px-2 py-1 text-slate-700">
+                  {['USD', 'EUR', 'GBP', 'VND', 'AUD', 'CAD', 'JPY', 'RUB'].map(c => <option key={c} value={c}>{c}{c === 'USD' ? ' (không đổi)' : ''}</option>)}
+                </select>
+                {fxFrom !== 'USD' && <span className="text-slate-400">{fxRate ? `1 ${fxFrom} ≈ $${fxRate.toFixed(3)} → P&L quy USD khi sync` : 'đang lấy tỷ giá…'}</span>}
+              </div>
               <p className="text-xs text-slate-500">2 nguồn doanh thu ngang cấp — mỗi nguồn 1 URL riêng. Cấu hình rồi bấm <b>Lưu cấu hình</b>.</p>
               {renderCard('pending')}
               {renderCard('confirmed')}
