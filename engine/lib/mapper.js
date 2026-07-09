@@ -38,7 +38,7 @@ function mapRow(raw, mapping) {
     }
 
     if (field === 'date') {
-      value = parseDate(value, spec.formats ?? [])
+      value = parseDate(value, spec.formats ?? [], spec.order ?? 'DMY')
       if (!value) return { error: `date không parse được (path=${spec.path})` }
     } else if (field === 'revenue') {
       value = parseAmount(value, spec)

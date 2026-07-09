@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { getSupabase } from './db.js'
 
 const ENGINE_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 export const CONFIGS_DIR = path.join(ENGINE_DIR, 'configs')
@@ -79,8 +80,9 @@ function validateConfig(file, cfg) {
 
   for (const report of cfg.reports) {
     if (!report.url) fail(file, `report "${report.name ?? '?'}": thiếu url`)
-    if (!report.capture?.url_pattern) fail(file, `report "${report.name ?? '?'}": thiếu capture.url_pattern`)
-    if (report.capture.pattern_type === 'regex') {
+    const isHtml = report.mode === 'html_table'
+    if (!isHtml && !report.capture?.url_pattern) fail(file, `report "${report.name ?? '?'}": thiếu capture.url_pattern`)
+    if (!isHtml && report.capture.pattern_type === 'regex') {
       try {
         new RegExp(report.capture.url_pattern)
       } catch {
@@ -114,52 +116,80 @@ function applyDefaults(cfg) {
   cfg.project_mapping.rules = cfg.project_mapping.rules ?? []
 
   // Chuẩn hóa accounts: nhiều tài khoản cùng nền tảng (mỗi cái 1 profile + 1 project_id).
-  // Vắng accounts → 1 account ngầm = chính network (giữ nguyên hành vi cũ).
+  // - Có accounts trong file → dùng.
+  // - Vắng accounts nhưng có default_project_id → 1 account ngầm = network (hành vi cũ).
+  // - Vắng cả hai (config kiểu template như tolt, account đến từ DB) → để [] và
+  //   để loadAccounts (DB) cung cấp lúc chạy; tránh fail validate vì thiếu project_id.
   const rawAccounts = Array.isArray(cfg.accounts) && cfg.accounts.length > 0
     ? cfg.accounts
-    : [{ id: cfg.network_id, label: cfg.network_name ?? cfg.network_id }]
+    : (cfg.project_mapping.default_project_id
+        ? [{ id: cfg.network_id, label: cfg.network_name ?? cfg.network_id }]
+        : [])
   cfg.accounts = rawAccounts.map((a) => ({
     id: a.id ?? cfg.network_id,
     label: a.label ?? a.id ?? cfg.network_name ?? cfg.network_id,
     // project_id gán riêng từng tài khoản; vắng thì rơi về default_project_id chung.
     project_id: a.project_id ?? cfg.project_mapping.default_project_id ?? null,
+    dashboard_url: a.dashboard_url ?? null,
+    login_url: a.login_url ?? null,
   }))
 
   cfg.reports = (cfg.reports ?? []).map((r, i) => {
     const report = { ...REPORT_DEFAULTS, ...r }
     report.name = report.name ?? `report_${i + 1}`
+    report.mode = report.mode ?? 'xhr' // 'xhr' (hứng JSON) | 'html_table' (đọc bảng DOM)
     report.wait = { ...WAIT_DEFAULTS, ...report.wait }
     report.validation = { ...VALIDATION_DEFAULTS, ...report.validation }
     report.capture = { pattern_type: 'substring', methods: null, ...report.capture }
+    if (report.mode === 'html_table' && (report.rows_path === undefined || report.rows_path === null)) report.rows_path = 'rows'
     report.mapping = report.mapping ?? {}
     return report
   })
   return cfg
 }
 
-// Load toàn bộ configs/ (bỏ file bắt đầu bằng "_" trừ khi được gọi đích danh).
-// networkId truyền vào → chỉ load config đó (kể cả file "_...").
-export function loadConfigs(networkId = null) {
-  if (!fs.existsSync(CONFIGS_DIR)) throw new Error(`Không tìm thấy thư mục ${CONFIGS_DIR}`)
-
+// Đọc config thô từ file configs/ (bỏ file "_" trừ khi gọi đích danh networkId).
+function readFileConfigsRaw(networkId) {
+  if (!fs.existsSync(CONFIGS_DIR)) return []
   const files = fs
     .readdirSync(CONFIGS_DIR)
     .filter((f) => f.endsWith('.json'))
     .filter((f) => (networkId ? true : !f.startsWith('_')))
     .sort()
-
-  const configs = []
+  const out = []
   for (const file of files) {
-    let cfg
     try {
-      cfg = JSON.parse(fs.readFileSync(path.join(CONFIGS_DIR, file), 'utf8'))
+      out.push({ src: file, raw: JSON.parse(fs.readFileSync(path.join(CONFIGS_DIR, file), 'utf8')) })
     } catch (err) {
       throw new Error(`Config ${file}: JSON không hợp lệ — ${err.message}`)
     }
-    cfg = applyDefaults(cfg)
-    validateConfig(file, cfg)
-    configs.push(cfg)
   }
+  return out
+}
+
+// Đọc config từ DB (engine_network_configs). Thiếu env/bảng → trả [] (fallback file).
+async function readDbConfigsRaw(networkId) {
+  let sb
+  try { sb = getSupabase() } catch { return [] }
+  let q = sb.from('engine_network_configs').select('network_id, config, enabled')
+  if (networkId) q = q.eq('network_id', networkId)
+  const { data, error } = await q
+  if (error || !data) return []
+  return data
+    .filter((r) => r.enabled !== false && r.config)
+    .map((r) => ({ src: `DB:${r.network_id}`, raw: { ...r.config, network_id: r.config.network_id ?? r.network_id } }))
+}
+
+// Load config: DB trước (override), fallback file. networkId → chỉ config đó.
+export async function loadConfigs(networkId = null) {
+  const raws = [...readFileConfigsRaw(networkId), ...(await readDbConfigsRaw(networkId))] // DB sau → override file
+  const byId = new Map()
+  for (const { src, raw } of raws) {
+    const cfg = applyDefaults(raw)
+    validateConfig(src, cfg)
+    byId.set(cfg.network_id, cfg)
+  }
+  const configs = [...byId.values()]
 
   if (networkId) {
     const match = configs.filter((c) => c.network_id === networkId)

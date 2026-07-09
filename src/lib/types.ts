@@ -69,6 +69,7 @@ export interface AffiliateNetwork {
   name: string
   color: string
   organization_id: string | null
+  slug?: string | null
 }
 
 export type ProjectStatus =

@@ -1,0 +1,52 @@
+{
+  "network_id": "tolt",
+  "network_name": "Tolt",
+  "enabled": true,
+  "window_days": 30,
+  "timezone": "Asia/Ho_Chi_Minh",
+
+  "_comment_base": "Tolt là 1 nền tảng, nhiều brand có dashboard riêng (partner.blancvpn.com, x.tolt.io…) cấu trúc giống nhau. URL dùng biến {base} = dashboard_url của từng account (khai trong admin). Mỗi account 1 profile + 1 login + 1 project riêng, dù {base} có thể trùng nhau.",
+
+  "sync_pnl": true,
+  "project_mapping": {},
+  "fx_auto_from": "EUR",
+  "_comment_fx": "Hoa hồng Tolt (BlancVPN) tính bằng EUR; engine tự lấy tỷ giá EUR→USD realtime cho P&L. Brand khác nếu tính USD thì bỏ fx_auto_from và đặt fx_to_usd=1 (tùy chỉnh sau nếu cần theo account).",
+
+  "login_check": {
+    "logged_out_url_patterns": ["/login", "/signin", "/auth", "/sign-in"],
+    "logged_out_selectors": ["input[type='password']"]
+  },
+  "login_url": "{base}",
+
+  "reports": [
+    {
+      "name": "commissions_daily",
+      "_comment_url": "MỞ TRANG BÁO CÁO (UI), KHÔNG gọi API trực tiếp: Tolt yêu cầu Bearer token mà JS của trang tự thêm khi gọi XHR. Engine điều hướng tới {base} (= dashboard_url account, vd https://partner.blancvpn.com/reports), trang tự gọi /api/data/reports-chart kèm token, engine hứng response khớp url_pattern.",
+      "url": "{base}",
+      "url_date_format": "YYYY-MM-DD",
+      "capture": {
+        "url_pattern": "chart=commissions-chart",
+        "pattern_type": "substring"
+      },
+      "wait": {
+        "strategy": "networkidle",
+        "navigation_timeout_ms": 60000,
+        "post_load_wait_ms": 5000,
+        "capture_settle_ms": 4000
+      },
+      "rows_path": "data",
+      "mapping": {
+        "date":       { "path": "date", "formats": ["iso"] },
+        "offer_id":   { "path": "__const__", "required": false, "default": "" },
+        "offer_name": { "path": "__const__", "required": false, "default": "Tolt" },
+        "revenue":    { "path": "total_commission", "divisor": 100, "_comment": "API trả cents → chia 100 ra đơn vị tiền chính (đối chiếu BlancVPN: 62454 → €624.54)." },
+        "currency":   { "path": "__const__", "required": false, "default": "EUR" }
+      },
+      "duplicate_strategy": "last",
+      "validation": {
+        "min_mapped_rows": 1,
+        "max_invalid_row_ratio": 0.2
+      }
+    }
+  ]
+}

@@ -42,7 +42,7 @@ async function main() {
     console.error('Dùng: node discover.js --network=<network_id> (cần file configs/_<network>-discovery.json)')
     process.exit(1)
   }
-  const [config] = loadConfigs(args.network) // khớp network_id trong file _<network>-discovery.json
+  const [config] = await loadConfigs(args.network) // khớp network_id trong file _<network>-discovery.json
   const report = config.reports[0]
 
   const context = await openContext(config.network_id)

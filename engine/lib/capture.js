@@ -1,7 +1,8 @@
 import { dateWindow, renderUrl } from './dates.js'
 import { log } from './logger.js'
+import { extractTableAllPages } from './html-table.js'
 
-function matchesPattern(url, capture) {
+export function matchesPattern(url, capture) {
   if (capture.pattern_type === 'regex') return new RegExp(capture.url_pattern).test(url)
   return url.includes(capture.url_pattern)
 }
@@ -14,8 +15,15 @@ function sleep(ms) {
 // - Listener response đăng ký TRƯỚC mọi navigation, gom TẤT CẢ response JSON khớp pattern
 // - Sau load: đợi post_load_wait_ms, rồi poll đến khi không có response khớp mới
 //   trong capture_settle_ms (SPA hay bắn XHR muộn / pagination tự động)
-// Trả { captured: [{report, payload, url}], loginSignal, finalUrl }
-export async function captureReports(page, config) {
+// base = dashboard_url của account (thay {base} trong report.url). Trả
+// { captured: [{report, payload, url}], loginSignal, finalUrl }
+export async function captureReports(page, config, base = '') {
+  // Config kiểu-template ({base}) bắt buộc account có dashboard_url.
+  if (!base && config.reports.some((r) => (r.url ?? '').includes('{base}'))) {
+    throw new Error(
+      `Network "${config.network_id}" dùng {base} nhưng account thiếu dashboard_url — nhập "URL dashboard" trong admin.`
+    )
+  }
   const window = dateWindow(config.window_days, config.timezone)
   const captured = []
   const pendingJson = []
@@ -44,7 +52,7 @@ export async function captureReports(page, config) {
 
   for (const report of config.reports) {
     activeReport = report
-    const url = renderUrl(report.url, window, report.url_date_format)
+    const url = renderUrl(report.url, window, report.url_date_format, base)
     log.info(`report "${report.name}": mở ${url.slice(0, 150)}`, config.network_id)
 
     const waitUntil = report.wait.strategy === 'networkidle' ? 'networkidle' : 'load'
@@ -60,6 +68,15 @@ export async function captureReports(page, config) {
     }
 
     await sleep(report.wait.post_load_wait_ms)
+
+    // Chế độ đọc bảng HTML (dashboard render server-side): đọc thẳng DOM table,
+    // không chờ XHR. payload = { rows } → dùng rows_path="rows".
+    if (report.mode === 'html_table') {
+      const { rows, pages } = await extractTableAllPages(page, report.table_index ?? 0, { maxPages: report.max_pages ?? 100 })
+      captured.push({ report: report.name, payload: { rows }, url })
+      log.info(`report "${report.name}" (html_table #${report.table_index ?? 0}): đọc ${rows.length} dòng qua ${pages} trang`, config.network_id)
+      continue
+    }
 
     // Poll đến khi không có response khớp mới trong capture_settle_ms
     let lastCount = -1

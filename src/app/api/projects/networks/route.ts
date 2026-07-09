@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCallerProfile } from '@/lib/require-role'
+import { uniqueSlug } from '@/lib/slug'
+
+// Slug engine là duy nhất toàn cục (map 1-1 tới engine/configs/<slug>.json).
+async function genUniqueSlug(name: string): Promise<string> {
+  const { data } = await supabaseAdmin.from('affiliate_networks').select('slug')
+  const taken = (data ?? []).map(r => r.slug).filter(Boolean) as string[]
+  return uniqueSlug(name, taken)
+}
 
 export async function GET(req: Request) {
   const caller = await getCallerProfile(req)
@@ -8,7 +16,7 @@ export async function GET(req: Request) {
 
   let query = supabaseAdmin
     .from('affiliate_networks')
-    .select('id, name, color, organization_id')
+    .select('id, name, color, organization_id, slug')
     .order('name')
 
   if (caller.organization_id) {
@@ -29,6 +37,8 @@ export async function POST(req: Request) {
   const { name, color } = await req.json()
   if (!name?.trim()) return NextResponse.json({ error: 'Tên network không được trống' }, { status: 400 })
 
+  const slug = await genUniqueSlug(name.trim())
+
   const { data, error } = await supabaseAdmin
     .from('affiliate_networks')
     .insert({
@@ -36,6 +46,7 @@ export async function POST(req: Request) {
       color: color ?? '#6b7280',
       organization_id: caller.organization_id ?? null,
       created_by: caller.user_id,
+      slug,
     })
     .select()
     .single()
@@ -56,6 +67,13 @@ export async function PATCH(req: Request) {
   const update: Record<string, string> = {}
   if (name !== undefined) update.name = name.trim()
   if (color !== undefined) update.color = color
+
+  // Slug cố định: chỉ backfill nếu bản ghi cũ chưa có slug (không đổi theo tên).
+  const { data: existing } = await supabaseAdmin
+    .from('affiliate_networks').select('name, slug').eq('id', id).single()
+  if (existing && !existing.slug) {
+    update.slug = await genUniqueSlug(update.name ?? existing.name)
+  }
 
   const { data, error } = await supabaseAdmin
     .from('affiliate_networks')

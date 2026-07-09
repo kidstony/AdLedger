@@ -17,3 +17,10 @@ export async function openContext(accountId) {
     viewport: { width: 1366, height: 850 },
   })
 }
+
+// Xoá profile (đăng xuất/hủy phiên) để buộc đăng nhập lại — dùng cho "Đăng nhập lại"
+// hoặc khi đổi sang tài khoản khác trên cùng dashboard. Không mở context nào lúc gọi.
+export function clearProfile(accountId) {
+  const profileDir = path.join(PROFILES_DIR, accountId)
+  fs.rmSync(profileDir, { recursive: true, force: true })
+}

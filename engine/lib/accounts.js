@@ -9,7 +9,7 @@ export async function loadAccounts(config) {
   try {
     const { data, error } = await getSupabase()
       .from('engine_accounts')
-      .select('account_id, label, project_id, enabled')
+      .select('account_id, label, project_id, enabled, dashboard_url, login_url')
       .eq('network_id', networkId)
       .eq('enabled', true)
       .order('account_id')
@@ -20,6 +20,8 @@ export async function loadAccounts(config) {
         id: a.account_id,
         label: a.label || a.account_id,
         project_id: a.project_id ?? config.project_mapping.default_project_id ?? null,
+        dashboard_url: a.dashboard_url ?? null,
+        login_url: a.login_url ?? null,
       }))
     }
     log.warn(`engine_accounts trống cho "${networkId}" — dùng accounts trong file config`, networkId)
