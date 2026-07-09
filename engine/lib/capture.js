@@ -11,6 +11,41 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+// Ghi đè 1 field trong body multipart/form-data (giữ nguyên các field khác, kể cả sessid).
+// Body dạng:  --boundary\r\nContent-Disposition: form-data; name="from"\r\n\r\n<value>\r\n--boundary
+// Field đang rỗng vẫn có sẵn khối → chỉ thay phần <value>.
+function setMultipartField(body, name, value) {
+  const re = new RegExp(`(name="${name}"\\r?\\n\\r?\\n)([\\s\\S]*?)(\\r?\\n--)`)
+  if (!re.test(body)) return body // field không tồn tại → để nguyên (không tự thêm)
+  return body.replace(re, `$1${value}$3`)
+}
+
+// Đăng ký route ghi đè field ngày trong request (vd proxy-seller POST from/to rỗng → điền
+// cửa sổ để backfill). Trả hàm unroute để gỡ sau report. window = {from,to} dayjs.
+async function applyRequestOverride(page, report, window) {
+  const ov = report.request_override
+  if (!ov || !ov.form_fields) return async () => {}
+  const fmt = ov.date_format ?? 'YYYY-MM-DD'
+  const rendered = {}
+  for (const [field, tpl] of Object.entries(ov.form_fields)) {
+    rendered[field] = String(tpl)
+      .replaceAll('{start_date}', window.from.format(fmt))
+      .replaceAll('{end_date}', window.to.format(fmt))
+  }
+  const matcher = (url) => (ov.url_pattern ? url.includes(ov.url_pattern) : true)
+  const handler = async (route) => {
+    const req = route.request()
+    if ((ov.method && req.method() !== ov.method) || !matcher(req.url())) return route.continue()
+    let body = req.postData()
+    if (!body) return route.continue()
+    for (const [field, value] of Object.entries(rendered)) body = setMultipartField(body, field, value)
+    log.info(`request_override: ${req.method()} ${req.url().slice(0, 80)} → ${JSON.stringify(rendered)}`, report.name)
+    await route.continue({ postData: body })
+  }
+  await page.route(matcher, handler)
+  return async () => { await page.unroute(matcher, handler).catch(() => {}) }
+}
+
 // Chạy toàn bộ reports của 1 network trong 1 page:
 // - Listener response đăng ký TRƯỚC mọi navigation, gom TẤT CẢ response JSON khớp pattern
 // - Sau load: đợi post_load_wait_ms, rồi poll đến khi không có response khớp mới
@@ -53,6 +88,8 @@ export async function captureReports(page, config, base = '', { windowDays } = {
 
   for (const report of config.reports) {
     activeReport = report
+    // Ghi đè field ngày trong request (nếu khai) TRƯỚC khi điều hướng để bắt kịp XHR đầu.
+    const unroute = await applyRequestOverride(page, report, window)
     const url = renderUrl(report.url, window, report.url_date_format, base)
     log.info(`report "${report.name}": mở ${url.slice(0, 150)}`, config.network_id)
 
@@ -76,6 +113,7 @@ export async function captureReports(page, config, base = '', { windowDays } = {
       const { rows, pages } = await extractTableAllPages(page, report.table_index ?? 0, { maxPages: report.max_pages ?? 100 })
       captured.push({ report: report.name, payload: { rows }, url })
       log.info(`report "${report.name}" (html_table #${report.table_index ?? 0}): đọc ${rows.length} dòng qua ${pages} trang`, config.network_id)
+      await unroute()
       continue
     }
 
@@ -86,6 +124,7 @@ export async function captureReports(page, config, base = '', { windowDays } = {
       await sleep(report.wait.capture_settle_ms)
     }
     await Promise.all(pendingJson) // đảm bảo mọi res.json() đã xong
+    await unroute()
   }
   activeReport = null
 

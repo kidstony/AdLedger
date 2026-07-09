@@ -142,6 +142,7 @@ function applyDefaults(cfg) {
     report.wait = { ...WAIT_DEFAULTS, ...report.wait }
     report.validation = { ...VALIDATION_DEFAULTS, ...report.validation }
     report.capture = { pattern_type: 'substring', methods: null, ...report.capture }
+    report.request_override = report.request_override ?? null // ghi đè field ngày trong request (vd POST from/to)
     if (report.mode === 'html_table' && (report.rows_path === undefined || report.rows_path === null)) report.rows_path = 'rows'
     report.mapping = report.mapping ?? {}
     return report

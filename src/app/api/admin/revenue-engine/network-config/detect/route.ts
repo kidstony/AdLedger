@@ -241,9 +241,11 @@ export async function POST(req: Request) {
   const numFmt = numFormat(rows, revenueField)
   const dateInfo = detectDateOrder(rows, dateField)
   const byDate = new Map<string, number>()
+  let datedRows = 0 // số dòng có ngày hợp lệ → so với số ngày distinct để biết mức-đơn hay day-total
   if (dateField && revenueField) {
     for (const r of rows) {
       const d = normDate(r[dateField], dateInfo.order); const rev = parseMoney(r[revenueField], numFmt)
+      if (d) datedRows++
       if (d && rev !== null) byDate.set(d, (byDate.get(d) ?? 0) + rev)
     }
   }
@@ -284,9 +286,11 @@ export async function POST(req: Request) {
         revenue: { path: revenueField, divisor: 1, decimal_separator: numFmt.decimal, thousands_separator: numFmt.thousands },
         currency: currencyField ? { path: currencyField, required: false, default: currencyGuess || 'USD' } : { path: '__const__', required: false, default: currencyGuess || 'USD' },
       },
-      // Bảng HTML = dữ liệu MỨC ĐƠN (nhiều đơn/ngày) → 'sum' để cộng theo ngày.
-      // XHR = dòng tổng theo ngày (pagination có thể lặp) → 'last' tránh nhân đôi.
-      duplicate_strategy: chosen.kind === 'table' ? 'sum' : 'last',
+      // offer_id/offer_name là hằng số → khoá gộp = 1 dòng/ngày. Vì preview LUÔN cộng mọi
+      // dòng theo ngày, engine phải 'sum' để khớp (preview = engine) KHI dữ liệu mức-đơn
+      // (nhiều dòng/ngày). Chỉ nguồn day-total (~1 dòng/ngày) mới để 'last' (đề phòng
+      // pagination lặp dòng tổng). Bảng HTML luôn mức-đơn → 'sum'.
+      duplicate_strategy: chosen.kind === 'table' || datedRows > byDate.size * 1.2 ? 'sum' : 'last',
       validation: { min_mapped_rows: 1, max_invalid_row_ratio: 0.2 },
     }],
   }
