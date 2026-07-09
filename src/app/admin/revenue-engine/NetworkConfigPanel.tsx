@@ -33,6 +33,7 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
   const [sel, setSel] = useState<Detect['chosen'] | null>(null)
   const [discoverCmdId, setDiscoverCmdId] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
+  const [sourceUrl, setSourceUrl] = useState('') // URL trang nguồn cho lệnh dò (payout); trống = dashboard
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const runDetect = useCallback(async (override?: Record<string, unknown>) => {
@@ -48,7 +49,8 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
 
   const startDiscover = async () => {
     setError(null); setPhase('discovering')
-    const res = await authFetch(CMD_API, { method: 'POST', body: JSON.stringify({ type: 'discover', account_id: accountId }) })
+    // discover_url: dò TRANG chỉ định (vd trang Payout cho nguồn 'Thực nhận'); bỏ trống = dashboard.
+    const res = await authFetch(CMD_API, { method: 'POST', body: JSON.stringify({ type: 'discover', account_id: accountId, discover_url: sourceUrl.trim() || undefined }) })
     if (!res.ok) { setError((await res.json().catch(() => ({}))).error ?? 'Lỗi tạo lệnh dò'); setPhase('need-discover'); return }
     const { command } = await res.json()
     setDiscoverCmdId(command.id)
@@ -116,6 +118,11 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
           {phase === 'need-discover' && (
             <div className="space-y-3">
               <p className="text-sm text-slate-600">Chưa có dữ liệu dò cho network này. Bấm nút dưới → cửa sổ Chrome mở trên máy worker → <b>đăng nhập + mở trang báo cáo doanh thu</b>. Engine tự bắt dữ liệu.</p>
+              <label className="block text-xs text-slate-500 space-y-1">
+                <span>URL trang nguồn <span className="text-slate-400">(bỏ trống = trang dashboard; dán URL trang Payout nếu dò "Thực nhận")</span></span>
+                <input value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="https://…/payments"
+                  className="w-full border border-slate-200 rounded px-2 py-1 text-slate-700" />
+              </label>
               <button onClick={startDiscover} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md bg-indigo-600 text-white hover:bg-indigo-700"><Wand2 size={15} /> Dò dữ liệu (đăng nhập)</button>
             </div>
           )}
@@ -224,8 +231,14 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <button onClick={startDiscover} className="text-xs text-slate-500 hover:text-slate-700 underline">Dò lại</button>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-500 whitespace-nowrap">Dò trang khác:</span>
+                <input value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="URL trang Payout (Thực nhận) — bỏ trống = dashboard"
+                  className="flex-1 border border-slate-200 rounded px-2 py-1 text-slate-700" />
+                <button onClick={startDiscover} className="px-2 py-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Dò lại</button>
+              </div>
+
+              <div className="flex items-center justify-end">
                 <button onClick={save} disabled={phase === 'saving' || det.preview.length === 0}
                   className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">
                   {phase === 'saving' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Lưu cấu hình

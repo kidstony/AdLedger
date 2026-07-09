@@ -183,9 +183,11 @@ export async function POST(req: Request) {
   if (!network_id) return NextResponse.json({ error: 'Thiếu network_id' }, { status: 400 })
 
   const { data: disc } = await supabaseAdmin
-    .from('engine_discoveries').select('captured, created_at')
+    .from('engine_discoveries').select('captured, source_url, created_at')
     .eq('network_id', network_id).order('created_at', { ascending: false }).limit(1).maybeSingle()
   if (!disc?.captured) return NextResponse.json({ error: 'Chưa có dữ liệu dò. Bấm "Cấu hình tự động" và đăng nhập trước.' }, { status: 404 })
+  // source_url: trang đã dò (payout) khác dashboard → report.url = url này; NULL → giữ {base}.
+  const sourceUrl = (disc as { source_url?: string | null }).source_url || null
 
   const captured = disc.captured as { url: string; payload: unknown; kind?: string; table_index?: number }[]
 
@@ -270,7 +272,8 @@ export async function POST(req: Request) {
     login_url: '{base}',
     reports: [{
       name: 'revenue',
-      url: '{base}',
+      // Trang nguồn: {base} (dashboard) mặc định; source_url (payout) nếu dò trang chỉ định.
+      url: sourceUrl ?? '{base}',
       url_date_format: 'YYYY-MM-DD',
       ...(chosen.kind === 'table'
         ? { mode: 'html_table', table_index: chosen.table_index ?? 0 }

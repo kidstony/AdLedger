@@ -119,11 +119,13 @@ function hasReportInCaptured(captured) {
 }
 
 async function handleDiscover(acct, cmd) {
-  if (!acct.dashboard_url) return { ok: false, message: 'Account chưa có URL dashboard' }
+  // discover_url (tùy chọn): dò TRANG khác dashboard (vd trang Payout cho nguồn 'confirmed').
+  const target = cmd.discover_url || acct.dashboard_url
+  if (!target) return { ok: false, message: 'Account chưa có URL dashboard (và không có discover_url)' }
   const context = await openContext(acct.account_id)
   try {
     const page = context.pages()[0] ?? (await context.newPage())
-    await page.goto(acct.dashboard_url, { waitUntil: 'load', timeout: 60000 }).catch(() => {})
+    await page.goto(target, { waitUntil: 'load', timeout: 60000 }).catch(() => {})
     const { captured, detach } = attachJsonCapture(context)
     page.reload({ waitUntil: 'load', timeout: 60000 }).catch(() => {}) // ép bắn lại XHR nếu đã đăng nhập sẵn
     log.info('Đang dò: ĐĂNG NHẬP + mở TRANG BÁO CÁO. Engine tự phân tích khi thấy dữ liệu, hoặc bấm "Phân tích" (chờ tối đa 5 phút)…', acct.account_id)
@@ -177,7 +179,8 @@ async function handleDiscover(acct, cmd) {
 
     const { error } = await getSupabase()
       .from('engine_discoveries')
-      .insert({ network_id: acct.network_id, account_id: acct.id, captured })
+      // source_url: chỉ lưu khi dò TRANG chỉ định (payout) → detect đặt report.url = url này.
+      .insert({ network_id: acct.network_id, account_id: acct.id, captured, source_url: cmd.discover_url ?? null })
     if (error) return { ok: false, message: `Lưu discovery lỗi: ${error.message}` }
     return {
       ok: captured.length > 0,
