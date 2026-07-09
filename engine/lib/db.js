@@ -66,6 +66,19 @@ export async function updateRun(runId, fields) {
 
 // ---------- revenue_raw ----------
 
+// Account đã có dữ liệu chưa? Dùng để chọn cửa sổ: chưa có = lần đầu (backfill toàn bộ),
+// đã có = incremental (window_days). Lỗi DB → coi như CHƯA có (an toàn: kéo rộng còn hơn thiếu).
+export async function hasRevenueRows(networkId, accountId) {
+  const { data, error } = await getSupabase()
+    .from('revenue_raw')
+    .select('id')
+    .eq('network_id', networkId)
+    .eq('account_id', accountId)
+    .limit(1)
+  if (error) return false
+  return (data?.length ?? 0) > 0
+}
+
 // rows: [{ network_id, account_id, account_label, project_id, date, offer_id, offer_name, revenue, currency, revenue_usd, fx_rate, clicks, conversions, status, raw_payload }]
 export async function upsertRevenueRaw(rows, runId) {
   const supabase = getSupabase()

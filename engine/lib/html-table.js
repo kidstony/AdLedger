@@ -93,10 +93,25 @@ export async function extractTable(page, tableIndex = 0) {
 
 // Đọc bảng qua NHIỀU TRANG: đọc trang hiện tại → bấm "next" → đọc tiếp, tích luỹ +
 // khử trùng, đến khi hết nút next / không có dòng mới / chạm maxPages.
-// Selector next phủ Rails will_paginate (a.next_page), kaminari & Bootstrap (rel=next,
-// .pagination .next a, li.next a). Trang cuối các thư viện render <span> (không phải <a>)
-// nên tự dừng.
-const NEXT_SEL = 'a[rel="next"], a.next_page, .pagination a.next, .pagination li.next a, li.next:not(.disabled) a, a[aria-label="Next"]'
+// Selector next: phủ Rails will_paginate (a.next_page), kaminari & Bootstrap (rel=next,
+// .pagination .next a, li.next a), + icon/class chevron/arrow-right, aria-label. Trang cuối
+// thường render <span>/disabled → tự dừng. Fallback: link/button có text chỉ là ›»→>.
+const NEXT_SEL = [
+  'a[rel="next"]', 'a.next_page', '.pagination a.next', '.pagination li.next a',
+  'li.next:not(.disabled) a', 'a[aria-label*="next" i]', 'button[aria-label*="next" i]',
+  'a[class*="next-page" i]', '[class*="pagination"] a[class*="next" i]',
+  '[class*="chevron-right" i]', '[class*="arrow-right" i]', '[class*="angle-right" i]',
+].join(', ')
+
+// Tìm nút "next" hợp lệ (đang hiện + bật). Trả locator hoặc null.
+async function findNext(page) {
+  let loc = page.locator(NEXT_SEL).first()
+  if ((await loc.count().catch(() => 0)) > 0 && (await loc.isVisible().catch(() => false)) && (await loc.isEnabled().catch(() => false))) return loc
+  // Fallback theo text chevron next (›»→>). Lấy cái cuối (thường nằm bên phải).
+  loc = page.locator('a, button').filter({ hasText: /^\s*[›»→⟩>]\s*$/ }).last()
+  if ((await loc.count().catch(() => 0)) > 0 && (await loc.isVisible().catch(() => false)) && (await loc.isEnabled().catch(() => false))) return loc
+  return null
+}
 
 export async function extractTableAllPages(page, tableIndex = 0, { maxPages = 100, settleMs = 1200 } = {}) {
   const seen = new Set()
@@ -108,9 +123,8 @@ export async function extractTableAllPages(page, tableIndex = 0, { maxPages = 10
     for (const r of rows) { const k = JSON.stringify(r); if (!seen.has(k)) { seen.add(k); all.push(r); added++ } }
     if (added === 0 && pages > 0) break // trang không có dòng mới → dừng (chống lặp)
 
-    const next = page.locator(NEXT_SEL).first()
-    const hasNext = (await next.count().catch(() => 0)) > 0 && (await next.isVisible().catch(() => false)) && (await next.isEnabled().catch(() => false))
-    if (!hasNext) break
+    const next = await findNext(page)
+    if (!next) break
 
     await next.click().catch(() => {})
     await page.waitForLoadState('domcontentloaded').catch(() => {})

@@ -17,14 +17,15 @@ function sleep(ms) {
 //   trong capture_settle_ms (SPA hay bắn XHR muộn / pagination tự động)
 // base = dashboard_url của account (thay {base} trong report.url). Trả
 // { captured: [{report, payload, url}], loginSignal, finalUrl }
-export async function captureReports(page, config, base = '') {
+export async function captureReports(page, config, base = '', { windowDays } = {}) {
   // Config kiểu-template ({base}) bắt buộc account có dashboard_url.
   if (!base && config.reports.some((r) => (r.url ?? '').includes('{base}'))) {
     throw new Error(
       `Network "${config.network_id}" dùng {base} nhưng account thiếu dashboard_url — nhập "URL dashboard" trong admin.`
     )
   }
-  const window = dateWindow(config.window_days, config.timezone)
+  // windowDays: caller truyền để backfill lần đầu (rộng) vs incremental; vắng → window_days.
+  const window = dateWindow(windowDays ?? config.window_days, config.timezone)
   const captured = []
   const pendingJson = []
   let activeReport = null

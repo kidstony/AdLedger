@@ -12,10 +12,19 @@ const PROFILES_DIR = path.join(ENGINE_DIR, 'profiles')
 export async function openContext(accountId) {
   const profileDir = path.join(PROFILES_DIR, accountId)
   fs.mkdirSync(profileDir, { recursive: true })
-  return chromium.launchPersistentContext(profileDir, {
+  const context = await chromium.launchPersistentContext(profileDir, {
     headless: false,
     viewport: { width: 1366, height: 850 },
+    // Giảm dấu hiệu automation: nhiều site bảo mật/proxy (Cloudflare…) chặn khi thấy
+    // navigator.webdriver / cờ --enable-automation → quay loading vô tận.
+    ignoreDefaultArgs: ['--enable-automation'],
+    args: ['--disable-blink-features=AutomationControlled'],
   })
+  // Ẩn navigator.webdriver còn sót lại (một số site vẫn đọc được).
+  await context.addInitScript(() => {
+    try { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }) } catch { /* noop */ }
+  })
+  return context
 }
 
 // Xoá profile (đăng xuất/hủy phiên) để buộc đăng nhập lại — dùng cho "Đăng nhập lại"

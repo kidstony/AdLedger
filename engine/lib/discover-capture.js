@@ -2,7 +2,8 @@
 // + mở trang báo cáo), gom [{url, payload}]. Dừng sau khi thấy response "giống bảng
 // dữ liệu" + settle, hoặc hết timeout. Mảng bị cắt bớt để hạn chế kích thước lưu DB.
 const MAX_RESPONSES = 40
-const MAX_ROWS_PER_ARRAY = 300
+const MAX_ROWS_PER_ARRAY = 2000 // preview phản ánh gần đủ cửa sổ (sync vốn không cap)
+const MAX_POST_DATA = 4000       // cắt body request để nhẹ DB
 
 function truncateArrays(value, depth = 0) {
   if (Array.isArray(value)) {
@@ -14,6 +15,21 @@ function truncateArrays(value, depth = 0) {
     return out
   }
   return value
+}
+
+// Gom 1 mục capture kèm THÔNG TIN REQUEST (method/url đầy đủ/body) để lộ cách network
+// gửi kỳ ngày (GET query? POST body?) — dùng khi cấu hình backfill theo cửa sổ.
+async function buildEntry(res) {
+  const req = res.request()
+  let post = null
+  try { post = req.postData(); if (post && post.length > MAX_POST_DATA) post = post.slice(0, MAX_POST_DATA) } catch { /* no body */ }
+  return {
+    url: res.url(),
+    payload: truncateArrays(await res.json()),
+    method: req.method(),
+    req_url: req.url(),   // URL request (kèm query string, nơi hay chứa date_from/date_to)
+    post_data: post,      // body (nếu POST) — nơi khác hay chứa kỳ ngày
+  }
 }
 
 // Có mảng gồm >=3 object (giống bảng dữ liệu) ở đâu đó trong payload không?
@@ -42,8 +58,7 @@ export function attachJsonCapture(context) {
     if (rt !== 'xhr' && rt !== 'fetch' && !ct.includes('json')) return
     if (captured.length >= MAX_RESPONSES) return
     try {
-      const payload = await res.json()
-      captured.push({ url: res.url(), payload: truncateArrays(payload) })
+      captured.push(await buildEntry(res))
     } catch { /* không phải JSON — bỏ qua */ }
   }
   const attach = (p) => p.on('response', onResp)
@@ -81,11 +96,11 @@ export function discoverCapture(context, { timeoutMs = 120000, idleMs = 8000, se
       const ct = res.headers()['content-type'] || ''
       if (rt !== 'xhr' && rt !== 'fetch' && !ct.includes('json')) return
       try {
-        const payload = await res.json()
-        captured.push({ url: res.url(), payload: truncateArrays(payload) })
+        const entry = await buildEntry(res)
+        captured.push(entry)
         bumpIdle()
         if (captured.length >= MAX_RESPONSES) return finish()
-        if (hasDataArray(payload)) {
+        if (hasDataArray(entry.payload)) {
           clearTimeout(settleTimer)
           settleTimer = setTimeout(finish, settleMs) // gom thêm XHR liên quan rồi kết thúc
         }

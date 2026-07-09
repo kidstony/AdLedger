@@ -58,11 +58,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Account chưa có URL dashboard — nhập URL trước khi kết nối' }, { status: 400 })
   }
 
-  const { data: dup } = await supabaseAdmin
-    .from('engine_commands').select('id')
-    .eq('account_id', account_id).eq('type', type).in('status', ['pending', 'running']).limit(1)
-  if (dup && dup.length) {
-    return NextResponse.json({ error: 'Đã có lệnh cùng loại đang chờ/chạy cho account này' }, { status: 409 })
+  if (type === 'fetch') {
+    // Fetch: tránh trùng (đồng bộ 2 lần cùng lúc vô nghĩa).
+    const { data: dup } = await supabaseAdmin
+      .from('engine_commands').select('id')
+      .eq('account_id', account_id).eq('type', type).in('status', ['pending', 'running']).limit(1)
+    if (dup && dup.length) return NextResponse.json({ error: 'Đã có lệnh đồng bộ đang chạy cho account này' }, { status: 409 })
+  } else {
+    // login/discover: "làm lại" → huỷ lệnh cũ cùng loại (kể cả mồ côi) rồi tạo mới.
+    await supabaseAdmin.from('engine_commands')
+      .update({ status: 'error', message: 'Thay bằng lệnh mới', finished_at: new Date().toISOString() })
+      .eq('account_id', account_id).eq('type', type).in('status', ['pending', 'running'])
   }
 
   const { data, error } = await supabaseAdmin

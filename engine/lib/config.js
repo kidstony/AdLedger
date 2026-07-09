@@ -104,7 +104,8 @@ function validateConfig(file, cfg) {
 
 function applyDefaults(cfg) {
   cfg.enabled = cfg.enabled !== false
-  cfg.window_days = cfg.window_days ?? 30
+  cfg.window_days = cfg.window_days ?? 7          // cửa sổ incremental (các lần sync sau)
+  cfg.backfill_days = cfg.backfill_days ?? 1825   // lần đầu (account chưa có dữ liệu): kéo ~5 năm
   cfg.timezone = cfg.timezone ?? null
   cfg.fx_to_usd = cfg.fx_to_usd ?? 1
   cfg.fx_auto_from = cfg.fx_auto_from ?? null // có → lấy tỷ giá động, bỏ qua fx_to_usd

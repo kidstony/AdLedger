@@ -85,9 +85,9 @@ async function handleFetch(acct) {
 
 // Dò: KHÔNG cần config (dùng để cấu hình network mới). Mở dashboard bằng profile
 // của account (đăng nhập nếu chưa), bắt mọi XHR JSON, lưu vào engine_discoveries.
-async function getCommandSignal(id) {
-  const { data } = await getSupabase().from('engine_commands').select('signal').eq('id', id).maybeSingle()
-  return data?.signal ?? null
+async function getCommandState(id) {
+  const { data } = await getSupabase().from('engine_commands').select('signal, status').eq('id', id).maybeSingle()
+  return { signal: data?.signal ?? null, status: data?.status ?? null }
 }
 
 // "Báo cáo thật": mảng >=3 dòng, >=3 dòng có token NGÀY và >=3 dòng có token SỐ/tiền.
@@ -132,8 +132,11 @@ async function handleDiscover(acct, cmd) {
     // (settle 5s rồi finish), HOẶC hết timeout.
     const deadline = Date.now() + 5 * 60 * 1000
     let settleDeadline = 0
+    let superseded = false
     while (Date.now() < deadline) {
-      if ((await getCommandSignal(cmd.id)) === 'analyze') break
+      const st = await getCommandState(cmd.id)
+      if (st.signal === 'analyze') break
+      if (st.status !== 'running') { superseded = true; break } // bị "Dò lại" thay thế → bỏ dở
       if (settleDeadline === 0) {
         let found = hasReportInCaptured(captured)
         if (!found) {
@@ -152,6 +155,7 @@ async function handleDiscover(acct, cmd) {
       await new Promise((r) => setTimeout(r, 3000))
     }
     detach()
+    if (superseded) return { ok: false, message: 'Lệnh dò bị thay thế bởi lần "Dò lại" mới.' }
 
     // Chụp bảng HTML (dashboard render server-side như Localrent — không có API JSON).
     for (const p of context.pages()) {
@@ -252,6 +256,13 @@ async function maybeAutoSync() {
 async function main() {
   const logFile = initLogFile()
   log.info(`Worker khởi động. Poll engine_commands mỗi ${POLL_MS / 1000}s. Log: ${logFile}`)
+  // Dọn lệnh mồ côi: worker mới = không có lệnh nào đang thực sự chạy → 'running' cũ là rác.
+  try {
+    const { data } = await getSupabase().from('engine_commands')
+      .update({ status: 'error', message: 'Worker khởi động lại', finished_at: nowISO() })
+      .eq('status', 'running').select('id')
+    if (data?.length) log.info(`Dọn ${data.length} lệnh mồ côi (running → error).`)
+  } catch (e) { log.warn(`Không dọn được lệnh mồ côi: ${e.message}`) }
   let stopping = false
   process.on('SIGINT', () => { stopping = true; releaseLock(); process.exit(130) })
 

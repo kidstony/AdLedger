@@ -16,8 +16,17 @@ export function acquireLock() {
     return true
   } catch (err) {
     if (err.code !== 'EEXIST') throw err
+    // Lock đã tồn tại — thu hồi nếu (a) tiến trình chủ đã chết, hoặc (b) quá cũ (>2h).
+    let ownerDead = false
+    try {
+      const pid = parseInt(fs.readFileSync(LOCK_PATH, 'utf8').trim().split(/\s+/)[0], 10)
+      if (Number.isFinite(pid)) {
+        try { process.kill(pid, 0) } // còn sống → không throw
+        catch (e) { if (e.code === 'ESRCH') ownerDead = true } // tiến trình không tồn tại → mồ côi
+      }
+    } catch { /* đọc lock lỗi → dựa vào tuổi */ }
     const age = Date.now() - fs.statSync(LOCK_PATH).mtimeMs
-    if (age > STALE_MS) {
+    if (ownerDead || age > STALE_MS) {
       fs.writeFileSync(LOCK_PATH, `${process.pid} ${new Date().toISOString()}`)
       owned = true
       return true

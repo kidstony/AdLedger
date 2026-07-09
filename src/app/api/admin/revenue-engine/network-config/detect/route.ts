@@ -119,9 +119,14 @@ function symbolCurrency(rows: Row[], field: string | null): string {
   if (/£|gbp/i.test(s)) return 'GBP'
   return ''
 }
-const REV_NAME = /comm?iss?ion|revenue|amount|earn|payout|income|hoa\s*h[oôơ]ng|doanh\s*thu/i
+const REV_NAME = /comm?iss?ion|revenue|amount|earn|payout|profit|bonus|income|hoa\s*h[oôơ]ng|doanh\s*thu|thu\s*nh[aậ]p/i
 const ID_NAME = /^id$|order|number|mã|s[oố]\b|invoice|txn|transaction/i
 const MONEY_SYM = /[€$₫£]|eur|usd|vnd|gbp/i
+// Domain tracker/support — bỏ khỏi ứng viên (nhiễu, không phải dữ liệu doanh thu).
+const TRACKER_HOST = /intercom\.io|sentry\.io|nr-data\.net|yandex|google-analytics|googletagmanager|doubleclick|facebook|hotjar|segment\.(io|com)|mixpanel|amplitude|clarity\.ms|cloudflareinsights|analytics|gstatic|gtag/i
+function isTrackerUrl(url: string): boolean {
+  try { return TRACKER_HOST.test(new URL(url).host) } catch { return false }
+}
 
 function pickRevenueField(rows: Row[], dateField: string | null): string | null {
   const keys = Object.keys(rows[0] ?? {}).filter((k) => k !== dateField)
@@ -187,6 +192,7 @@ export async function POST(req: Request) {
   // Gom mọi mảng ứng viên (kèm url + nguồn: xhr | table).
   const candidates: { url: string; path: string; arr: Row[]; kind: string; table_index: number | null }[] = []
   for (const cap of captured) {
+    if (isTrackerUrl(cap.url)) continue // bỏ nhiễu tracker/support (bảng DOM host dashboard nên không dính)
     const found: { path: string; arr: Row[] }[] = []
     findArrays(cap.payload, '', found)
     for (const f of found) candidates.push({ url: cap.url, ...f, kind: cap.kind ?? 'xhr', table_index: cap.table_index ?? null })
@@ -210,7 +216,9 @@ export async function POST(req: Request) {
   const scored = candidates.map((c) => {
     const dateField = pickDateField(c.arr)
     const revenueField = pickRevenueField(c.arr, dateField)
-    return { ...c, dateField, revenueField, score: (dateField ? 2 : 0) + (revenueField ? 2 : 0) + Math.min(c.arr.length, 100) / 100 }
+    // +0.5 nếu cột doanh thu có ký hiệu tiền → nguồn "tiền thật" thắng nguồn số đếm.
+    const revHasSym = !!revenueField && MONEY_SYM.test(c.arr.map((r) => String(r[revenueField] ?? '')).join(' '))
+    return { ...c, dateField, revenueField, score: (dateField ? 2 : 0) + (revenueField ? 2 : 0) + (revHasSym ? 0.5 : 0) + Math.min(c.arr.length, 100) / 100 }
   }).sort((a, b) => b.score - a.score)
 
   let chosen = scored[0]

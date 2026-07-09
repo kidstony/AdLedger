@@ -4,7 +4,7 @@ import { openContext } from './browser.js'
 import { captureReports } from './capture.js'
 import { extractRows } from './extract.js'
 import { mapRows, dedupeRows, toPnlRows } from './mapper.js'
-import { insertRun, updateRun, upsertRevenueRaw, upsertAffiliateRevenue } from './db.js'
+import { insertRun, updateRun, upsertRevenueRaw, upsertAffiliateRevenue, hasRevenueRows } from './db.js'
 import { openAlert, closeAlerts } from './alerts.js'
 import { dateWindow } from './dates.js'
 import { getRateToUsd } from './fx.js'
@@ -54,9 +54,20 @@ export async function runAccount(config, account, dryRun) {
   let context = null
   let result = null
 
+  // Lần đầu account này (chưa có revenue_raw) → backfill toàn bộ; lần sau → incremental.
+  // dry-run luôn dùng window_days để xem nhanh. Lỗi DB → hasRevenueRows=false → coi lần đầu.
+  const firstRun = !dryRun && !(await hasRevenueRows(networkId, account.id))
+  const windowDays = firstRun ? config.backfill_days : config.window_days
+  log.info(
+    firstRun
+      ? `lần đầu account "${account.id}": backfill ${windowDays} ngày`
+      : `incremental: ${windowDays} ngày`,
+    tag
+  )
+
   if (!dryRun) {
     // Không tạo được run row = không có DB → dừng tài khoản này ngay (throw lên main)
-    const w = dateWindow(config.window_days, config.timezone)
+    const w = dateWindow(windowDays, config.timezone)
     runId = await insertRun(networkId, account.id, w.fromISO, w.toISO)
   }
 
@@ -64,7 +75,7 @@ export async function runAccount(config, account, dryRun) {
   try {
     context = await openContext(account.id)
     const page = context.pages()[0] ?? (await context.newPage())
-    result = await captureReports(page, config, account.dashboard_url)
+    result = await captureReports(page, config, account.dashboard_url, { windowDays })
   } catch (err) {
     await fail(tag, runId, dryRun, 'NO_CAPTURE', `Lỗi browser/navigation: ${err.message.split('\n')[0]}`)
     return { status: 'failed', errorType: 'NO_CAPTURE' }
