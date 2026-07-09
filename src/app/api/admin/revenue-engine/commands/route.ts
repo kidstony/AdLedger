@@ -46,6 +46,7 @@ export async function POST(req: Request) {
   const account_id = body?.account_id ? String(body.account_id) : null
   const force = !!body?.force // login: xoá phiên cũ, buộc đăng nhập lại
   const discover_url = body?.discover_url ? String(body.discover_url).trim() : null // dò trang khác dashboard (payout)
+  const discover_actions = Array.isArray(body?.discover_actions) ? body.discover_actions : null // thao tác trước khi đọc (click…)
   if (!['login', 'fetch', 'discover'].includes(type)) {
     return NextResponse.json({ error: 'type phải là login|fetch|discover' }, { status: 400 })
   }
@@ -74,7 +75,7 @@ export async function POST(req: Request) {
 
   const { data, error } = await supabaseAdmin
     .from('engine_commands')
-    .insert({ type, account_id, network_id: acct.network_id, force: type === 'login' ? force : false, discover_url: type === 'discover' ? discover_url : null, created_by: caller.user_id })
+    .insert({ type, account_id, network_id: acct.network_id, force: type === 'login' ? force : false, discover_url: type === 'discover' ? discover_url : null, discover_actions: type === 'discover' ? discover_actions : null, created_by: caller.user_id })
     .select('id, type, account_id, network_id, status, created_at')
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })

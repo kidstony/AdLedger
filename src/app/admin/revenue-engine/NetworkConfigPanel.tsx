@@ -19,13 +19,14 @@ interface Detect {
 }
 
 type RType = 'pending' | 'confirmed'
-interface Card { url: string; loadedUrl: string; det: Detect | null; sel: Detect['chosen'] | null; status: 'loading' | 'ready' | 'empty' }
+interface Card { url: string; loadedUrl: string; action: string; det: Detect | null; sel: Detect['chosen'] | null; status: 'loading' | 'ready' | 'empty' }
 interface SavedReport {
   revenue_type?: string
   url?: string
   rows_path?: string
   table_index?: number
   capture?: { url_pattern?: string }
+  actions?: { type?: string; text?: string }[]
   mapping?: { date?: { path?: string }; revenue?: { path?: string }; currency?: { path?: string } }
 }
 
@@ -48,8 +49,8 @@ interface Props {
 
 export default function NetworkConfigPanel({ networkId, networkName, accountId, dashboardUrl, authFetch, onClose, onSaved }: Props) {
   const [cards, setCards] = useState<Record<RType, Card>>({
-    pending: { url: '', loadedUrl: '', det: null, sel: null, status: 'loading' },
-    confirmed: { url: '', loadedUrl: '', det: null, sel: null, status: 'loading' },
+    pending: { url: '', loadedUrl: '', action: '', det: null, sel: null, status: 'loading' },
+    confirmed: { url: '', loadedUrl: '', action: '', det: null, sel: null, status: 'loading' },
   })
   const [error, setError] = useState<string | null>(null)
   const [discovering, setDiscovering] = useState<RType | null>(null)
@@ -76,7 +77,7 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
   // (không auto-detect đè lên). Nhờ vậy mở lại panel thấy đúng nguồn/field đã lưu.
   useEffect(() => {
     (async () => {
-      let purl = '', curl = ''
+      let purl = '', curl = '', pact = '', cact = ''
       let pov: Record<string, unknown> | undefined, cov: Record<string, unknown> | undefined
       const savedOverride = (r: SavedReport): Record<string, unknown> => {
         const cur = r?.mapping?.currency?.path
@@ -96,11 +97,12 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
         const reps: SavedReport[] = Array.isArray(config?.config?.reports) ? config.config.reports : []
         for (const r of reps) {
           const u = r.url === '{base}' ? '' : (r.url ?? '')
-          if (r.revenue_type === 'confirmed') { curl = u; cov = savedOverride(r) }
-          else { purl = u; pov = savedOverride(r) }
+          const act = r.actions?.find(a => (a.type ?? 'click') === 'click')?.text ?? ''
+          if (r.revenue_type === 'confirmed') { curl = u; cov = savedOverride(r); cact = act }
+          else { purl = u; pov = savedOverride(r); pact = act }
         }
       }
-      setCards(cs => ({ pending: { ...cs.pending, url: purl }, confirmed: { ...cs.confirmed, url: curl } }))
+      setCards(cs => ({ pending: { ...cs.pending, url: purl, action: pact }, confirmed: { ...cs.confirmed, url: curl, action: cact } }))
       runDetect('pending', purl, pov)
       if (curl) runDetect('confirmed', curl, cov); else patchCard('confirmed', { status: 'empty' })
     })()
@@ -111,7 +113,9 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
   const startDiscover = async (type: RType) => {
     setError(null); setDiscovering(type)
     const url = cards[type].url.trim()
-    const res = await authFetch(CMD_API, { method: 'POST', body: JSON.stringify({ type: 'discover', account_id: accountId, discover_url: url || undefined }) })
+    const act = cards[type].action.trim()
+    const discover_actions = act ? [{ type: 'click', text: act }] : undefined // engine tự click trước khi đọc
+    const res = await authFetch(CMD_API, { method: 'POST', body: JSON.stringify({ type: 'discover', account_id: accountId, discover_url: url || undefined, discover_actions }) })
     if (!res.ok) { setError((await res.json().catch(() => ({}))).error ?? 'Lỗi tạo lệnh dò'); setDiscovering(null); return }
     const { command } = await res.json()
     setDiscoverCmdId(command.id); setAnalyzing(false)
@@ -147,7 +151,13 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
     setSaving(true); setError(null)
     const types: RType[] = ['pending', 'confirmed']
     const reports = types
-      .map(t => (cards[t].det?.draft as { reports?: unknown[] } | null)?.reports?.[0])
+      .map(t => {
+        const rep = (cards[t].det?.draft as { reports?: Record<string, unknown>[] } | null)?.reports?.[0]
+        if (!rep) return null
+        const act = cards[t].action.trim()
+        rep.actions = act ? [{ type: 'click', text: act }] : [] // thao tác trước khi đọc (engine tự click)
+        return rep
+      })
       .filter(Boolean)
     if (!reports.length) { setError('Chưa có nguồn nào phân tích được để lưu.'); setSaving(false); return }
     const base = (cards.pending.det?.draft ?? cards.confirmed.det?.draft) as Record<string, unknown>
@@ -185,7 +195,13 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
             <Wand2 size={13} /> Dò
           </button>
         </div>
-        {dupDash && <p className="text-[11px] text-red-600">⚠ URL này TRÙNG URL dashboard — Thực nhận phải là trang Payout riêng.</p>}
+        <div className="flex items-center gap-2 text-[11px]">
+          <span className="text-slate-400 whitespace-nowrap">Bấm trước khi đọc:</span>
+          <input value={card.action} onChange={e => patchCard(type, { action: e.target.value })}
+            placeholder="tên link/nút cần click (vd: Payment history) — để trống nếu không cần"
+            className="flex-1 border border-slate-200 rounded px-2 py-0.5 text-slate-600" />
+        </div>
+        {dupDash && !card.action.trim() && <p className="text-[11px] text-slate-400">Cùng URL trang đăng nhập — nếu dữ liệu chỉ hiện sau khi bấm 1 link/nút, điền ô "Bấm trước khi đọc" ở trên.</p>}
 
         {card.status === 'loading' && <div className="py-3 text-center text-xs text-slate-400 flex items-center justify-center gap-2"><Loader2 size={12} className="animate-spin" /> Đang phân tích…</div>}
 

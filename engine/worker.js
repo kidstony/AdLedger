@@ -11,6 +11,7 @@ import { loginAccount, waitForLoginByCapture } from './lib/login-account.js'
 import { clearProfile, openContext } from './lib/browser.js'
 import { attachJsonCapture } from './lib/discover-capture.js'
 import { extractTables } from './lib/html-table.js'
+import { runActions } from './lib/actions.js'
 
 const POLL_MS = 5000
 
@@ -127,7 +128,9 @@ async function handleDiscover(acct, cmd) {
     const page = context.pages()[0] ?? (await context.newPage())
     await page.goto(target, { waitUntil: 'load', timeout: 60000 }).catch(() => {})
     const { captured, detach } = attachJsonCapture(context)
-    page.reload({ waitUntil: 'load', timeout: 60000 }).catch(() => {}) // ép bắn lại XHR nếu đã đăng nhập sẵn
+    await page.reload({ waitUntil: 'load', timeout: 60000 }).catch(() => {}) // ép bắn lại XHR nếu đã đăng nhập sẵn
+    // Thao tác trước khi đọc (vd click "Payment history") — TRƯỚC vòng chờ để bắt kịp dữ liệu vừa hiện.
+    await runActions(page, cmd.discover_actions, acct.account_id)
     log.info('Đang dò: ĐĂNG NHẬP + mở TRANG BÁO CÁO. Engine tự phân tích khi thấy dữ liệu, hoặc bấm "Phân tích" (chờ tối đa 5 phút)…', acct.account_id)
 
     // Giữ browser mở đến khi: user bấm "Phân tích", HOẶC engine tự thấy "báo cáo thật"

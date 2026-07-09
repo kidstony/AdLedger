@@ -1,6 +1,7 @@
 import { dateWindow, renderUrl } from './dates.js'
 import { log } from './logger.js'
 import { extractTableAllPages } from './html-table.js'
+import { runActions } from './actions.js'
 
 export function matchesPattern(url, capture) {
   if (capture.pattern_type === 'regex') return new RegExp(capture.url_pattern).test(url)
@@ -110,6 +111,9 @@ export async function captureReports(page, config, base = '', { windowDays } = {
     }
 
     await sleep(report.wait.post_load_wait_ms)
+
+    // Thao tác trước khi đọc (vd click "Payment history" để hiện bảng payout) — cùng actions với lúc dò.
+    await runActions(page, report.actions, config.network_id)
 
     // Chế độ đọc bảng HTML (dashboard render server-side): đọc thẳng DOM table,
     // không chờ XHR. payload = { rows } → dùng rows_path="rows".
