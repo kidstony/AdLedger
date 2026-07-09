@@ -140,9 +140,12 @@ function pickRevenueField(rows: Row[], dateField: string | null): string | null 
 
   const frac = (k: string) => rows.filter((r) => /\d\.\d/.test(String(r[k] ?? ''))).length / rows.length
   const hasSym = (k: string) => rows.some((r) => MONEY_SYM.test(String(r[k] ?? '')))
-  const looksId = (k: string) => ID_NAME.test(k) ||
-    // toàn số nguyên, không ký hiệu tiền, không thập phân → giống ID
-    (!hasSym(k) && frac(k) < 0.1 && rows.every((r) => { const v = String(r[k] ?? '').trim(); return v === '' || /^\d+$/.test(v.replace(/[^0-9]/g, '')) && !/\./.test(v) }))
+  const looksId = (k: string) =>
+    // Cột tên rõ là doanh thu (commission/amount/revenue…) KHÔNG bao giờ là ID — kể cả toàn số nguyên
+    // (vd total_commission=640,4770 tính bằng cents) → tránh loại nhầm.
+    !REV_NAME.test(k) && (ID_NAME.test(k) ||
+      // toàn số nguyên, không ký hiệu tiền, không thập phân → giống ID
+      (!hasSym(k) && frac(k) < 0.1 && rows.every((r) => { const v = String(r[k] ?? '').trim(); return v === '' || /^\d+$/.test(v.replace(/[^0-9]/g, '')) && !/\./.test(v) })))
 
   const score = (k: string) => {
     if (looksId(k)) return -1
@@ -240,7 +243,12 @@ export async function POST(req: Request) {
     const revConfident = !!revenueField && (revHasSym || REV_NAME.test(revenueField))
     // +1 nếu XHR có doanh thu đáng tin (dữ liệu cấu trúc, bắt ổn định lúc sync) — bảng DOM dễ vỡ.
     const xhrBonus = c.kind === 'xhr' && revConfident ? 1 : 0
-    return { ...c, dateField, revenueField, score: (dateField ? 2 : 0) + (revenueField ? 2 : 0) + (revConfident ? 2 : 0) + xhrBonus + Math.min(c.arr.length, 100) / 100 }
+    // Nguồn doanh thu (time-series/ledger) LUÔN có cột ngày. Không có ngày → gần như chắc chắn
+    // là mảng rác/config (vd form fields "question") → điểm rất thấp, không thể thắng nguồn có ngày.
+    const score = dateField
+      ? 3 + (revenueField ? 2 : 0) + (revConfident ? 2 : 0) + xhrBonus + Math.min(c.arr.length, 100) / 100
+      : (revenueField ? 0.5 : 0.1) + Math.min(c.arr.length, 100) / 1000
+    return { ...c, dateField, revenueField, score }
   }).sort((a, b) => b.score - a.score)
 
   let chosen = scored[0]
