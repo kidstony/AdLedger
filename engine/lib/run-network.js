@@ -94,43 +94,57 @@ export async function runAccount(config, account, dryRun) {
     return { status: 'failed', errorType: 'NO_CAPTURE' }
   }
 
-  // ---- 2. Extract + map + dedupe ----
-  const reportByName = new Map(config.reports.map((r) => [r.name, r]))
-  let allMapped = []
-  let totalInvalid = 0
-  const allErrorSamples = []
+  // ---- 2. Extract + map + dedupe THEO TỪNG REPORT ----
+  // Khớp captured→report bằng INDEX (không bằng name: 2 report có thể trùng name 'revenue').
+  // Gom mọi payload cùng report_index (1 report có thể bắn nhiều response/trang).
+  const payloadsByReport = new Map() // ri -> [payload]
+  for (const cap of captured) {
+    const ri = cap.report_index ?? 0
+    if (!payloadsByReport.has(ri)) payloadsByReport.set(ri, [])
+    payloadsByReport.get(ri).push(cap.payload)
+  }
 
-  // Gộp/dedupe THEO TỪNG REPORT (mỗi report có duplicate_strategy + revenue_type riêng),
-  // gắn _type để lúc ghi P&L tách 'pending' (màn hình) vs 'confirmed' (thực nhận).
+  // Validate + ghi PER-REPORT (partial success): report lỗi → cảnh báo & bỏ qua, report
+  // khác vẫn chạy; account chỉ fail khi KHÔNG report nào ok. Gắn _type để tách P&L.
   let batch = []
-  for (const { report: reportName, payload } of captured) {
-    const report = reportByName.get(reportName)
-    const rawRows = extractRows(payload, report.rows_path)
-    const { mapped, invalid, errorSamples } = mapRows(rawRows, report.mapping)
-    allMapped.push(...mapped)
-    totalInvalid += invalid
-    allErrorSamples.push(...errorSamples)
-    const deduped = dedupeRows(mapped, report.duplicate_strategy, networkId)
+  let totalMapped = 0, totalInvalidAll = 0
+  const failReasons = []
+  for (const [ri, payloads] of payloadsByReport) {
+    const report = config.reports[ri]
+    if (!report) continue
+    let mappedR = [], invalidR = 0, samplesR = []
+    for (const payload of payloads) {
+      const rawRows = extractRows(payload, report.rows_path)
+      const { mapped, invalid, errorSamples } = mapRows(rawRows, report.mapping)
+      mappedR.push(...mapped); invalidR += invalid; samplesR.push(...errorSamples)
+    }
+    totalMapped += mappedR.length; totalInvalidAll += invalidR
+    const totalR = mappedR.length + invalidR
+    const ratioR = totalR === 0 ? 1 : invalidR / totalR
+    const v = report.validation
+    if (mappedR.length < v.min_mapped_rows || ratioR > v.max_invalid_row_ratio) {
+      failReasons.push(`report "${report.name}" [${report.revenue_type}]: ${mappedR.length}/${totalR} (lỗi ${invalidR}) — ${samplesR.slice(0, 2).join(' | ') || '?'}`)
+      log.warn(`bỏ qua report "${report.name}" [${report.revenue_type}]: map ${mappedR.length}/${totalR}, lỗi ${invalidR}. Mẫu: ${samplesR.slice(0, 2).join(' | ') || '(không có)'}`, tag)
+      continue
+    }
+    const deduped = dedupeRows(mappedR, report.duplicate_strategy, networkId)
     for (const r of deduped) r._type = report.revenue_type // 'pending' | 'confirmed'
     batch.push(...deduped)
   }
 
-  const total = allMapped.length + totalInvalid
-  const invalidRatio = total === 0 ? 1 : totalInvalid / total
-  const validation = config.reports[0].validation
-  const counts = { records_captured: captured.length, records_mapped: allMapped.length }
+  const counts = { records_captured: captured.length, records_mapped: totalMapped }
 
-  if (allMapped.length < validation.min_mapped_rows || invalidRatio > validation.max_invalid_row_ratio) {
+  if (batch.length === 0) {
     const message =
-      `Map được ${allMapped.length}/${total} dòng (lỗi ${totalInvalid}). ` +
-      `Network có thể đã đổi cấu trúc dữ liệu — kiểm tra rows_path/mapping. ` +
-      `Lỗi mẫu: ${allErrorSamples.slice(0, 3).join(' | ') || '(không có)'}`
+      `Không report nào map được dữ liệu hợp lệ (map ${totalMapped}, lỗi ${totalInvalidAll}). ` +
+      `Network có thể đã đổi cấu trúc — kiểm tra rows_path/mapping. ${failReasons.join(' ;; ') || ''}`
     await fail(tag, runId, dryRun, 'MAPPING_FAILED', message, counts)
     return { status: 'failed', errorType: 'MAPPING_FAILED' }
   }
+  if (failReasons.length) log.warn(`${failReasons.length} report bị bỏ qua, ${batch.length} dòng từ report ok vẫn được ghi.`, tag)
 
   counts.records_mapped = batch.length
-  log.info(`map OK: ${allMapped.length} dòng thô → ${batch.length} dòng sau gộp (${totalInvalid} dòng lỗi bỏ qua)`, tag)
+  log.info(`map OK: ${totalMapped} dòng thô → ${batch.length} dòng sau gộp (${totalInvalidAll} dòng lỗi bỏ qua)`, tag)
 
   // project_mapping riêng cho tài khoản: default = project_id của account, giữ rules offer-level chung
   const accountPm = { default_project_id: account.project_id, rules: config.project_mapping.rules }

@@ -38,11 +38,13 @@ function mapRow(raw, mapping) {
     }
 
     if (field === 'date') {
+      const rawVal = value
       value = parseDate(value, spec.formats ?? [], spec.order ?? 'DMY')
-      if (!value) return { error: `date không parse được (path=${spec.path})` }
+      if (!value) return { error: `date không parse được: ${JSON.stringify(rawVal)} (path=${spec.path})` }
     } else if (field === 'revenue') {
+      const rawVal = value
       value = parseAmount(value, spec)
-      if (value === null) return { error: `revenue không parse được (path=${spec.path})` }
+      if (value === null) return { error: `revenue không parse được: ${JSON.stringify(rawVal)} (path=${spec.path})` }
     } else if (field === 'clicks' || field === 'conversions') {
       value = value === undefined ? null : Number(value)
       if (value !== null && !Number.isFinite(value)) value = null

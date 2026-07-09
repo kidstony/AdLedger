@@ -64,6 +64,7 @@ export async function captureReports(page, config, base = '', { windowDays } = {
   const captured = []
   const pendingJson = []
   let activeReport = null
+  let activeReportIndex = -1 // để gắn report_index (khớp captured→report bằng vị trí, không bằng name — 2 report có thể trùng name)
 
   page.on('response', (response) => {
     if (!activeReport) return
@@ -73,11 +74,12 @@ export async function captureReports(page, config, base = '', { windowDays } = {
     if (methods && !methods.includes(response.request().method())) return
 
     const report = activeReport
+    const reportIndex = activeReportIndex
     pendingJson.push(
       response
         .json()
         .then((payload) => {
-          captured.push({ report: report.name, payload, url })
+          captured.push({ report_index: reportIndex, report: report.name, payload, url })
           log.info(`  hứng được response: ${url.slice(0, 120)}`, config.network_id)
         })
         .catch(() => {
@@ -86,8 +88,10 @@ export async function captureReports(page, config, base = '', { windowDays } = {
     )
   })
 
-  for (const report of config.reports) {
+  for (let ri = 0; ri < config.reports.length; ri++) {
+    const report = config.reports[ri]
     activeReport = report
+    activeReportIndex = ri
     // Ghi đè field ngày trong request (nếu khai) TRƯỚC khi điều hướng để bắt kịp XHR đầu.
     const unroute = await applyRequestOverride(page, report, window)
     const url = renderUrl(report.url, window, report.url_date_format, base)
@@ -111,7 +115,7 @@ export async function captureReports(page, config, base = '', { windowDays } = {
     // không chờ XHR. payload = { rows } → dùng rows_path="rows".
     if (report.mode === 'html_table') {
       const { rows, pages } = await extractTableAllPages(page, report.table_index ?? 0, { maxPages: report.max_pages ?? 100 })
-      captured.push({ report: report.name, payload: { rows }, url })
+      captured.push({ report_index: ri, report: report.name, payload: { rows }, url })
       log.info(`report "${report.name}" (html_table #${report.table_index ?? 0}): đọc ${rows.length} dòng qua ${pages} trang`, config.network_id)
       await unroute()
       continue

@@ -271,7 +271,8 @@ export async function POST(req: Request) {
     login_check: { logged_out_url_patterns: ['/login', '/signin', '/auth', '/sign-in'], logged_out_selectors: ["input[type='password']"] },
     login_url: '{base}',
     reports: [{
-      name: 'revenue',
+      // Tên phân biệt theo loại (đỡ trùng khi 1 network có cả 2 nguồn); engine khớp theo INDEX.
+      name: ov.revenue_type === 'confirmed' ? 'payout' : 'revenue',
       // Trang nguồn: {base} (dashboard) mặc định; source_url (payout) nếu dò trang chỉ định.
       url: sourceUrl ?? '{base}',
       url_date_format: 'YYYY-MM-DD',
