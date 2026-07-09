@@ -181,13 +181,19 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => null)
   const network_id = String(body?.network_id ?? '').trim()
   if (!network_id) return NextResponse.json({ error: 'Thiếu network_id' }, { status: 400 })
+  // Nguồn cần phân tích: mỗi thẻ (Tiền màn hình/Thực nhận) đọc ĐÚNG bản dò của mình theo source_url.
+  const reqSourceUrl: string | null = body?.source_url ? String(body.source_url).trim() : null
+  const reqRevenueType: 'pending' | 'confirmed' | undefined =
+    body?.revenue_type === 'confirmed' || body?.revenue_type === 'pending' ? body.revenue_type : undefined
 
-  const { data: disc } = await supabaseAdmin
+  // Chọn bản dò khớp nguồn: có source_url → khớp đúng; không → bản dò dashboard (source_url NULL).
+  let q = supabaseAdmin
     .from('engine_discoveries').select('captured, source_url, created_at')
-    .eq('network_id', network_id).order('created_at', { ascending: false }).limit(1).maybeSingle()
-  if (!disc?.captured) return NextResponse.json({ error: 'Chưa có dữ liệu dò. Bấm "Cấu hình tự động" và đăng nhập trước.' }, { status: 404 })
-  // source_url: trang đã dò (payout) khác dashboard → report.url = url này; NULL → giữ {base}.
-  const sourceUrl = (disc as { source_url?: string | null }).source_url || null
+    .eq('network_id', network_id)
+  q = reqSourceUrl ? q.eq('source_url', reqSourceUrl) : q.is('source_url', null)
+  const { data: disc } = await q.order('created_at', { ascending: false }).limit(1).maybeSingle()
+  if (!disc?.captured) return NextResponse.json({ needDiscover: true, error: 'Chưa có dữ liệu dò cho nguồn này.' }, { status: 404 })
+  const sourceUrl = reqSourceUrl ?? ((disc as { source_url?: string | null }).source_url || null)
 
   const captured = disc.captured as { url: string; payload: unknown; kind?: string; table_index?: number }[]
 
@@ -260,10 +266,10 @@ export async function POST(req: Request) {
 
   // Loại doanh thu hiệu lực: theo override; nếu chưa override → suy từ nguồn đã dò
   // (dò trang chỉ định = Payout → 'confirmed'; dò dashboard → 'pending').
+  // Loại: ưu tiên loại của THẺ gọi (reqRevenueType), rồi override field, rồi suy từ nguồn.
   const rt: 'pending' | 'confirmed' =
-    ov.revenue_type === 'confirmed' || ov.revenue_type === 'pending'
-      ? ov.revenue_type
-      : (sourceUrl ? 'confirmed' : 'pending')
+    reqRevenueType
+      ?? (ov.revenue_type === 'confirmed' || ov.revenue_type === 'pending' ? ov.revenue_type : (sourceUrl ? 'confirmed' : 'pending'))
 
   const draft = {
     network_id,
