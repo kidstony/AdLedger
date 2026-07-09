@@ -143,6 +143,8 @@ function applyDefaults(cfg) {
     report.validation = { ...VALIDATION_DEFAULTS, ...report.validation }
     report.capture = { pattern_type: 'substring', methods: null, ...report.capture }
     report.request_override = report.request_override ?? null // ghi đè field ngày trong request (vd POST from/to)
+    // Loại doanh thu report này ghi vào P&L: 'pending' (tiền màn hình/dashboard) | 'confirmed' (thực nhận/payout)
+    report.revenue_type = report.revenue_type === 'confirmed' ? 'confirmed' : 'pending'
     if (report.mode === 'html_table' && (report.rows_path === undefined || report.rows_path === null)) report.rows_path = 'rows'
     report.mapping = report.mapping ?? {}
     return report

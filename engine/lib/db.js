@@ -101,9 +101,10 @@ export async function upsertRevenueRaw(rows, runId) {
 // ---------- affiliate_revenue (P&L) ----------
 
 // pnlRows: [{ project_id, date, amount }] — đã gộp SUM theo (project, ngày), amount = USD
-export async function upsertAffiliateRevenue(pnlRows) {
+// type: 'pending' (tiền màn hình/dashboard) | 'confirmed' (thực nhận/payout)
+export async function upsertAffiliateRevenue(pnlRows, type = 'pending') {
   const supabase = getSupabase()
-  const rows = pnlRows.map((r) => ({ ...r, type: 'pending' }))
+  const rows = pnlRows.map((r) => ({ ...r, type }))
   for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
     const { error } = await supabase
       .from('affiliate_revenue')

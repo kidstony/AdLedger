@@ -73,12 +73,20 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
     await authFetch(CMD_API, { method: 'PATCH', body: JSON.stringify({ id: discoverCmdId, signal: 'analyze' }) })
   }
 
-  const override = (patch: Partial<Detect['chosen']>) => {
+  // Loại doanh thu report này ghi vào P&L: 'pending' (tiền màn hình) | 'confirmed' (thực nhận/payout)
+  const [revenueType, setRevenueType] = useState<'pending' | 'confirmed'>('pending')
+
+  const override = (patch: Partial<Detect['chosen']>, type = revenueType) => {
     if (!sel) return
     const next = { ...sel, ...patch }
     setSel(next)
     setPhase('loading')
-    runDetect({ url: next.url, rows_path: next.rows_path, date_field: next.date_field, revenue_field: next.revenue_field, currency_field: next.currency_field })
+    runDetect({ url: next.url, rows_path: next.rows_path, date_field: next.date_field, revenue_field: next.revenue_field, currency_field: next.currency_field, revenue_type: type })
+  }
+
+  const changeRevenueType = (type: 'pending' | 'confirmed') => {
+    setRevenueType(type)
+    if (sel) { setPhase('loading'); runDetect({ url: sel.url, rows_path: sel.rows_path, date_field: sel.date_field, revenue_field: sel.revenue_field, currency_field: sel.currency_field, revenue_type: type }) }
   }
 
   const save = async () => {
@@ -179,6 +187,23 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
                     <option value="">— (mặc định)</option>{det.fields.map(f => <option key={f} value={f}>{f}</option>)}
                   </select>
                 </label>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-500">Loại doanh thu:</span>
+                <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+                  <button type="button" onClick={() => changeRevenueType('pending')}
+                    className={`px-3 py-1 ${revenueType === 'pending' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'}`}>
+                    Tiền màn hình
+                  </button>
+                  <button type="button" onClick={() => changeRevenueType('confirmed')}
+                    className={`px-3 py-1 ${revenueType === 'confirmed' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600'}`}>
+                    Thực nhận
+                  </button>
+                </div>
+                <span className="text-slate-400">
+                  {revenueType === 'confirmed' ? '→ affiliate_revenue [confirmed] (trang Payout)' : '→ affiliate_revenue [pending] (dashboard)'}
+                </span>
               </div>
 
               <div className="border border-slate-200 rounded-lg overflow-hidden">

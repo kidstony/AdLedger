@@ -100,6 +100,9 @@ export async function runAccount(config, account, dryRun) {
   let totalInvalid = 0
   const allErrorSamples = []
 
+  // Gộp/dedupe THEO TỪNG REPORT (mỗi report có duplicate_strategy + revenue_type riêng),
+  // gắn _type để lúc ghi P&L tách 'pending' (màn hình) vs 'confirmed' (thực nhận).
+  let batch = []
   for (const { report: reportName, payload } of captured) {
     const report = reportByName.get(reportName)
     const rawRows = extractRows(payload, report.rows_path)
@@ -107,6 +110,9 @@ export async function runAccount(config, account, dryRun) {
     allMapped.push(...mapped)
     totalInvalid += invalid
     allErrorSamples.push(...errorSamples)
+    const deduped = dedupeRows(mapped, report.duplicate_strategy, networkId)
+    for (const r of deduped) r._type = report.revenue_type // 'pending' | 'confirmed'
+    batch.push(...deduped)
   }
 
   const total = allMapped.length + totalInvalid
@@ -123,7 +129,6 @@ export async function runAccount(config, account, dryRun) {
     return { status: 'failed', errorType: 'MAPPING_FAILED' }
   }
 
-  const batch = dedupeRows(allMapped, config.reports[0].duplicate_strategy, networkId)
   counts.records_mapped = batch.length
   log.info(`map OK: ${allMapped.length} dòng thô → ${batch.length} dòng sau gộp (${totalInvalid} dòng lỗi bỏ qua)`, tag)
 
@@ -148,8 +153,8 @@ export async function runAccount(config, account, dryRun) {
       log.warn(`Không lấy được tỷ giá: ${err.message}. Ghi revenue_raw không có USD, bỏ qua P&L lần này; chạy lại sau.`, tag)
     }
 
-    const rawRows = batch.map((r) => ({
-      ...r,
+    const rawRows = batch.map(({ _type, ...r }) => ({
+      ...r, // bỏ _type (cột nội bộ, revenue_raw không có)
       account_id: account.id,
       account_label: account.label,
       project_id: account.project_id,
@@ -161,9 +166,15 @@ export async function runAccount(config, account, dryRun) {
 
     let pnlCount = 0
     if (config.sync_pnl && rate !== undefined) {
-      const pnlRows = toPnlRows(batch, accountPm, rate)
-      pnlCount = await upsertAffiliateRevenue(pnlRows)
-      log.info(`đồng bộ P&L: ${pnlCount} dòng (project, ngày) → affiliate_revenue [pending] (fx=${rate}, dự án ${account.project_id})`, tag)
+      // Tách theo loại: 'pending' (màn hình) và 'confirmed' (thực nhận/payout) ghi riêng.
+      for (const type of ['pending', 'confirmed']) {
+        const rowsOfType = batch.filter((r) => (r._type ?? 'pending') === type)
+        if (rowsOfType.length === 0) continue
+        const pnlRows = toPnlRows(rowsOfType, accountPm, rate)
+        const n = await upsertAffiliateRevenue(pnlRows, type)
+        pnlCount += n
+        log.info(`đồng bộ P&L: ${n} dòng (project, ngày) → affiliate_revenue [${type}] (fx=${rate}, dự án ${account.project_id})`, tag)
+      }
     }
 
     await updateRun(runId, { status: 'success', ...counts })

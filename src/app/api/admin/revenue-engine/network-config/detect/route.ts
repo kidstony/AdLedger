@@ -291,6 +291,8 @@ export async function POST(req: Request) {
       // (nhiều dòng/ngày). Chỉ nguồn day-total (~1 dòng/ngày) mới để 'last' (đề phòng
       // pagination lặp dòng tổng). Bảng HTML luôn mức-đơn → 'sum'.
       duplicate_strategy: chosen.kind === 'table' || datedRows > byDate.size * 1.2 ? 'sum' : 'last',
+      // Loại doanh thu ghi vào P&L: 'pending' (tiền màn hình) | 'confirmed' (thực nhận/payout).
+      revenue_type: ov.revenue_type === 'confirmed' ? 'confirmed' : 'pending',
       validation: { min_mapped_rows: 1, max_invalid_row_ratio: 0.2 },
     }],
   }
