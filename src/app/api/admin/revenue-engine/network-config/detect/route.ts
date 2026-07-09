@@ -251,7 +251,18 @@ export async function POST(req: Request) {
     return { ...c, dateField, revenueField, score }
   }).sort((a, b) => b.score - a.score)
 
-  let chosen = scored[0]
+  // Nguồn DÙNG ĐƯỢC = có cột ngày HOẶC bảng rỗng-có-header (map tay). Nếu toàn rác không-ngày
+  // (vd trang chỉ có form config) và user chưa tự chọn → báo "chưa nhận ra", KHÔNG auto lấy rác.
+  const usable = scored.filter((c) => c.dateField || c.arr.length === 0)
+  const hasOverride = ov.rows_path !== undefined && ov.rows_path !== null
+  if (usable.length === 0 && !hasOverride) {
+    return NextResponse.json({
+      noAuto: true, draft: null, preview: [], fields: [], chosen: null, candidates: [],
+      capturedSummary: captured.slice(0, 40).map((c) => ({ url: c.url, shape: shape(c.payload) })),
+    })
+  }
+
+  let chosen = usable[0] ?? scored[0]
   // Khớp nguồn theo override. Nhiều candidate có thể CÙNG rows_path (vd 'data' của cả purchase
   // XHR lẫn push/list) → phải định danh chính xác: url đầy đủ (đổi thủ công) → url_pattern (reload
   // XHR) → table_index (reload bảng) → cuối cùng mới lấy phần tử đầu cùng path.
