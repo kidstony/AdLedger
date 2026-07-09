@@ -269,6 +269,8 @@ export async function POST(req: Request) {
   const dateField = ov.date_field ?? chosen.dateField
   const revenueField = ov.revenue_field ?? chosen.revenueField
   const currencyField = ov.currency_field ?? pickCurrencyField(rows)
+  // Chia giá trị (vd 100 nếu doanh thu là cents) — áp cả preview lẫn draft để preview = engine.
+  const divisor = Number(ov.divisor) > 0 ? Number(ov.divisor) : 1
   // Bảng rỗng (0 dòng): lấy danh sách cột từ HEADER để user map thủ công theo tên cột.
   const fields = rows.length ? Object.keys(rows[0]) : (chosen.headers ?? [])
 
@@ -285,7 +287,7 @@ export async function POST(req: Request) {
     for (const r of rows) {
       const d = normDate(r[dateField], dateInfo.order); const rev = parseMoney(r[revenueField], numFmt)
       if (d) datedRows++
-      if (d && rev !== null) byDate.set(d, (byDate.get(d) ?? 0) + rev)
+      if (d && rev !== null) byDate.set(d, (byDate.get(d) ?? 0) + rev / divisor)
     }
   }
   const preview = [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, revenue]) => ({ date, revenue }))
@@ -332,7 +334,7 @@ export async function POST(req: Request) {
         offer_id: { path: '__const__', required: false, default: '' },
         // offer_name RIÊNG cho confirmed (payout) để khoá revenue_raw không đụng report pending.
         offer_name: { path: '__const__', required: false, default: rt === 'confirmed' ? 'payout' : network_id },
-        revenue: { path: revenueField, divisor: 1, decimal_separator: numFmt.decimal, thousands_separator: numFmt.thousands },
+        revenue: { path: revenueField, divisor, decimal_separator: numFmt.decimal, thousands_separator: numFmt.thousands },
         currency: currencyField ? { path: currencyField, required: false, default: currencyGuess || 'USD' } : { path: '__const__', required: false, default: currencyGuess || 'USD' },
       },
       // offer_id/offer_name là hằng số → khoá gộp = 1 dòng/ngày. Vì preview LUÔN cộng mọi
@@ -365,6 +367,7 @@ export async function POST(req: Request) {
     warnings,
     revenue_type: rt,          // loại doanh thu hiệu lực (tự khớp nguồn đã dò) → panel phản ánh nút
     source_url: sourceUrl,     // trang đã dò (payout) — null nếu dò dashboard
+    divisor,                   // chia giá trị (cents→đơn vị chính) → panel phản ánh ô ÷
     chosen: { url: chosen.url, rows_path: chosen.path, date_field: dateField, revenue_field: revenueField, currency_field: currencyField },
     candidates: scored.map((c) => ({
       url: c.url, rows_path: c.path, rows: c.arr.length,

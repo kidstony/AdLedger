@@ -16,10 +16,13 @@ interface Detect {
   capturedSummary?: { url: string; shape: string }[]
   warnings?: string[]
   needDiscover?: boolean
+  revenue_type?: 'pending' | 'confirmed'
+  source_url?: string | null
+  divisor?: number
 }
 
 type RType = 'pending' | 'confirmed'
-interface Card { url: string; loadedUrl: string; action: string; det: Detect | null; sel: Detect['chosen'] | null; status: 'loading' | 'ready' | 'empty' }
+interface Card { url: string; loadedUrl: string; action: string; divisor: string; det: Detect | null; sel: Detect['chosen'] | null; status: 'loading' | 'ready' | 'empty' }
 interface SavedReport {
   revenue_type?: string
   url?: string
@@ -27,7 +30,7 @@ interface SavedReport {
   table_index?: number
   capture?: { url_pattern?: string }
   actions?: { type?: string; text?: string }[]
-  mapping?: { date?: { path?: string }; revenue?: { path?: string }; currency?: { path?: string } }
+  mapping?: { date?: { path?: string }; revenue?: { path?: string; divisor?: number }; currency?: { path?: string } }
 }
 
 const META: Record<RType, { label: string; hint: string; badge: string }> = {
@@ -49,8 +52,8 @@ interface Props {
 
 export default function NetworkConfigPanel({ networkId, networkName, accountId, dashboardUrl, authFetch, onClose, onSaved }: Props) {
   const [cards, setCards] = useState<Record<RType, Card>>({
-    pending: { url: '', loadedUrl: '', action: '', det: null, sel: null, status: 'loading' },
-    confirmed: { url: '', loadedUrl: '', action: '', det: null, sel: null, status: 'loading' },
+    pending: { url: '', loadedUrl: '', action: '', divisor: '1', det: null, sel: null, status: 'loading' },
+    confirmed: { url: '', loadedUrl: '', action: '', divisor: '1', det: null, sel: null, status: 'loading' },
   })
   const [error, setError] = useState<string | null>(null)
   const [discovering, setDiscovering] = useState<RType | null>(null)
@@ -64,9 +67,11 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
   // Phân tích 1 nguồn: đọc ĐÚNG bản dò theo source_url (url của thẻ) + loại của thẻ.
   const runDetect = async (type: RType, url: string, override?: Record<string, unknown>) => {
     patchCard(type, { status: 'loading' })
+    // Chia giá trị: ưu tiên divisor trong override (khi user vừa đổi ô), else lấy state thẻ.
+    const divisor = override && 'divisor' in override ? override.divisor : (Number(cards[type].divisor) || 1)
     const res = await authFetch(`${CFG_API}/detect`, {
       method: 'POST',
-      body: JSON.stringify({ network_id: networkId, source_url: url.trim() || null, revenue_type: type, override }),
+      body: JSON.stringify({ network_id: networkId, source_url: url.trim() || null, revenue_type: type, override: { ...override, divisor } }),
     })
     if (!res.ok) { patchCard(type, { status: 'empty', det: null, sel: null, loadedUrl: url.trim() }); return }
     const d: Detect = await res.json()
@@ -77,7 +82,7 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
   // (không auto-detect đè lên). Nhờ vậy mở lại panel thấy đúng nguồn/field đã lưu.
   useEffect(() => {
     (async () => {
-      let purl = '', curl = '', pact = '', cact = ''
+      let purl = '', curl = '', pact = '', cact = '', pdiv = '1', cdiv = '1'
       let pov: Record<string, unknown> | undefined, cov: Record<string, unknown> | undefined
       const savedOverride = (r: SavedReport): Record<string, unknown> => {
         const cur = r?.mapping?.currency?.path
@@ -89,6 +94,7 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
           date_field: r?.mapping?.date?.path ?? null,
           revenue_field: r?.mapping?.revenue?.path ?? null,
           currency_field: cur && cur !== '__const__' ? cur : null,
+          divisor: Number(r?.mapping?.revenue?.divisor) || 1,
         }
       }
       const res = await authFetch(`${CFG_API}?network_id=${encodeURIComponent(networkId)}`)
@@ -98,11 +104,12 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
         for (const r of reps) {
           const u = r.url === '{base}' ? '' : (r.url ?? '')
           const act = r.actions?.find(a => (a.type ?? 'click') === 'click')?.text ?? ''
-          if (r.revenue_type === 'confirmed') { curl = u; cov = savedOverride(r); cact = act }
-          else { purl = u; pov = savedOverride(r); pact = act }
+          const div = String(r.mapping?.revenue?.divisor ?? 1)
+          if (r.revenue_type === 'confirmed') { curl = u; cov = savedOverride(r); cact = act; cdiv = div }
+          else { purl = u; pov = savedOverride(r); pact = act; pdiv = div }
         }
       }
-      setCards(cs => ({ pending: { ...cs.pending, url: purl, action: pact }, confirmed: { ...cs.confirmed, url: curl, action: cact } }))
+      setCards(cs => ({ pending: { ...cs.pending, url: purl, action: pact, divisor: pdiv }, confirmed: { ...cs.confirmed, url: curl, action: cact, divisor: cdiv } }))
       runDetect('pending', purl, pov)
       if (curl) runDetect('confirmed', curl, cov); else patchCard('confirmed', { status: 'empty' })
     })()
@@ -145,6 +152,14 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
     const next = { ...card.sel, ...patch }
     patchCard(type, { sel: next })
     runDetect(type, card.url, { url: next.url, rows_path: next.rows_path, date_field: next.date_field, revenue_field: next.revenue_field, currency_field: next.currency_field })
+  }
+
+  // Đổi ô ÷ (chia) → re-detect với divisor mới để preview cập nhật ngay.
+  const changeDivisor = (type: RType, val: string) => {
+    patchCard(type, { divisor: val })
+    const card = cards[type]
+    if (!card.sel) return
+    runDetect(type, card.url, { url: card.sel.url, rows_path: card.sel.rows_path, date_field: card.sel.date_field, revenue_field: card.sel.revenue_field, currency_field: card.sel.currency_field, divisor: Number(val) || 1 })
   }
 
   const save = async () => {
@@ -250,6 +265,12 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
                   <option value="">— (mặc định)</option>{det.fields.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
               </label>
+            </div>
+            <div className="flex items-center gap-2 text-[11px]">
+              <span className="text-slate-500">Chia giá trị (÷):</span>
+              <input value={card.divisor} onChange={e => changeDivisor(type, e.target.value)}
+                className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-slate-700" />
+              <span className="text-slate-400">đặt 100 nếu doanh thu là cents (vd 640 → €6.40)</span>
             </div>
             <div className="border border-slate-200 rounded overflow-hidden">
               <div className="bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600 flex justify-between">
