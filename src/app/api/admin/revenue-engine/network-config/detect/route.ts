@@ -258,6 +258,13 @@ export async function POST(req: Request) {
     : symbolCurrency(rows, revenueField)
   ).trim()
 
+  // Loại doanh thu hiệu lực: theo override; nếu chưa override → suy từ nguồn đã dò
+  // (dò trang chỉ định = Payout → 'confirmed'; dò dashboard → 'pending').
+  const rt: 'pending' | 'confirmed' =
+    ov.revenue_type === 'confirmed' || ov.revenue_type === 'pending'
+      ? ov.revenue_type
+      : (sourceUrl ? 'confirmed' : 'pending')
+
   const draft = {
     network_id,
     network_name: network_id,
@@ -272,7 +279,7 @@ export async function POST(req: Request) {
     login_url: '{base}',
     reports: [{
       // Tên phân biệt theo loại (đỡ trùng khi 1 network có cả 2 nguồn); engine khớp theo INDEX.
-      name: ov.revenue_type === 'confirmed' ? 'payout' : 'revenue',
+      name: rt === 'confirmed' ? 'payout' : 'revenue',
       // Trang nguồn: {base} (dashboard) mặc định; source_url (payout) nếu dò trang chỉ định.
       url: sourceUrl ?? '{base}',
       url_date_format: 'YYYY-MM-DD',
@@ -287,7 +294,7 @@ export async function POST(req: Request) {
         date: { path: dateField, order: dateInfo.order, formats: ['YYYY-MM-DD', 'YYYY-MM-DD HH:mm:ss', 'YYYY-MM-DDTHH:mm:ss', 'DD.MM.YYYY', 'D.M.YYYY', 'DD/MM/YYYY', 'D/M/YYYY', 'DD-MM-YYYY', 'YYYY/MM/DD'] },
         offer_id: { path: '__const__', required: false, default: '' },
         // offer_name RIÊNG cho confirmed (payout) để khoá revenue_raw không đụng report pending.
-        offer_name: { path: '__const__', required: false, default: ov.revenue_type === 'confirmed' ? 'payout' : network_id },
+        offer_name: { path: '__const__', required: false, default: rt === 'confirmed' ? 'payout' : network_id },
         revenue: { path: revenueField, divisor: 1, decimal_separator: numFmt.decimal, thousands_separator: numFmt.thousands },
         currency: currencyField ? { path: currencyField, required: false, default: currencyGuess || 'USD' } : { path: '__const__', required: false, default: currencyGuess || 'USD' },
       },
@@ -297,7 +304,7 @@ export async function POST(req: Request) {
       // pagination lặp dòng tổng). Bảng HTML luôn mức-đơn → 'sum'.
       duplicate_strategy: chosen.kind === 'table' || datedRows > byDate.size * 1.2 ? 'sum' : 'last',
       // Loại doanh thu ghi vào P&L: 'pending' (tiền màn hình) | 'confirmed' (thực nhận/payout).
-      revenue_type: ov.revenue_type === 'confirmed' ? 'confirmed' : 'pending',
+      revenue_type: rt,
       validation: { min_mapped_rows: 1, max_invalid_row_ratio: 0.2 },
     }],
   }
@@ -318,6 +325,8 @@ export async function POST(req: Request) {
     preview,
     fields,
     warnings,
+    revenue_type: rt,          // loại doanh thu hiệu lực (tự khớp nguồn đã dò) → panel phản ánh nút
+    source_url: sourceUrl,     // trang đã dò (payout) — null nếu dò dashboard
     chosen: { url: chosen.url, rows_path: chosen.path, date_field: dateField, revenue_field: revenueField, currency_field: currencyField },
     candidates: scored.map((c) => ({
       url: c.url, rows_path: c.path, rows: c.arr.length,

@@ -15,6 +15,8 @@ interface Detect {
   noAuto?: boolean
   capturedSummary?: { url: string; shape: string }[]
   warnings?: string[]
+  revenue_type?: 'pending' | 'confirmed' // loại doanh thu detect chọn (tự khớp nguồn đã dò)
+  source_url?: string | null            // trang đã dò (payout) — null nếu dashboard
 }
 
 interface Props {
@@ -42,6 +44,8 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
     if (!res.ok) { setError((await res.json().catch(() => ({}))).error ?? 'Lỗi phân tích'); setPhase('need-discover'); return }
     const d: Detect = await res.json()
     setDet(d); setSel(d.chosen); setPhase('ready'); setError(null)
+    // Phản ánh loại doanh thu detect chọn (tự khớp nguồn: dò Payout → 'confirmed').
+    if (d.revenue_type) setRevenueType(d.revenue_type)
   }, [authFetch, networkId])
 
   useEffect(() => { runDetect() }, [runDetect])
@@ -212,6 +216,9 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
                   {revenueType === 'confirmed' ? '→ affiliate_revenue [confirmed] (trang Payout)' : '→ affiliate_revenue [pending] (dashboard)'}
                 </span>
               </div>
+              <p className="text-[11px] text-slate-400 -mt-1">
+                Preview dưới đây là dữ liệu của <b>nguồn vừa dò</b>{det.source_url ? ' (trang Payout)' : ' (dashboard)'}. Nút trên chỉ chọn <b>ghi vào</b> Màn hình hay Thực nhận — không đổi dữ liệu preview. Muốn nguồn khác → ô "Dò trang khác".
+              </p>
 
               <div className="border border-slate-200 rounded-lg overflow-hidden">
                 <div className="bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 flex justify-between">
