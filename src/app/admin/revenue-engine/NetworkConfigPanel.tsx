@@ -23,12 +23,13 @@ interface Props {
   networkId: string
   networkName: string
   accountId: string
+  dashboardUrl: string
   authFetch: (url: string, opts?: RequestInit) => Promise<Response>
   onClose: () => void
   onSaved: () => void
 }
 
-export default function NetworkConfigPanel({ networkId, networkName, accountId, authFetch, onClose, onSaved }: Props) {
+export default function NetworkConfigPanel({ networkId, networkName, accountId, dashboardUrl, authFetch, onClose, onSaved }: Props) {
   const [phase, setPhase] = useState<'loading' | 'need-discover' | 'discovering' | 'ready' | 'saving'>('loading')
   const [error, setError] = useState<string | null>(null)
   const [det, setDet] = useState<Detect | null>(null)
@@ -36,6 +37,10 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
   const [discoverCmdId, setDiscoverCmdId] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [sourceUrl, setSourceUrl] = useState('') // URL trang nguồn cho lệnh dò (payout); trống = dashboard
+  // Loại doanh thu SUY từ nguồn đã dò (không cho bấm đổi tự do): dò Payout → confirmed; dashboard → pending.
+  const [revenueType, setRevenueType] = useState<'pending' | 'confirmed'>('pending')
+  // Các nguồn ĐÃ LƯU trong config (để hiện 2 URL riêng của pending/confirmed).
+  const [savedReports, setSavedReports] = useState<{ revenue_type?: string; url?: string }[]>([])
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const runDetect = useCallback(async (override?: Record<string, unknown>) => {
@@ -44,11 +49,21 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
     if (!res.ok) { setError((await res.json().catch(() => ({}))).error ?? 'Lỗi phân tích'); setPhase('need-discover'); return }
     const d: Detect = await res.json()
     setDet(d); setSel(d.chosen); setPhase('ready'); setError(null)
-    // Phản ánh loại doanh thu detect chọn (tự khớp nguồn: dò Payout → 'confirmed').
+    // Loại doanh thu SUY từ nguồn detect (source_url) — badge chỉ-đọc, không cho lệch.
     if (d.revenue_type) setRevenueType(d.revenue_type)
   }, [authFetch, networkId])
 
+  // Nạp config đã lưu để hiện 2 nguồn (pending/confirmed) + URL riêng của mỗi loại.
+  const loadSaved = useCallback(async () => {
+    const res = await authFetch(`${CFG_API}?network_id=${encodeURIComponent(networkId)}`)
+    if (!res.ok) return
+    const { config } = await res.json().catch(() => ({ config: null }))
+    const reps = Array.isArray(config?.config?.reports) ? config.config.reports : []
+    setSavedReports(reps.map((r: { revenue_type?: string; url?: string }) => ({ revenue_type: r.revenue_type ?? 'pending', url: r.url })))
+  }, [authFetch, networkId])
+
   useEffect(() => { runDetect() }, [runDetect])
+  useEffect(() => { loadSaved() }, [loadSaved])
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
   const startDiscover = async () => {
@@ -79,20 +94,14 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
     await authFetch(CMD_API, { method: 'PATCH', body: JSON.stringify({ id: discoverCmdId, signal: 'analyze' }) })
   }
 
-  // Loại doanh thu report này ghi vào P&L: 'pending' (tiền màn hình) | 'confirmed' (thực nhận/payout)
-  const [revenueType, setRevenueType] = useState<'pending' | 'confirmed'>('pending')
-
-  const override = (patch: Partial<Detect['chosen']>, type = revenueType) => {
+  // Đổi field → re-detect. KHÔNG gửi revenue_type: loại suy thuần từ source_url của bản dò
+  // (nguồn đã cố định) nên không thể lệch loại↔nguồn.
+  const override = (patch: Partial<Detect['chosen']>) => {
     if (!sel) return
     const next = { ...sel, ...patch }
     setSel(next)
     setPhase('loading')
-    runDetect({ url: next.url, rows_path: next.rows_path, date_field: next.date_field, revenue_field: next.revenue_field, currency_field: next.currency_field, revenue_type: type })
-  }
-
-  const changeRevenueType = (type: 'pending' | 'confirmed') => {
-    setRevenueType(type)
-    if (sel) { setPhase('loading'); runDetect({ url: sel.url, rows_path: sel.rows_path, date_field: sel.date_field, revenue_field: sel.revenue_field, currency_field: sel.currency_field, revenue_type: type }) }
+    runDetect({ url: next.url, rows_path: next.rows_path, date_field: next.date_field, revenue_field: next.revenue_field, currency_field: next.currency_field })
   }
 
   const save = async () => {
@@ -167,6 +176,22 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
 
           {phase !== 'need-discover' && phase !== 'discovering' && det && sel && !det.noAuto && (
             <>
+              {savedReports.length > 0 && (
+                <div className="text-xs border border-slate-200 rounded-lg px-3 py-2 space-y-1">
+                  <div className="text-slate-500 font-medium">Nguồn đã lưu ({savedReports.length}):</div>
+                  {savedReports.map((r, i) => {
+                    const isConf = r.revenue_type === 'confirmed'
+                    const dup = isConf && !!r.url && !!dashboardUrl && r.url.replace(/\/+$/, '') === dashboardUrl.replace(/\/+$/, '')
+                    return (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className={`px-1.5 rounded ${isConf ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}>{isConf ? 'Thực nhận' : 'Tiền màn hình'}</span>
+                        <span className="font-mono text-slate-500 truncate" title={r.url}>{r.url}</span>
+                        {dup && <span className="text-red-600">⚠ trùng URL dashboard — sai nguồn, dò lại đúng trang Payout</span>}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
               {(det.warnings?.length ?? 0) > 0 && (
                 <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 space-y-1">
                   {det.warnings!.map((w, i) => <div key={i}>⚠ {w}</div>)}
@@ -201,23 +226,14 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
               </div>
 
               <div className="flex items-center gap-2 text-xs">
-                <span className="text-slate-500">Loại doanh thu:</span>
-                <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
-                  <button type="button" onClick={() => changeRevenueType('pending')}
-                    className={`px-3 py-1 ${revenueType === 'pending' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'}`}>
-                    Tiền màn hình
-                  </button>
-                  <button type="button" onClick={() => changeRevenueType('confirmed')}
-                    className={`px-3 py-1 ${revenueType === 'confirmed' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600'}`}>
-                    Thực nhận
-                  </button>
-                </div>
-                <span className="text-slate-400">
-                  {revenueType === 'confirmed' ? '→ affiliate_revenue [confirmed] (trang Payout)' : '→ affiliate_revenue [pending] (dashboard)'}
+                <span className="text-slate-500">Loại doanh thu (theo nguồn đã dò):</span>
+                <span className={`px-2 py-1 rounded-md font-medium ${revenueType === 'confirmed' ? 'bg-emerald-600 text-white' : 'bg-indigo-600 text-white'}`}>
+                  {revenueType === 'confirmed' ? 'Thực nhận (Payout)' : 'Tiền màn hình (dashboard)'}
                 </span>
+                <span className="text-slate-400">→ affiliate_revenue [{revenueType}]</span>
               </div>
               <p className="text-[11px] text-slate-400 -mt-1">
-                Preview dưới đây là dữ liệu của <b>nguồn vừa dò</b>{det.source_url ? ' (trang Payout)' : ' (dashboard)'}. Nút trên chỉ chọn <b>ghi vào</b> Màn hình hay Thực nhận — không đổi dữ liệu preview. Muốn nguồn khác → ô "Dò trang khác".
+                Loại được xác định bởi <b>URL nguồn</b>: dò trang <b>Payout</b> → Thực nhận; dò <b>dashboard</b> (ô "Dò trang khác" bỏ trống) → Tiền màn hình. Mỗi loại một URL riêng — cấu hình lần lượt từng nguồn.
               </p>
 
               <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -238,11 +254,16 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-slate-500 whitespace-nowrap">Dò trang khác:</span>
-                <input value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="URL trang Payout (Thực nhận) — bỏ trống = dashboard"
-                  className="flex-1 border border-slate-200 rounded px-2 py-1 text-slate-700" />
-                <button onClick={startDiscover} className="px-2 py-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Dò lại</button>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-500 whitespace-nowrap">URL nguồn:</span>
+                  <input value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="URL trang Thực nhận (Payout) — bỏ trống = cấu hình Tiền màn hình (dashboard)"
+                    className="flex-1 border border-slate-200 rounded px-2 py-1 text-slate-700" />
+                  <button onClick={startDiscover} className="px-2 py-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 whitespace-nowrap">Dò lại</button>
+                </div>
+                {sourceUrl.trim() && dashboardUrl && sourceUrl.trim().replace(/\/+$/, '') === dashboardUrl.replace(/\/+$/, '') && (
+                  <p className="text-[11px] text-red-600">⚠ URL này TRÙNG URL dashboard — Thực nhận phải là trang Payout riêng. Kiểm tra lại.</p>
+                )}
               </div>
 
               <div className="flex items-center justify-end">

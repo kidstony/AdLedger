@@ -58,7 +58,7 @@ export default function AccountsManager() {
   const [fUrl, setFUrl] = useState('')
   const [saving, setSaving] = useState(false)
   const [syncing, setSyncing] = useState(false)
-  const [cfgPanel, setCfgPanel] = useState<{ networkId: string; networkName: string; accountId: string } | null>(null)
+  const [cfgPanel, setCfgPanel] = useState<{ networkId: string; networkName: string; accountId: string; dashboardUrl: string } | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [intervalInput, setIntervalInput] = useState('6')
 
@@ -328,7 +328,7 @@ export default function AccountsManager() {
                     <div className="flex items-center gap-2">
                       {!cfg && <span className="text-xs text-amber-600">Chưa cấu hình</span>}
                       <button
-                        onClick={() => acc && setCfgPanel({ networkId: net, networkName: nm, accountId: acc.id })}
+                        onClick={() => acc && setCfgPanel({ networkId: net, networkName: nm, accountId: acc.id, dashboardUrl: acc.dashboard_url ?? '' })}
                         disabled={!acc}
                         title={acc ? 'Dò dashboard và tạo cấu hình đọc doanh thu tự động' : 'Cần 1 account có URL dashboard trong network này'}
                         className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md border disabled:opacity-40 ${cfg ? 'border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-50' : 'border-indigo-600 text-white bg-indigo-600 hover:bg-indigo-700'}`}
@@ -439,6 +439,7 @@ export default function AccountsManager() {
           networkId={cfgPanel.networkId}
           networkName={cfgPanel.networkName}
           accountId={cfgPanel.accountId}
+          dashboardUrl={cfgPanel.dashboardUrl}
           authFetch={authFetch}
           onClose={() => setCfgPanel(null)}
           onSaved={() => { setCfgPanel(null); load() }}
