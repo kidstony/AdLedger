@@ -170,7 +170,9 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
 
   // Chặn lưu khi đang phân tích (tránh lưu draft cũ) — chỉ lưu khi có ít nhất 1 nguồn ready.
   const anyLoading = cards.pending.status === 'loading' || cards.confirmed.status === 'loading'
-  const canSave = !anyLoading && !!(cards.pending.det?.draft || cards.confirmed.det?.draft)
+  // Thẻ đã có nguồn nhưng CHƯA chọn Ngày/Doanh thu → chặn lưu (config thiếu date/revenue path sẽ hỏng).
+  const incomplete = (['pending', 'confirmed'] as RType[]).filter(t => cards[t].det?.draft && (!cards[t].sel?.date_field || !cards[t].sel?.revenue_field))
+  const canSave = !anyLoading && incomplete.length === 0 && !!(cards.pending.det?.draft || cards.confirmed.det?.draft)
 
   const renderCard = (type: RType) => {
     const card = cards[type]
@@ -308,6 +310,9 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
               <p className="text-xs text-slate-500">2 nguồn doanh thu ngang cấp — mỗi nguồn 1 URL riêng. Cấu hình rồi bấm <b>Lưu cấu hình</b>.</p>
               {renderCard('pending')}
               {renderCard('confirmed')}
+              {incomplete.length > 0 && (
+                <p className="text-[11px] text-amber-600 text-right">Chọn <b>Ngày</b> và <b>Doanh thu</b> cho: {incomplete.map(t => META[t].label).join(', ')} trước khi lưu.</p>
+              )}
               <div className="flex items-center justify-end pt-1">
                 <button onClick={save} disabled={saving || !canSave}
                   className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">
