@@ -24,6 +24,8 @@ interface SavedReport {
   revenue_type?: string
   url?: string
   rows_path?: string
+  table_index?: number
+  capture?: { url_pattern?: string }
   mapping?: { date?: { path?: string }; revenue?: { path?: string }; currency?: { path?: string } }
 }
 
@@ -80,6 +82,9 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
         const cur = r?.mapping?.currency?.path
         return {
           rows_path: r?.rows_path,
+          // định danh nguồn để reload khớp ĐÚNG candidate khi nhiều nguồn cùng rows_path.
+          url_pattern: r?.capture?.url_pattern ?? null,
+          table_index: r?.table_index ?? null,
           date_field: r?.mapping?.date?.path ?? null,
           revenue_field: r?.mapping?.revenue?.path ?? null,
           currency_field: cur && cur !== '__const__' ? cur : null,

@@ -239,11 +239,16 @@ export async function POST(req: Request) {
   }).sort((a, b) => b.score - a.score)
 
   let chosen = scored[0]
-  // Khớp nguồn theo override: ưu tiên (url + rows_path); nếu chỉ có rows_path (nạp lại config
-  // đã lưu — không giữ url ứng viên) thì khớp theo path. Nhờ vậy mở lại panel giữ đúng nguồn đã lưu.
+  // Khớp nguồn theo override. Nhiều candidate có thể CÙNG rows_path (vd 'data' của cả purchase
+  // XHR lẫn push/list) → phải định danh chính xác: url đầy đủ (đổi thủ công) → url_pattern (reload
+  // XHR) → table_index (reload bảng) → cuối cùng mới lấy phần tử đầu cùng path.
   if (ov.rows_path !== undefined && ov.rows_path !== null) {
-    const match = candidates.find((c) => (ov.url ? c.url === ov.url : true) && c.path === ov.rows_path)
-      ?? candidates.find((c) => c.path === ov.rows_path)
+    const byPath = candidates.filter((c) => c.path === ov.rows_path)
+    const match =
+      (ov.url ? byPath.find((c) => c.url === ov.url) : undefined)
+      ?? (ov.url_pattern ? byPath.find((c) => c.url.includes(String(ov.url_pattern))) : undefined)
+      ?? (ov.table_index !== undefined && ov.table_index !== null ? byPath.find((c) => c.table_index === ov.table_index) : undefined)
+      ?? byPath[0]
     if (match) { const df = pickDateField(match.arr); chosen = { ...match, dateField: df, revenueField: pickRevenueField(match.arr, df), score: 0 } }
   }
 
