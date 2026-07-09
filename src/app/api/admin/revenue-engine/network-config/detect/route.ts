@@ -235,9 +235,12 @@ export async function POST(req: Request) {
   }).sort((a, b) => b.score - a.score)
 
   let chosen = scored[0]
-  if (ov.url && ov.rows_path !== undefined) {
-    const match = candidates.find((c) => c.url === ov.url && c.path === ov.rows_path)
-    if (match) chosen = { ...match, dateField: pickDateField(match.arr), revenueField: pickRevenueField(match.arr, null), score: 0 }
+  // Khớp nguồn theo override: ưu tiên (url + rows_path); nếu chỉ có rows_path (nạp lại config
+  // đã lưu — không giữ url ứng viên) thì khớp theo path. Nhờ vậy mở lại panel giữ đúng nguồn đã lưu.
+  if (ov.rows_path !== undefined && ov.rows_path !== null) {
+    const match = candidates.find((c) => (ov.url ? c.url === ov.url : true) && c.path === ov.rows_path)
+      ?? candidates.find((c) => c.path === ov.rows_path)
+    if (match) { const df = pickDateField(match.arr); chosen = { ...match, dateField: df, revenueField: pickRevenueField(match.arr, df), score: 0 } }
   }
 
   const rows = chosen.arr

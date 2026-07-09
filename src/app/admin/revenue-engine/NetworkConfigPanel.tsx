@@ -20,6 +20,12 @@ interface Detect {
 
 type RType = 'pending' | 'confirmed'
 interface Card { url: string; loadedUrl: string; det: Detect | null; sel: Detect['chosen'] | null; status: 'loading' | 'ready' | 'empty' }
+interface SavedReport {
+  revenue_type?: string
+  url?: string
+  rows_path?: string
+  mapping?: { date?: { path?: string }; revenue?: { path?: string }; currency?: { path?: string } }
+}
 
 const META: Record<RType, { label: string; hint: string; badge: string }> = {
   pending: { label: 'Tiền màn hình', hint: 'URL trang doanh thu màn hình — bỏ trống = dùng trang dashboard', badge: 'bg-indigo-600' },
@@ -64,22 +70,34 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
     patchCard(type, { det: d, sel: d.chosen, status: d.noAuto ? 'empty' : 'ready', loadedUrl: url.trim() })
   }
 
-  // Mount: nạp config đã lưu → URL từng thẻ → phân tích từng nguồn độc lập.
+  // Mount: nạp config đã lưu → URL + MAPPING từng thẻ → phân tích lại đúng lựa chọn đã lưu
+  // (không auto-detect đè lên). Nhờ vậy mở lại panel thấy đúng nguồn/field đã lưu.
   useEffect(() => {
     (async () => {
       let purl = '', curl = ''
+      let pov: Record<string, unknown> | undefined, cov: Record<string, unknown> | undefined
+      const savedOverride = (r: SavedReport): Record<string, unknown> => {
+        const cur = r?.mapping?.currency?.path
+        return {
+          rows_path: r?.rows_path,
+          date_field: r?.mapping?.date?.path ?? null,
+          revenue_field: r?.mapping?.revenue?.path ?? null,
+          currency_field: cur && cur !== '__const__' ? cur : null,
+        }
+      }
       const res = await authFetch(`${CFG_API}?network_id=${encodeURIComponent(networkId)}`)
       if (res.ok) {
         const { config } = await res.json().catch(() => ({ config: null }))
-        const reps: { revenue_type?: string; url?: string }[] = Array.isArray(config?.config?.reports) ? config.config.reports : []
+        const reps: SavedReport[] = Array.isArray(config?.config?.reports) ? config.config.reports : []
         for (const r of reps) {
           const u = r.url === '{base}' ? '' : (r.url ?? '')
-          if (r.revenue_type === 'confirmed') curl = u; else purl = u
+          if (r.revenue_type === 'confirmed') { curl = u; cov = savedOverride(r) }
+          else { purl = u; pov = savedOverride(r) }
         }
       }
       setCards(cs => ({ pending: { ...cs.pending, url: purl }, confirmed: { ...cs.confirmed, url: curl } }))
-      runDetect('pending', purl)
-      if (curl) runDetect('confirmed', curl); else patchCard('confirmed', { status: 'empty' })
+      runDetect('pending', purl, pov)
+      if (curl) runDetect('confirmed', curl, cov); else patchCard('confirmed', { status: 'empty' })
     })()
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -135,7 +153,9 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
     else setError((await res.json().catch(() => ({}))).error ?? 'Lỗi lưu cấu hình')
   }
 
-  const canSave = !!(cards.pending.det?.draft || cards.confirmed.det?.draft)
+  // Chặn lưu khi đang phân tích (tránh lưu draft cũ) — chỉ lưu khi có ít nhất 1 nguồn ready.
+  const anyLoading = cards.pending.status === 'loading' || cards.confirmed.status === 'loading'
+  const canSave = !anyLoading && !!(cards.pending.det?.draft || cards.confirmed.det?.draft)
 
   const renderCard = (type: RType) => {
     const card = cards[type]
