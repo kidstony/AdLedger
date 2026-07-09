@@ -11,7 +11,7 @@ interface Detect {
   preview: { date: string; revenue: number }[]
   fields: string[]
   chosen: { url: string; rows_path: string; date_field: string | null; revenue_field: string | null; currency_field: string | null } | null
-  candidates: { url: string; rows_path: string; rows: number; date_field?: string | null; revenue_field?: string | null; currency?: string }[]
+  candidates: { url: string; rows_path: string; rows: number; date_field?: string | null; revenue_field?: string | null; currency?: string; headers?: string[] }[]
   noAuto?: boolean
   capturedSummary?: { url: string; shape: string }[]
   warnings?: string[]
@@ -225,7 +225,11 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
                 <select value={`${sel.url}|||${sel.rows_path}`} onChange={e => { const [url, rows_path] = e.target.value.split('|||'); override(type, { url, rows_path, date_field: null, revenue_field: null }) }}
                   className="w-full border border-slate-200 rounded px-1.5 py-1 text-slate-700">
                   {det.candidates.map((c, i) => (
-                    <option key={i} value={`${c.url}|||${c.rows_path}`}>{c.rows} dòng · {c.date_field ?? '?'} · {c.revenue_field ?? '?'}{c.currency ? ` (${c.currency})` : ''}</option>
+                    <option key={i} value={`${c.url}|||${c.rows_path}`}>
+                      {c.rows === 0
+                        ? `0 dòng (trống) · cột: ${(c.headers ?? []).join(', ') || '?'}`
+                        : `${c.rows} dòng · ${c.date_field ?? '?'} · ${c.revenue_field ?? '?'}${c.currency ? ` (${c.currency})` : ''}`}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -252,7 +256,11 @@ export default function NetworkConfigPanel({ networkId, networkName, accountId, 
               </div>
               <div className="max-h-40 overflow-auto">
                 {det.preview.length === 0 ? (
-                  <p className="px-2 py-3 text-center text-[11px] text-red-500">Chưa map ra dữ liệu — chọn lại Nguồn/Ngày/Doanh thu.</p>
+                  (det.candidates.find(c => c.url === sel.url && c.rows_path === sel.rows_path)?.rows ?? 1) === 0 ? (
+                    <p className="px-2 py-3 text-center text-[11px] text-slate-400">Nguồn hiện <b>trống (0 dòng)</b> — vd payout chưa có khoản nào. Chọn Ngày + Doanh thu theo tên cột rồi Lưu; khi có dữ liệu sẽ tự vào.</p>
+                  ) : (
+                    <p className="px-2 py-3 text-center text-[11px] text-red-500">Chưa map ra dữ liệu — chọn lại Nguồn/Ngày/Doanh thu.</p>
+                  )
                 ) : (
                   <table className="w-full text-[11px]">
                     <tbody className="divide-y divide-slate-100">

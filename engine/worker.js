@@ -166,7 +166,7 @@ async function handleDiscover(acct, cmd) {
     for (const p of context.pages()) {
       try {
         for (const t of await extractTables(p)) {
-          captured.push({ url: `${p.url()}#table${t.table_index}`, kind: 'table', table_index: t.table_index, payload: { rows: t.rows } })
+          captured.push({ url: `${p.url()}#table${t.table_index}`, kind: 'table', table_index: t.table_index, payload: { rows: t.rows, headers: t.headers } })
         }
       } catch { /* trang đóng/không đọc được — bỏ qua */ }
     }

@@ -9,7 +9,8 @@ const EXTRACT_TABLES = () => {
   const pushGrid = (index, headers, rowCells) => {
     const rows = rowCells
       .map((cells) => {
-        if (!cells.length) return null
+        // Bỏ dòng placeholder (1 ô spanning kiểu "Empty/No data") → bảng payout rỗng coi là 0 dòng.
+        if (cells.length < 2) return null
         const o = {}
         cells.forEach((v, i) => {
           const h = headers[i]
@@ -20,7 +21,8 @@ const EXTRACT_TABLES = () => {
         return o
       })
       .filter(Boolean)
-    if (rows.length >= 2) out.push({ table_index: index, headers, rows })
+    // Có dữ liệu (>=2 dòng) HOẶC bảng RỖNG nhưng có header thật (>=2) → giữ để cấu hình theo tên cột.
+    if (rows.length >= 2 || (rows.length === 0 && headers.length >= 2)) out.push({ table_index: index, headers, rows })
   }
 
   // 1) <table> — GIỮ chỉ số DOM (table_index = vị trí trong querySelectorAll('table'))

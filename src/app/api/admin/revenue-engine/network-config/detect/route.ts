@@ -202,12 +202,17 @@ export async function POST(req: Request) {
   const captured = disc.captured as { url: string; payload: unknown; kind?: string; table_index?: number }[]
 
   // Gom mọi mảng ứng viên (kèm url + nguồn: xhr | table).
-  const candidates: { url: string; path: string; arr: Row[]; kind: string; table_index: number | null }[] = []
+  const candidates: { url: string; path: string; arr: Row[]; kind: string; table_index: number | null; headers?: string[] }[] = []
   for (const cap of captured) {
     if (isTrackerUrl(cap.url)) continue // bỏ nhiễu tracker/support (bảng DOM host dashboard nên không dính)
     const found: { path: string; arr: Row[] }[] = []
     findArrays(cap.payload, '', found)
     for (const f of found) candidates.push({ url: cap.url, ...f, kind: cap.kind ?? 'xhr', table_index: cap.table_index ?? null })
+    // Bảng DOM RỖNG (0 dòng) nhưng có header → vẫn cho cấu hình theo tên cột (vd trang payout chưa có khoản nào).
+    const tablePayload = cap.payload as { rows?: unknown[]; headers?: string[] } | null
+    if (cap.kind === 'table' && found.length === 0 && Array.isArray(tablePayload?.headers) && tablePayload!.headers.length >= 2) {
+      candidates.push({ url: cap.url, path: 'rows', arr: [], kind: 'table', table_index: cap.table_index ?? null, headers: tablePayload!.headers })
+    }
   }
   if (candidates.length === 0) {
     // Không tự nhận ra bảng → trả danh sách đã bắt để chẩn đoán (không để panel trống).
@@ -256,7 +261,8 @@ export async function POST(req: Request) {
   const dateField = ov.date_field ?? chosen.dateField
   const revenueField = ov.revenue_field ?? chosen.revenueField
   const currencyField = ov.currency_field ?? pickCurrencyField(rows)
-  const fields = Object.keys(rows[0] ?? {})
+  // Bảng rỗng (0 dòng): lấy danh sách cột từ HEADER để user map thủ công theo tên cột.
+  const fields = rows.length ? Object.keys(rows[0]) : (chosen.headers ?? [])
 
   // url_pattern: pathname của response (ổn định; user có thể chỉnh).
   let urlPattern = chosen.url
@@ -328,7 +334,8 @@ export async function POST(req: Request) {
       duplicate_strategy: chosen.kind === 'table' || datedRows > byDate.size * 1.2 ? 'sum' : 'last',
       // Loại doanh thu ghi vào P&L: 'pending' (tiền màn hình) | 'confirmed' (thực nhận/payout).
       revenue_type: rt,
-      validation: { min_mapped_rows: 1, max_invalid_row_ratio: 0.2 },
+      // Nguồn cấu hình lúc RỖNG (0 dòng) → min_mapped_rows=0: sync 0 dòng vẫn hợp lệ, có dữ liệu tự map.
+      validation: { min_mapped_rows: rows.length === 0 ? 0 : 1, max_invalid_row_ratio: 0.2 },
     }],
   }
 
@@ -356,6 +363,8 @@ export async function POST(req: Request) {
       hasDate: !!c.dateField, hasRevenue: !!c.revenueField,
       date_field: c.dateField, revenue_field: c.revenueField,
       currency: c.revenueField ? symbolCurrency(c.arr, c.revenueField) : '',
+      // bảng rỗng: kèm vài header để user nhận ra đúng bảng (vd "Created At, Final payout amount…").
+      headers: c.arr.length === 0 ? (c.headers ?? []).slice(0, 4) : undefined,
     })),
   })
 }

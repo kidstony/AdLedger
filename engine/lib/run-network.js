@@ -108,6 +108,7 @@ export async function runAccount(config, account, dryRun) {
   // khác vẫn chạy; account chỉ fail khi KHÔNG report nào ok. Gắn _type để tách P&L.
   let batch = []
   let totalMapped = 0, totalInvalidAll = 0
+  let anyOk = false // có report nào qua validate (kể cả 0 dòng khi min_mapped_rows=0)
   const failReasons = []
   for (const [ri, payloads] of payloadsByReport) {
     const report = config.reports[ri]
@@ -120,13 +121,15 @@ export async function runAccount(config, account, dryRun) {
     }
     totalMapped += mappedR.length; totalInvalidAll += invalidR
     const totalR = mappedR.length + invalidR
-    const ratioR = totalR === 0 ? 1 : invalidR / totalR
+    // 0 dòng (totalR=0): coi tỷ lệ lỗi = OK (nguồn rỗng hợp lệ khi min_mapped_rows=0, vd payout chưa có khoản nào).
+    const ratioOk = totalR === 0 ? true : invalidR / totalR <= report.validation.max_invalid_row_ratio
     const v = report.validation
-    if (mappedR.length < v.min_mapped_rows || ratioR > v.max_invalid_row_ratio) {
+    if (mappedR.length < v.min_mapped_rows || !ratioOk) {
       failReasons.push(`report "${report.name}" [${report.revenue_type}]: ${mappedR.length}/${totalR} (lỗi ${invalidR}) — ${samplesR.slice(0, 2).join(' | ') || '?'}`)
       log.warn(`bỏ qua report "${report.name}" [${report.revenue_type}]: map ${mappedR.length}/${totalR}, lỗi ${invalidR}. Mẫu: ${samplesR.slice(0, 2).join(' | ') || '(không có)'}`, tag)
       continue
     }
+    anyOk = true // report qua validate (kể cả rỗng)
     const deduped = dedupeRows(mappedR, report.duplicate_strategy, networkId)
     for (const r of deduped) r._type = report.revenue_type // 'pending' | 'confirmed'
     batch.push(...deduped)
@@ -134,7 +137,9 @@ export async function runAccount(config, account, dryRun) {
 
   const counts = { records_captured: captured.length, records_mapped: totalMapped }
 
-  if (batch.length === 0) {
+  // Chỉ fail khi KHÔNG report nào qua validate. Report rỗng hợp lệ (0 dòng, min=0) → anyOk=true,
+  // batch có thể rỗng → vẫn success (ghi 0 dòng), khi có dữ liệu tự vào.
+  if (!anyOk) {
     const message =
       `Không report nào map được dữ liệu hợp lệ (map ${totalMapped}, lỗi ${totalInvalidAll}). ` +
       `Network có thể đã đổi cấu trúc — kiểm tra rows_path/mapping. ${failReasons.join(' ;; ') || ''}`
