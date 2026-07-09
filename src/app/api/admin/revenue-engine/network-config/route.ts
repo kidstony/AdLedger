@@ -39,6 +39,20 @@ export async function PUT(req: Request) {
   // Đảm bảo config.network_id khớp (engine dùng làm khóa/slug profile).
   const cfg = { ...config, network_id }
 
+  // GỘP report theo revenue_type: 1 network có thể có 2 nguồn cùng login — report 'pending'
+  // (dashboard) + report 'confirmed' (payout). Lưu nguồn này KHÔNG được xoá nguồn loại kia.
+  // → giữ report loại khác từ config cũ, chỉ thay report cùng loại với draft đang lưu.
+  const { data: existing } = await supabaseAdmin
+    .from('engine_network_configs').select('config').eq('network_id', network_id).maybeSingle()
+  const oldReports = Array.isArray(existing?.config?.reports) ? existing!.config.reports : []
+  const newReports = Array.isArray(cfg.reports) ? cfg.reports : []
+  if (oldReports.length && newReports.length) {
+    const rtOf = (r: { revenue_type?: string }) => (r?.revenue_type === 'confirmed' ? 'confirmed' : 'pending')
+    const incomingTypes = new Set(newReports.map(rtOf))
+    const kept = oldReports.filter((r: { revenue_type?: string }) => !incomingTypes.has(rtOf(r)))
+    cfg.reports = [...kept, ...newReports]
+  }
+
   const { data, error } = await supabaseAdmin
     .from('engine_network_configs')
     .upsert({ network_id, config: cfg, enabled: body?.enabled !== false, updated_by: caller.user_id, updated_at: new Date().toISOString() }, { onConflict: 'network_id' })

@@ -282,7 +282,8 @@ export async function POST(req: Request) {
         // khi tới DD.MM.YYYY. Ưu tiên ISO strict rồi ngày-trước (kiểu châu Âu).
         date: { path: dateField, order: dateInfo.order, formats: ['YYYY-MM-DD', 'YYYY-MM-DD HH:mm:ss', 'YYYY-MM-DDTHH:mm:ss', 'DD.MM.YYYY', 'D.M.YYYY', 'DD/MM/YYYY', 'D/M/YYYY', 'DD-MM-YYYY', 'YYYY/MM/DD'] },
         offer_id: { path: '__const__', required: false, default: '' },
-        offer_name: { path: '__const__', required: false, default: network_id },
+        // offer_name RIÊNG cho confirmed (payout) để khoá revenue_raw không đụng report pending.
+        offer_name: { path: '__const__', required: false, default: ov.revenue_type === 'confirmed' ? 'payout' : network_id },
         revenue: { path: revenueField, divisor: 1, decimal_separator: numFmt.decimal, thousands_separator: numFmt.thousands },
         currency: currencyField ? { path: currencyField, required: false, default: currencyGuess || 'USD' } : { path: '__const__', required: false, default: currencyGuess || 'USD' },
       },
