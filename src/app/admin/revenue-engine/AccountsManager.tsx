@@ -24,6 +24,7 @@ interface EngineCommand {
   account_id: string | null
   status: 'pending' | 'running' | 'done' | 'error'
   message: string | null
+  created_at?: string
 }
 interface NetworkOpt { id: string; network_id: string | null; network_name: string; color?: string }
 interface ProjectOpt { project_id: string; name: string; affiliate_network?: string | null }
@@ -58,6 +59,7 @@ export default function AccountsManager() {
   const [fUrl, setFUrl] = useState('')
   const [saving, setSaving] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [nowTick, setNowTick] = useState(() => Date.now()) // để tính tuổi lệnh pending (cảnh báo worker offline)
   const [cfgPanel, setCfgPanel] = useState<{ networkId: string; networkName: string; accountId: string; dashboardUrl: string } | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [intervalInput, setIntervalInput] = useState('6')
@@ -104,7 +106,7 @@ export default function AccountsManager() {
   const hasActive = commands.some(c => c.status === 'pending' || c.status === 'running')
   useEffect(() => {
     if (!hasActive) return
-    const t = setInterval(() => { loadCommands(); load() }, 4000)
+    const t = setInterval(() => { loadCommands(); load(); setNowTick(Date.now()) }, 4000)
     return () => clearInterval(t)
   }, [hasActive, loadCommands, load])
 
@@ -128,6 +130,11 @@ export default function AccountsManager() {
   // Trạng thái kết nối để hiển thị badge.
   const connState = (a: EngineAccount): { text: string; cls: string; spin?: boolean } => {
     const cmd = activeCmd(a.id)
+    // Lệnh pending quá lâu (worker chưa nhặt) → nhiều khả năng worker không chạy.
+    const ageMs = cmd?.created_at ? nowTick - new Date(cmd.created_at).getTime() : 0
+    if (cmd && cmd.status === 'pending' && ageMs > 60000) {
+      return { text: '⚠ Worker chưa chạy? (mở node engine/worker.js)', cls: 'bg-red-50 text-red-700 border-red-200' }
+    }
     if (cmd?.type === 'login') return { text: 'Đang kết nối…', cls: 'bg-amber-50 text-amber-700 border-amber-200', spin: true }
     if (cmd?.type === 'fetch') return { text: 'Đang đồng bộ…', cls: 'bg-amber-50 text-amber-700 border-amber-200', spin: true }
     switch (a.login_status) {
