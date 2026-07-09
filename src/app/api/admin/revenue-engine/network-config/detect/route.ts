@@ -52,13 +52,14 @@ function normDate(v: unknown, order: 'DMY' | 'MDY' = 'DMY'): string | null {
   // YYYY.MM.DD
   const ymd = s.match(/^(\d{4})[./](\d{1,2})[./](\d{1,2})/)
   if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`
-  // Ngày linh hoạt (./- + dấu cách): gán day/month theo order.
-  const gen = s.match(/^(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{4})/)
+  // Ngày linh hoạt (./- + dấu cách): gán day/month theo order; năm 2 số → 20YY (vd "02.07.26").
+  const gen = s.match(/^(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{4}|\d{2})(?!\d)/)
   if (gen) {
     const first = gen[1].padStart(2, '0'), second = gen[2].padStart(2, '0')
     const dd = order === 'MDY' ? second : first
     const mm = order === 'MDY' ? first : second
-    if (+mm >= 1 && +mm <= 12 && +dd >= 1 && +dd <= 31) return `${gen[3]}-${mm}-${dd}`
+    const yyyy = gen[3].length === 2 ? `20${gen[3]}` : gen[3]
+    if (+mm >= 1 && +mm <= 12 && +dd >= 1 && +dd <= 31) return `${yyyy}-${mm}-${dd}`
   }
   // Có năm 4 chữ số + parse được (vd "Jul 6, 2026")
   if (/\d{4}/.test(s)) { const d = Date.parse(s); if (!Number.isNaN(d)) return new Date(d).toISOString().slice(0, 10) }
@@ -227,11 +228,14 @@ export async function POST(req: Request) {
   const scored = candidates.map((c) => {
     const dateField = pickDateField(c.arr)
     const revenueField = pickRevenueField(c.arr, dateField)
-    // +0.5 nếu cột doanh thu có ký hiệu tiền → nguồn "tiền thật" thắng nguồn số đếm.
+    // Doanh thu ĐÁNG TIN = có ký hiệu tiền HOẶC tên gợi ý doanh thu (amount/commission/payout…).
+    // Trọng số +2 (mạnh) để nguồn "tiền thật" ($203) thắng nguồn "số đếm" (vd push/list 100 dòng,
+    // field 'text'/'counter') dù nguồn nhiễu nhiều dòng hơn.
     const revHasSym = !!revenueField && MONEY_SYM.test(c.arr.map((r) => String(r[revenueField] ?? '')).join(' '))
-    // +1 nếu là XHR: dữ liệu có cấu trúc, bắt ỔN ĐỊNH lúc sync tự động (bảng DOM dễ vỡ/render trễ).
-    const xhrBonus = c.kind === 'xhr' ? 1 : 0
-    return { ...c, dateField, revenueField, score: (dateField ? 2 : 0) + (revenueField ? 2 : 0) + (revHasSym ? 0.5 : 0) + xhrBonus + Math.min(c.arr.length, 100) / 100 }
+    const revConfident = !!revenueField && (revHasSym || REV_NAME.test(revenueField))
+    // +1 nếu XHR có doanh thu đáng tin (dữ liệu cấu trúc, bắt ổn định lúc sync) — bảng DOM dễ vỡ.
+    const xhrBonus = c.kind === 'xhr' && revConfident ? 1 : 0
+    return { ...c, dateField, revenueField, score: (dateField ? 2 : 0) + (revenueField ? 2 : 0) + (revConfident ? 2 : 0) + xhrBonus + Math.min(c.arr.length, 100) / 100 }
   }).sort((a, b) => b.score - a.score)
 
   let chosen = scored[0]

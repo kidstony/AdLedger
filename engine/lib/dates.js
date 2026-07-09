@@ -46,13 +46,14 @@ export function parseDate(value, formats = [], order = 'DMY') {
   if (isoPrefix) return `${isoPrefix[1]}-${isoPrefix[2]}-${isoPrefix[3]}`
 
   // Ngày linh hoạt (separator ./-, cho phép dấu cách): "06.07.2026", "9. 7. 2026",
-  // "06/07/2026", "6-7-2026". Gán day/month theo `order` (DMY mặc định, MDY = kiểu Mỹ).
-  const gen = String(value).trim().match(/^(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{4})/)
+  // "06/07/2026", "6-7-2026", "02.07.26" (năm 2 số → 20YY). Gán day/month theo `order`.
+  const gen = String(value).trim().match(/^(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{4}|\d{2})(?!\d)/)
   if (gen) {
     const first = gen[1].padStart(2, '0'), second = gen[2].padStart(2, '0')
     const dd = order === 'MDY' ? second : first
     const mm = order === 'MDY' ? first : second
-    if (+mm >= 1 && +mm <= 12 && +dd >= 1 && +dd <= 31) return `${gen[3]}-${mm}-${dd}`
+    const yyyy = gen[3].length === 2 ? `20${gen[3]}` : gen[3]
+    if (+mm >= 1 && +mm <= 12 && +dd >= 1 && +dd <= 31) return `${yyyy}-${mm}-${dd}`
   }
 
   for (const fmt of formats) {
