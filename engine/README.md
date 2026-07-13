@@ -17,6 +17,8 @@ cp .env.example .env   # điền SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
 
 Chạy migration `../supabase/migration_revenue_engine.sql` trong Supabase SQL Editor (tạo 3 bảng `revenue_raw`, `engine_runs`, `engine_alerts`).
 
+⚠️ **Heartbeat worker** (UI admin hiện "Worker đang chạy/offline"): chạy migration `../supabase/migration_engine_worker_heartbeat.sql` **trước khi deploy UI mới**, rồi restart worker (`node worker.js`) sau khi pull code — worker cũ không ghi heartbeat nên UI sẽ hiện "Không rõ".
+
 Trên máy dev đã có `.env.local` ở root repo thì không cần tạo `engine/.env` — engine tự đọc fallback.
 
 ## Thêm một network mới
@@ -31,6 +33,14 @@ Trên máy dev đã có `.env.local` ở root repo thì không cần tạo `engi
 5. Chạy thử không ghi DB: `node fetch-all.js --network=<network_id> --dry-run` — đối chiếu tổng theo ngày với UI của network.
 6. Khớp số rồi thì chạy thật: `node fetch-all.js --network=<network_id>`.
 
+### Auto-scan trang báo cáo (khi Dò)
+
+Checkbox **"Tự quét trang báo cáo"** trong wizard Cấu hình (bật sẵn cho thẻ Tiền màn hình): sau khi đăng nhập xong, worker tự ghé các link menu cùng origin có tên giống trang báo cáo (Conversions/Reports/Statistics/Earnings/Payouts…), hứng XHR + bảng HTML của từng trang — user không cần biết trang nào chứa dữ liệu. Detect sẽ tự chọn nguồn doanh thu/breakdown trên mọi trang đã quét và đặt đúng `report.url`.
+
+- Là cờ của LỆNH dò (`engine_commands.discover_scan` — cần chạy `supabase/migration_engine_discover_scan.sql`), không phải field config — `_template.json` không đổi.
+- An toàn: điều hướng GET qua `<a href>` cùng origin; link phải đạt điểm từ khóa mới được ghé; link logout/settings/billing/export… bị loại tuyệt đối. Tối đa 6 trang / ~2 phút.
+- **Click tab phân khúc**: trên mỗi trang, auto-scan còn tự click các tab con SPA có tên Location/Country/Geo/Device/Platform (dữ liệu breakdown hay nằm sau tab, vd Tolt Reports → Location/Device). Chỉ click tab-like khớp whitelist (bỏ Traffic source/Links/Promo — optimize không dùng), không click nút phá hoại/form. Report breakdown sinh ra mang `actions:[{click:"Device"}]` để lúc sync tự click lại tab đó.
+
 ## Chạy hàng ngày
 
 ```bash
@@ -39,7 +49,8 @@ node fetch-all.js --network=x  # 1 network
 node fetch-all.js --dry-run    # không chạm DB
 ```
 
-- Lockfile `engine/.lock` chống chạy chồng (lock cũ hơn 2h coi là tiến trình chết, tự chiếm lại).
+- **Khóa THEO ACCOUNT** (`engine/.locks/<account>.lock`, cũ hơn 2h coi là tiến trình chết → tự chiếm lại): mỗi account chỉ chạy 1 lượt tại 1 thời điểm, nhưng **nhiều account chạy SONG SONG được**. Worker xử lý tối đa `ENGINE_CONCURRENCY` profile cùng lúc (mặc định **4**; thêm `ENGINE_CONCURRENCY=<n>` vào `engine/.env` để chỉnh — mỗi profile ~0.5GB RAM). `fetch-all.js` KHÔNG còn ôm lock toàn cục nên không chặn worker; chỉ chờ khi trùng đúng account.
+  - Muốn **auto-sync chạy song song**: để `node worker.js` chạy + bật auto-sync trong admin (worker tự xếp & chạy nhiều account cùng lúc). Không cần Task Scheduler `fetch-all.js`; nếu vẫn dùng thì nó tự khóa per-account, không đụng worker.
 - Log: console + `logs/run-<timestamp>.log` (không tự xóa — thỉnh thoảng dọn tay).
 - Trạng thái ghi vào Supabase:
   - `engine_runs` — mỗi lần chạy 1 network: success/failed, số dòng, khoảng ngày.
@@ -53,6 +64,12 @@ node fetch-all.js --dry-run    # không chạm DB
 1. **`revenue_raw`** (staging): grain offer/ngày, khóa `(network_id, date, offer_id, offer_name)`, giữ `raw_payload` JSON gốc từng dòng.
 2. **`affiliate_revenue`** (số trên P&L, khi `sync_pnl: true`): cộng dồn theo (project, ngày) rồi quy về USD, upsert **type='pending'**. Việc chốt `confirmed` vẫn làm tay trên dashboard.
    - ⚠️ Số pending nhập tay cho cùng (project, ngày) trong cửa sổ 30 ngày sẽ bị engine ghi đè.
+3. **`revenue_breakdown`** (report `kind: "breakdown"` — PIPELINE RIÊNG): doanh thu theo chiều **quốc gia / thiết bị / giờ / sub-id**, grain tổng hợp (ngày × chiều), cho mục **Tối Ưu Camp** join ROI thật theo segment với chi phí Google Ads. KHÔNG bao giờ vào `affiliate_revenue` (không double-count P&L). Khai báo qua block `dimensions` trong report (xem `_template.json`); mọi chiều đều tùy chọn — network có gì lấy nấy.
+   - **2 pipeline độc lập, chung Chrome profile** (đăng nhập 1 lần): lệnh `fetch` chỉ chạy report doanh thu → `revenue_raw` + P&L; lệnh `fetch_breakdown` chỉ chạy report breakdown → `revenue_breakdown`. Run riêng (`engine_runs.kind`), alert riêng (tag `<account>:breakdown`) — lỗi bên này không che/không kéo bên kia. Auto-sync xếp CẢ 2 lệnh mỗi chu kỳ (breakdown chỉ khi network có report + `engine_network_configs.breakdown_enabled`).
+   - **Cấu hình & quản lý**: KHÔNG nằm trong wizard doanh thu — dùng tab **Tối Ưu Camp → Dữ liệu tối ưu Network** (Dò & cấu hình tự quét trang + click tab, Đồng bộ, bật/tắt per network). Detect có thể tạo NHIỀU report breakdown (mỗi tab/dimension 1 report: `breakdown_geo`, `breakdown_device`...). CLI: `node fetch-all.js --kind=revenue|breakdown` (bỏ cờ = chạy cả 2 tuần tự — nightly full sync).
+   - **`actions`** (click tab lúc sync) + **`date_mode:'window_end'`**: nguồn tổng-theo-kỳ không có cột ngày (vd Location = tổng theo quốc gia cho cửa sổ) → engine gán `date` = ngày cuối cửa sổ sync; đây là aggregate theo kỳ (không breakdown theo từng ngày), dùng cho ROI quốc gia/thiết bị gần đây.
+   - **Sub-id → campaign**: đặt Google Ads Final URL suffix `<tham_số_sub>={campaignid}` (vd `aff_sub={campaignid}`) → engine tách `campaign_id` theo `sub_id_parse` (mặc định: sub_id là campaign ID trần 8–12 chữ số) → Tối Ưu Camp attribution chính xác theo campaign.
+   - Migrations cần chạy: `migration_revenue_breakdown.sql` + `migration_engine_split_pipelines.sql`; **restart worker** sau khi deploy.
 
 ### Quy đổi tiền tệ về USD (P&L hiển thị $)
 

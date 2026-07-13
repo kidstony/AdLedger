@@ -4,9 +4,12 @@
 
 const EXTRACT_TABLES = () => {
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim()
+  // Bảng có đang HIỂN THỊ không (tab bị ẩn display:none → getClientRects rỗng). Dùng để tự nhắm
+  // đúng bảng khi 1 trang có nhiều tab (vd click "Payment history" → bảng payout visible, Commission ẩn).
+  const isVisible = (el) => { try { return el.getClientRects().length > 0 } catch { return true } }
   const out = []
   // Dựng grid từ headers[] + rowCells[][] (bóc nhãn cột responsive như trước).
-  const pushGrid = (index, headers, rowCells) => {
+  const pushGrid = (index, headers, rowCells, visible = true) => {
     const rows = rowCells
       .map((cells) => {
         // Bỏ dòng placeholder (1 ô spanning kiểu "Empty/No data") → bảng payout rỗng coi là 0 dòng.
@@ -22,7 +25,7 @@ const EXTRACT_TABLES = () => {
       })
       .filter(Boolean)
     // Có dữ liệu (>=2 dòng) HOẶC bảng RỖNG nhưng có header thật (>=2) → giữ để cấu hình theo tên cột.
-    if (rows.length >= 2 || (rows.length === 0 && headers.length >= 2)) out.push({ table_index: index, headers, rows })
+    if (rows.length >= 2 || (rows.length === 0 && headers.length >= 2)) out.push({ table_index: index, headers, rows, visible })
   }
 
   // 1) <table> — GIỮ chỉ số DOM (table_index = vị trí trong querySelectorAll('table'))
@@ -36,7 +39,7 @@ const EXTRACT_TABLES = () => {
       headers = Array.from(trs[0].querySelectorAll('th,td')).map((c) => clean(c.textContent))
       bodyRows = trs.slice(1)
     }
-    pushGrid(ti, headers, bodyRows.map((tr) => Array.from(tr.querySelectorAll('td,th')).map((c) => clean(c.textContent))))
+    pushGrid(ti, headers, bodyRows.map((tr) => Array.from(tr.querySelectorAll('td,th')).map((c) => clean(c.textContent))), isVisible(table))
   })
 
   // 2) ARIA grid: [role=table]/[role=grid] (chỉ số 1000+)
@@ -51,7 +54,7 @@ const EXTRACT_TABLES = () => {
       headers = Array.from(rowsEl[0].querySelectorAll('[role="cell"],[role="gridcell"],[role="columnheader"]')).map((c) => clean(c.textContent))
       bodyRowsEl = rowsEl.slice(1)
     }
-    pushGrid(1000 + gi, headers, bodyRowsEl.map((r) => Array.from(r.querySelectorAll('[role="cell"],[role="gridcell"]')).map((c) => clean(c.textContent))))
+    pushGrid(1000 + gi, headers, bodyRowsEl.map((r) => Array.from(r.querySelectorAll('[role="cell"],[role="gridcell"]')).map((c) => clean(c.textContent))), isVisible(g))
   })
 
   // 3) Div lặp cấu trúc (best-effort, chỉ số 2000+): container có >=3 con cùng tag, mỗi con
@@ -74,7 +77,7 @@ const EXTRACT_TABLES = () => {
     if (maxc < 2 || maxc > 15) continue
     if (rowCells.filter((cells) => cells.some(dateLike)).length < 3) continue
     if (rowCells.filter((cells) => cells.some(numLike)).length < 3) continue
-    pushGrid(2000 + ri, [], rowCells)
+    pushGrid(2000 + ri, [], rowCells, isVisible(cont))
     ri++
   }
 

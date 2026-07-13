@@ -97,6 +97,42 @@
         "max_invalid_row_ratio": 0.2,
         "_comment_ratio": "Tỷ lệ dòng lỗi (thiếu field bắt buộc/parse fail) vượt ngưỡng → MAPPING_FAILED."
       }
+    },
+    {
+      "_comment": "REPORT BREAKDOWN (tùy chọn) — doanh thu theo chiều quốc gia/thiết bị/giờ/sub-id, ghi vào bảng revenue_breakdown để mục Tối Ưu Camp join với chi phí Google Ads theo segment. KHÔNG bao giờ vào affiliate_revenue (P&L) → không double-count. Network có report chuyển đổi chi tiết (mỗi dòng 1 conversion) hoặc thống kê theo quốc gia thì thêm block này.",
+      "name": "conversions_breakdown",
+      "kind": "breakdown",
+      "_comment_kind": "'breakdown' = report chiều. Không khai kind = 'revenue' (hành vi cũ).",
+
+      "url": "https://app.example.com/api/conversions?start={start_date}&end={end_date}",
+      "capture": { "url_pattern": "api/conversions" },
+      "rows_path": "data.rows[]",
+
+      "mapping": {
+        "_comment": "Với breakdown: chỉ revenue bắt buộc. date có thể bỏ nếu có dimensions.conversion_time (suy ngày từ timestamp). offer_id/offer_name/currency/clicks/conversions đều tùy chọn.",
+        "date":        { "path": "created_at", "formats": ["iso"], "required": false },
+        "revenue":     { "path": "commission", "divisor": 1 },
+        "offer_name":  { "path": "offer.name", "required": false, "default": "" },
+        "currency":    { "path": "currency", "required": false, "default": "USD" },
+        "conversions": { "path": "__const__", "required": false, "default": 1, "_comment": "Nguồn per-conversion: mỗi dòng = 1 chuyển đổi → default 1, duplicate_strategy 'sum' tự cộng dồn." }
+      },
+
+      "dimensions": {
+        "_comment": "Mọi chiều đều TÙY CHỌN — network có gì khai nấy, thiếu = sentinel ('' / hour=-1). normalize: 'country' → ISO alpha-2 UPPER (nhận code 2/3 ký tự + tên tiếng Anh), 'device' → mobile|desktop|tablet|other. value_map (lowercase key) ưu tiên trước normalize để override.",
+        "country":         { "path": "geo", "normalize": "country", "value_map": {} },
+        "device":          { "path": "device_type", "normalize": "device" },
+        "conversion_time": { "path": "created_at", "formats": ["iso"], "timezone": "UTC", "_comment": "Timestamp chuyển đổi → hour 0-23 (+ suy date nếu mapping.date trống). timezone = múi giờ dữ liệu nguồn; epoch/ISO có offset được đổi về múi này (bỏ trống → config.timezone → UTC)." },
+        "sub_id":          { "path": "aff_sub1", "_comment": "Sub-id user truyền từ tracking link (VD {campaignid} của Google Ads) — engine tách campaign_id theo sub_id_parse (top-level)." },
+        "transaction_id":  { "path": "conversion_id", "_comment": "ID chuyển đổi duy nhất — chỉ dùng dedupe trong batch khi pagination lặp dòng, không lưu DB." }
+      },
+
+      "revenue_type": "pending",
+      "duplicate_strategy": "sum",
+      "_comment_duplicate_strategy_bd": "'sum' (mặc định cho breakdown) = nguồn per-conversion, cộng dồn về (ngày × chiều); 'last' = nguồn đã tổng hợp sẵn theo ngày × chiều, dòng lặp qua trang thì đè.",
+      "validation": { "min_mapped_rows": 0, "max_invalid_row_ratio": 0.2 }
     }
-  ]
+  ],
+
+  "sub_id_parse": { "pattern": "^(\\d{8,12})$", "group": 1 },
+  "_comment_sub_id_parse": "Tách campaign_id Google từ sub_id (dimensions.sub_id). Mặc định: sub_id là campaign ID trần 8-12 chữ số — user đặt Final URL suffix trong Google Ads: <sub_param>={campaignid}. Sub_id có prefix thì đổi pattern, VD 'camp_(\\d+)'."
 }

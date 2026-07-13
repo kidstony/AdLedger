@@ -3,4 +3,5 @@ profiles/
 logs/
 .env
 .lock
+.locks/
 node_modules/

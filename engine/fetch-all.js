@@ -5,7 +5,7 @@
 //   node fetch-all.js --network=x --dry-run   # không chạm DB, in kết quả map
 import { parseArgs } from './lib/args.js'
 import { initLogFile, log } from './lib/logger.js'
-import { acquireLock, releaseLock } from './lib/lockfile.js'
+import { releaseAllLocks } from './lib/lockfile.js'
 import { loadConfigs } from './lib/config.js'
 import { upsertNetwork } from './lib/db.js'
 import { loadAccounts } from './lib/accounts.js'
@@ -14,18 +14,16 @@ import { runNetwork } from './lib/run-network.js'
 async function main() {
   const args = parseArgs()
   if (args._unknown.length > 0) {
-    console.error(`Cờ không hỗ trợ: ${args._unknown.join(', ')}. Dùng: node fetch-all.js [--network=x] [--account=y] [--dry-run]`)
+    console.error(`Cờ không hỗ trợ: ${args._unknown.join(', ')}. Dùng: node fetch-all.js [--network=x] [--account=y] [--dry-run] [--kind=revenue|breakdown]`)
     process.exit(1)
   }
 
   const logFile = initLogFile()
   const configs = await loadConfigs(args.network) // fail fast nếu config lỗi
 
-  if (!acquireLock()) {
-    console.error('Engine đang chạy ở tiến trình khác (engine/.lock tồn tại). Thoát.')
-    process.exit(1)
-  }
-  const cleanup = () => releaseLock()
+  // Không còn lock TOÀN CỤC — khóa THEO ACCOUNT nằm trong runNetwork (mỗi account 1 khóa), nên
+  // fetch-all.js KHÔNG chặn worker/profile khác; chỉ chờ khi trùng đúng account đang chạy.
+  const cleanup = () => releaseAllLocks()
   process.on('SIGINT', () => {
     cleanup()
     process.exit(130)
@@ -50,9 +48,14 @@ async function main() {
         }
         // Nguồn account: DB (quản lý qua UI); fallback file config.
         config.accounts = await loadAccounts(config)
-        const results = await runNetwork(config, args.dryRun, args.account)
-        for (const r of results) {
-          summary.push({ network: config.network_id, ...r })
+        // --kind=... → chỉ 1 pipeline; mặc định chạy CẢ 2 tuần tự (nightly full sync).
+        // Pipeline không có report tương ứng → 'skipped' gần như miễn phí (không mở browser).
+        const kinds = args.kind ? [args.kind] : ['revenue', 'breakdown']
+        for (const kind of kinds) {
+          const results = await runNetwork(config, args.dryRun, args.account, kind)
+          for (const r of results) {
+            summary.push({ network: config.network_id, ...r })
+          }
         }
       } catch (err) {
         // Lỗi ngoài dự kiến (VD: insertRun fail) — không được chặn network sau
@@ -67,7 +70,7 @@ async function main() {
   log.info('========== TỔNG KẾT ==========')
   for (const s of summary) {
     const who = s.account && s.account !== s.network ? `${s.network}/${s.account}` : s.network
-    log.info(`  ${who}: ${s.status}${s.rows != null ? ` (${s.rows} dòng)` : ''}${s.errorType ? ` [${s.errorType}]` : ''}`)
+    log.info(`  ${who} [${s.kind ?? 'revenue'}]: ${s.status}${s.rows != null ? ` (${s.rows} dòng)` : ''}${s.errorType ? ` [${s.errorType}]` : ''}${s.status === 'skipped' && s.reason ? ` — ${s.reason}` : ''}`)
   }
   const failed = summary.filter((s) => s.status === 'failed').length
   process.exit(failed > 0 ? 2 : 0)
@@ -75,6 +78,6 @@ async function main() {
 
 main().catch((err) => {
   console.error(err.message)
-  releaseLock()
+  releaseAllLocks()
   process.exit(1)
 })

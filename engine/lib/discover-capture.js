@@ -23,8 +23,13 @@ async function buildEntry(res) {
   const req = res.request()
   let post = null
   try { post = req.postData(); if (post && post.length > MAX_POST_DATA) post = post.slice(0, MAX_POST_DATA) } catch { /* no body */ }
+  // page_url: TRANG nào bắn response này (auto-scan quét nhiều trang → detect biết nguồn
+  // nằm ở trang nào để đặt report.url). frame() THROW với service-worker/early-navigation.
+  let page_url = null
+  try { page_url = res.frame().url() } catch { /* service worker / điều hướng sớm — không có frame */ }
   return {
     url: res.url(),
+    page_url,
     payload: truncateArrays(await res.json()),
     method: req.method(),
     req_url: req.url(),   // URL request (kèm query string, nơi hay chứa date_from/date_to)
@@ -44,21 +49,35 @@ function hasDataArray(value, depth = 0) {
   return false
 }
 
-// Nhận CONTEXT (bắt trên mọi tab, kể cả tab mới do login/SPA mở). Kết thúc khi:
-// (a) thấy mảng dữ liệu + settle; (b) idle: đã bắt ≥1 response, không có cái mới
-// trong idleMs; (c) hết timeoutMs.
 // Gắn listener bắt MỌI response JSON (xhr/fetch/content-type json) trên mọi page +
 // page mới của context. KHÔNG tự dừng — trả { captured, detach } để bên gọi quyết định
 // khi nào kết thúc (vd chờ user bấm "Phân tích"). Tránh đóng sớm trong lúc đăng nhập.
-export function attachJsonCapture(context) {
+// opts (auto-scan quét nhiều trang cần nới): maxResponses = cap số entry; maxBytes = cap
+// tổng kích thước payload (bảo vệ insert jsonb 1 dòng); dedupe = bỏ request lặp
+// (XHR boilerplate SPA như /api/me bắn lại mỗi trang, không đốt cap).
+// Mặc định giữ NGUYÊN hành vi cũ.
+export function attachJsonCapture(context, { maxResponses = MAX_RESPONSES, maxBytes = Infinity, dedupe = false } = {}) {
   const captured = []
+  const seen = dedupe ? new Set() : null
+  let totalBytes = 0
   const onResp = async (res) => {
     const rt = res.request().resourceType()
     const ct = res.headers()['content-type'] || ''
     if (rt !== 'xhr' && rt !== 'fetch' && !ct.includes('json')) return
-    if (captured.length >= MAX_RESPONSES) return
+    if (captured.length >= maxResponses || totalBytes > maxBytes) return
     try {
-      captured.push(await buildEntry(res))
+      const entry = await buildEntry(res)
+      const len = JSON.stringify(entry.payload).length
+      if (seen) {
+        // Key gồm cả kích thước response: tab Location/Device của cùng endpoint (vd Tolt
+        // /api/data/reports) có URL Y HỆT nhưng body khác → length khác → KHÔNG dedupe nhầm.
+        // Boilerplate SPA lặp thật (cùng response) → cùng length → vẫn dedupe.
+        const key = `${entry.method} ${entry.req_url} ${entry.post_data ?? ''} ${len}`
+        if (seen.has(key)) return
+        seen.add(key)
+      }
+      captured.push(entry)
+      totalBytes += len
     } catch { /* không phải JSON — bỏ qua */ }
   }
   const attach = (p) => p.on('response', onResp)

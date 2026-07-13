@@ -78,3 +78,42 @@ export function parseDate(value, formats = [], order = 'DMY') {
   }
   return null
 }
+
+// Parse timestamp chuyển đổi → { date: 'YYYY-MM-DD', hour: 0-23 } | null
+// (dimensions.conversion_time của report breakdown — cần cả giờ, không chỉ ngày).
+// tz = múi giờ dữ liệu nguồn: giá trị tuyệt đối (epoch, ISO có offset/Z) được đổi về tz
+// để lấy giờ đúng; chuỗi không offset coi như đã ở giờ nguồn → giữ nguyên. Không khai tz
+// mà giá trị tuyệt đối → dùng UTC (deterministic, không phụ thuộc máy chạy worker).
+export function parseDateTime(value, formats = [], tz = null) {
+  if (value === null || value === undefined || value === '') return null
+  const str = String(value).trim()
+
+  let d = null
+  let absolute = false // giá trị là thời điểm tuyệt đối (cần đổi múi giờ)?
+  for (const fmt of formats) {
+    if (fmt === 'unix' || fmt === 'unix_ms') {
+      const num = Number(str)
+      if (!Number.isFinite(num)) continue
+      d = fmt === 'unix' ? dayjs.unix(num) : dayjs(num)
+      absolute = true
+    } else if (fmt === 'iso') {
+      d = dayjs(str)
+      absolute = /(?:Z|[+-]\d{2}:?\d{2})$/.test(str)
+    } else {
+      d = dayjs(str, fmt, true)
+    }
+    if (d && d.isValid()) break
+    d = null
+  }
+  if (!d && formats.length === 0) {
+    const t = dayjs(str)
+    if (t.isValid()) {
+      d = t
+      absolute = /(?:Z|[+-]\d{2}:?\d{2})$/.test(str)
+    }
+  }
+  if (!d) return null
+
+  if (absolute) d = d.tz(tz ?? 'UTC')
+  return { date: d.format('YYYY-MM-DD'), hour: d.hour() }
+}

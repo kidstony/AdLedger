@@ -1,7 +1,11 @@
 import { dateWindow, renderUrl } from './dates.js'
 import { log } from './logger.js'
 import { extractTableAllPages } from './html-table.js'
+import { extractRows } from './extract.js'
 import { runActions } from './actions.js'
+
+// per_day: chỉ lặp N ngày gần nhất khi report chạy chế độ per-day (tránh nổ số request lúc backfill dài).
+const PER_DAY_MAX_DAYS = 90
 
 export function matchesPattern(url, capture) {
   if (capture.pattern_type === 'regex') return new RegExp(capture.url_pattern).test(url)
@@ -66,6 +70,7 @@ export async function captureReports(page, config, base = '', { windowDays } = {
   const pendingJson = []
   let activeReport = null
   let activeReportIndex = -1 // để gắn report_index (khớp captured→report bằng vị trí, không bằng name — 2 report có thể trùng name)
+  let activeDay = null       // per_day: ngày đang truy vấn → gắn vào captured.date (response không có cột ngày)
 
   page.on('response', (response) => {
     if (!activeReport) return
@@ -76,11 +81,12 @@ export async function captureReports(page, config, base = '', { windowDays } = {
 
     const report = activeReport
     const reportIndex = activeReportIndex
+    const day = activeDay
     pendingJson.push(
       response
         .json()
         .then((payload) => {
-          captured.push({ report_index: reportIndex, report: report.name, payload, url })
+          captured.push({ report_index: reportIndex, report: report.name, payload, url, date: day })
           log.info(`  hứng được response: ${url.slice(0, 120)}`, config.network_id)
         })
         .catch(() => {
@@ -93,9 +99,39 @@ export async function captureReports(page, config, base = '', { windowDays } = {
     const report = config.reports[ri]
     activeReport = report
     activeReportIndex = ri
+
+    // Report LẶP-NGÀY: API trả tổng theo quốc gia cho 1 KHOẢNG (response không có cột ngày) →
+    // gọi với date_from=date_to=TỪNG NGÀY, gắn ngày truy vấn vào từng dòng (run-network dùng
+    // captured.date làm windowEndDate). Cap PER_DAY_MAX_DAYS ngày gần nhất để backfill không nổ request.
+    if (report.per_day) {
+      const maxPages = report.paginate?.max_pages ?? 1
+      const capStart = window.to.subtract(PER_DAY_MAX_DAYS - 1, 'day').startOf('day')
+      let d = window.from.valueOf() > capStart.valueOf() ? window.from.startOf('day') : capStart
+      let nDays = 0
+      for (; d.valueOf() <= window.to.valueOf(); d = d.add(1, 'day')) {
+        activeDay = d.format('YYYY-MM-DD')
+        const dayWin = { from: d, to: d }
+        nDays++
+        for (let pg = 1; pg <= maxPages; pg++) {
+          const before = captured.length
+          const url = renderUrl(report.url, dayWin, report.url_date_format, base).replaceAll('{page}', String(pg))
+          try { await page.goto(url, { waitUntil: 'load', timeout: report.wait.navigation_timeout_ms }) }
+          catch { break }
+          await sleep(400)
+          await Promise.all(pendingJson)
+          if (!captured.slice(before).some((c) => extractRows(c.payload, report.rows_path).length > 0)) break
+          if (!report.paginate) break
+        }
+      }
+      activeDay = null
+      log.info(`report "${report.name}" (per-day): quét ${nDays} ngày`, config.network_id)
+      continue
+    }
+
     // Ghi đè field ngày trong request (nếu khai) TRƯỚC khi điều hướng để bắt kịp XHR đầu.
     const unroute = await applyRequestOverride(page, report, window)
-    const url = renderUrl(report.url, window, report.url_date_format, base)
+    // {page} (nếu report phân trang) → trang 1 cho lần goto đầu; các trang sau xử lý ở vòng paginate.
+    const url = renderUrl(report.url, window, report.url_date_format, base).replaceAll('{page}', '1')
     log.info(`report "${report.name}": mở ${url.slice(0, 150)}`, config.network_id)
 
     const waitUntil = report.wait.strategy === 'networkidle' ? 'networkidle' : 'load'
@@ -125,13 +161,33 @@ export async function captureReports(page, config, base = '', { windowDays } = {
       continue
     }
 
-    // Poll đến khi không có response khớp mới trong capture_settle_ms
-    let lastCount = -1
-    while (lastCount !== captured.length + pendingJson.length) {
-      lastCount = captured.length + pendingJson.length
-      await sleep(report.wait.capture_settle_ms)
+    // Poll đến khi không có response khớp mới trong capture_settle_ms (trang 1 đã goto ở trên).
+    const settle = async () => {
+      let lastCount = -1
+      while (lastCount !== captured.length + pendingJson.length) {
+        lastCount = captured.length + pendingJson.length
+        await sleep(report.wait.capture_settle_ms)
+      }
+      await Promise.all(pendingJson)
     }
-    await Promise.all(pendingJson) // đảm bảo mọi res.json() đã xong
+    await settle()
+
+    // Phân trang (vd customers page_size=50): goto {page}=2,3,... tới khi trang RỖNG (không thêm
+    // dòng khớp rows_path) hoặc hết max_pages. Trang 1 đã hứng ở trên. Chỉ khi url có token {page}.
+    if (report.paginate && report.url.includes('{page}')) {
+      for (let pg = 2; pg <= report.paginate.max_pages; pg++) {
+        const before = captured.length
+        const urlPg = renderUrl(report.url, window, report.url_date_format, base).replaceAll('{page}', String(pg))
+        try {
+          await page.goto(urlPg, { waitUntil, timeout: report.wait.navigation_timeout_ms })
+        } catch { /* trang lỗi → dừng phân trang */ break }
+        await sleep(report.wait.post_load_wait_ms)
+        await settle()
+        const newRows = captured.slice(before).some((c) => extractRows(c.payload, report.rows_path).length > 0)
+        if (!newRows) break // trang rỗng → hết dữ liệu
+      }
+      log.info(`report "${report.name}": phân trang xong (${captured.filter((c) => c.report_index === ri).length} response)`, config.network_id)
+    }
     await unroute()
   }
   activeReport = null
