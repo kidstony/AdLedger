@@ -101,11 +101,9 @@ export function useRevenueGrid() {
   const futureRef   = useRef<HistoryEntry[]>([])
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
 
   function showToast(msg: string) {
-    setToast(msg)
-    setTimeout(() => setToast(null), 2000)
+    sonnerToast.success(msg, { duration: 2000 })
   }
 
   function syncUndoRedoState() {
@@ -600,7 +598,7 @@ export function useRevenueGrid() {
     gridData, revenueGrid, screenGrid, prevScreenMap,
     noteMap, payoutMap,
     isLoading, saveStatus, isAtToday,
-    canUndo, canRedo, toast, setToast,
+    canUndo, canRedo,
     undo, redo,
     goBack, goForward, goToToday, switchMode,
     customFrom, customTo, setCustomRange, refreshRevenue,

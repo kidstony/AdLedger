@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { UserProfile, UserRole, Team } from '@/lib/types'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
+import PageHeader from '@/components/ui/PageHeader'
 
 const ROLE_BADGE: Record<string, string> = {
   super_admin: 'bg-red-100 text-red-700',
@@ -43,6 +45,7 @@ const BLANK_FORM = {
 
 export default function UsersPage() {
   const { user: currentUser, role, teamId, organizationId } = useAuth()
+  const confirmDlg = useConfirm()
   const router = useRouter()
 
   const [users, setUsers] = useState<UserProfile[]>([])
@@ -191,7 +194,7 @@ export default function UsersPage() {
 
   async function handleDelete(userId: string) {
     if (userId === currentUser?.id) { toast.error('Không thể xóa tài khoản đang đăng nhập'); return }
-    if (!confirm('Xóa tài khoản này? Hành động không thể hoàn tác.')) return
+    if (!(await confirmDlg({ title: 'Xóa tài khoản này?', description: 'Hành động không thể hoàn tác.' }))) return
     setDeletingId(userId)
     const res = await adminFetch('/api/admin/delete-user', {
       method: 'DELETE',
@@ -222,15 +225,15 @@ export default function UsersPage() {
 
   return (
     <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-slate-800">{isAdmin ? 'Quản lý User' : 'Thành viên nhóm'}</h2>
-          <p className="text-sm text-slate-500 mt-0.5">{users.length} {isAdmin ? 'tài khoản' : 'thành viên'}</p>
-        </div>
-        <Button onClick={() => { setShowCreate(true); setStep('info'); setForm({ ...BLANK_FORM, ...(role === 'manager' ? { team_id: teamId ?? '', role: 'member' as UserRole } : {}) }); setFormError('') }} className="gap-1.5">
-          <Plus size={14} /> {isAdmin ? 'Tạo user mới' : 'Thêm thành viên'}
-        </Button>
-      </div>
+      <PageHeader
+        title={isAdmin ? 'Quản lý User' : 'Thành viên nhóm'}
+        subtitle={`${users.length} ${isAdmin ? 'tài khoản' : 'thành viên'}`}
+        actions={
+          <Button onClick={() => { setShowCreate(true); setStep('info'); setForm({ ...BLANK_FORM, ...(role === 'manager' ? { team_id: teamId ?? '', role: 'member' as UserRole } : {}) }); setFormError('') }} className="gap-1.5">
+            <Plus size={14} /> {isAdmin ? 'Tạo user mới' : 'Thêm thành viên'}
+          </Button>
+        }
+      />
 
       {/* Filter bar */}
       <div className="flex items-center gap-3 flex-wrap">

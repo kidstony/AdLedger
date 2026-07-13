@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CampaignDiscovery } from '@/lib/types'
 import { toast } from 'sonner'
+import PageHeader from '@/components/ui/PageHeader'
 
 interface SyncLogEntry {
   id: string
@@ -665,13 +666,11 @@ export default function IntegrationsPage() {
 
   return (
     <div className="p-6 max-w-3xl space-y-6">
-      <div>
-        <div className="flex items-center gap-2 mb-0.5">
-          <Zap size={18} className="text-amber-500" />
-          <h2 className="text-xl font-semibold text-slate-800">Tích hợp Google Ads Scripts</h2>
-        </div>
-        <p className="text-sm text-slate-500">Đồng bộ chi phí tự động mỗi ngày từ tất cả MCC — không cần API key</p>
-      </div>
+      <PageHeader
+        title="Tích hợp Google Ads Scripts"
+        badge={<Zap size={16} className="text-amber-500" />}
+        subtitle="Đồng bộ chi phí tự động mỗi ngày từ tất cả MCC — không cần API key"
+      />
 
       {/* Step 1 */}
       <div className="border border-slate-200 rounded-lg overflow-hidden">

@@ -5,6 +5,7 @@ import { Users, Plus, ChevronDown, Trash2, Settings } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { ProjectShare, ShareAccessLevel, ACCESS_LEVEL_DEFAULTS, SharePermissionId } from '@/lib/types'
 import AddShareModal from './AddShareModal'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 interface Props {
   projectId: string
@@ -58,6 +59,7 @@ async function getToken(): Promise<string> {
 }
 
 export default function ShareTab({ projectId, projectName, teamId }: Props) {
+  const confirmDlg = useConfirm()
   const [shares, setShares]           = useState<ProjectShare[]>([])
   const [isLoading, setIsLoading]     = useState(true)
   const [showModal, setShowModal]     = useState(false)
@@ -122,7 +124,7 @@ export default function ShareTab({ projectId, projectName, teamId }: Props) {
   }
 
   async function revokeShare(shareId: string, name: string) {
-    if (!confirm(`Thu hồi quyền truy cập của ${name} vào dự án này?`)) return
+    if (!(await confirmDlg({ title: `Thu hồi quyền truy cập của ${name}?`, description: 'Người này sẽ không xem được dự án nữa.', confirmLabel: 'Thu hồi' }))) return
     setRevokingId(shareId)
     const token = await getToken()
     await fetch(`/api/projects/${projectId}/shares/${shareId}`, {

@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Team } from '@/lib/types'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
+import PageHeader from '@/components/ui/PageHeader'
 
 interface TeamWithCounts extends Team {
   member_count: number
@@ -23,6 +25,7 @@ const BLANK = { name: '', color: '#3b82f6', manager_id: '' }
 export default function TeamsPage() {
   const { role, organizationId } = useAuth()
   const router = useRouter()
+  const confirmDlg = useConfirm()
 
   const [teams, setTeams] = useState<TeamWithCounts[]>([])
   const [managers, setManagers] = useState<{ user_id: string; full_name: string }[]>([])
@@ -127,7 +130,7 @@ export default function TeamsPage() {
       toast.error('Vui lòng xóa hết thành viên và dự án trước khi xóa team')
       return
     }
-    if (!confirm(`Xóa team "${t.name}"?`)) return
+    if (!(await confirmDlg({ title: `Xóa team "${t.name}"?` }))) return
     const res = await adminFetch(`/api/teams/${t.id}`, { method: 'DELETE' })
     if (res.ok) {
       setTeams(prev => prev.filter(x => x.id !== t.id))
@@ -145,17 +148,15 @@ export default function TeamsPage() {
 
   return (
     <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-slate-800">Quản lý Team</h2>
-          <p className="text-sm text-slate-500 mt-0.5">
-            {teams.length} team · {totalMembers} thành viên · {totalProjects} dự án
-          </p>
-        </div>
-        <Button onClick={openCreate} className="gap-1.5">
-          <Plus size={14} /> Tạo team mới
-        </Button>
-      </div>
+      <PageHeader
+        title="Quản lý Team"
+        subtitle={`${teams.length} team · ${totalMembers} thành viên · ${totalProjects} dự án`}
+        actions={
+          <Button onClick={openCreate} className="gap-1.5">
+            <Plus size={14} /> Tạo team mới
+          </Button>
+        }
+      />
 
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

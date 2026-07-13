@@ -12,7 +12,10 @@ import EditableCell from '@/components/revenue/EditableCell'
 import ProjectFilterDropdown, { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
 import RevenueSummaryCards from '@/components/revenue/RevenueSummaryCards'
 import { cn, formatVND } from '@/lib/utils'
+import { toast } from 'sonner'
 import DateRangePicker from '@/components/ui/DateRangePicker'
+import PageHeader from '@/components/ui/PageHeader'
+import SegmentedControl from '@/components/ui/SegmentedControl'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 
 // ── date helpers ────────────────────────────────────────────────────────────
@@ -49,7 +52,7 @@ export default function RevenuePage() {
     dates, gridData, revenueGrid, screenGrid, prevScreenMap,
     noteMap, payoutMap,
     isLoading, saveStatus,
-    canUndo, canRedo, toast, setToast,
+    canUndo, canRedo,
     undo, redo,
     switchMode,
     customFrom, customTo, setCustomRange,
@@ -126,8 +129,7 @@ export default function RevenuePage() {
   useEffect(() => { setSel(null) }, [dates, activeTab, filteredProjects])
 
   function showPageToast(msg: string) {
-    setToast(msg)
-    setTimeout(() => setToast(null), 3000)
+    toast.success(msg, { duration: 3000 })
   }
 
   // Data for filter dropdown: compute per-project totals in current period
@@ -322,18 +324,10 @@ export default function RevenuePage() {
   return (
     <div className="p-6 space-y-4">
 
-      {/* Toast */}
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white text-xs px-4 py-2 rounded-full shadow-lg animate-fade-in">
-          {toast}
-        </div>
-      )}
-
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <h2 className="text-xl font-semibold text-slate-800">Nhập doanh thu</h2>
-          {/* Keyboard shortcut popover */}
+      <PageHeader
+        title="Nhập doanh thu"
+        badge={
           <div className="relative">
             <button
               onMouseEnter={() => setShowShortcuts(true)}
@@ -361,10 +355,8 @@ export default function RevenuePage() {
               </div>
             )}
           </div>
-        </div>
-
-        {/* Auto-save status */}
-        <div className="flex items-center gap-3">
+        }
+        actions={<>
           {saveStatus === 'saving' && (
             <span className="flex items-center gap-1.5 text-xs text-slate-400">
               <Cloud size={13} className="animate-pulse" /> Đang lưu...
@@ -392,8 +384,8 @@ export default function RevenuePage() {
               className={cn('px-2.5 py-1.5 text-xs transition-colors', canRedo ? 'text-slate-600 hover:bg-slate-50' : 'text-slate-300 cursor-not-allowed')}
             >↪ Làm lại</button>
           </div>
-        </div>
-      </div>
+        </>}
+      />
 
       {/* ── Navigation bar ─────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -414,22 +406,16 @@ export default function RevenuePage() {
         />
 
         {/* Revenue type tab */}
-        <div className="ml-auto flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
-          <button
-            onClick={() => setActiveTab('revenue')}
-            className={cn('flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
-              activeTab === 'revenue' ? 'bg-white text-green-700 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
-          >
-            <Banknote size={12} /> Thực nhận
-          </button>
-          <button
-            onClick={() => setActiveTab('screen')}
-            className={cn('flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
-              activeTab === 'screen' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
-          >
-            <Monitor size={12} /> Tiền màn hình
-          </button>
-        </div>
+        <SegmentedControl
+          className="ml-auto"
+          size="sm"
+          value={activeTab}
+          onChange={v => setActiveTab(v as 'revenue' | 'screen')}
+          options={[
+            { value: 'revenue', label: 'Thực nhận', icon: Banknote, activeClass: 'text-blue-600' },
+            { value: 'screen', label: 'Tiền màn hình', icon: Monitor, activeClass: 'text-amber-600' },
+          ]}
+        />
       </div>
 
       {/* ── Filter bar ─────────────────────────────────────────────────────── */}

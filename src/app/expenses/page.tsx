@@ -12,6 +12,11 @@ import type { CostCategory, OtherCost, Project, RentalGroup, RentalRateType } fr
 import { MS_PER_DAY, computeCidCost, computeGroupCost } from '@/lib/costs'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import ProjectFilterDropdown, { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
+import PageHeader from '@/components/ui/PageHeader'
+import SegmentedControl from '@/components/ui/SegmentedControl'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 // ─── Date helpers ────────────────────────────────────────────────────────────
 
@@ -94,6 +99,7 @@ type Tab = 'qc' | 'rental' | 'other' | 'summary'
 
 export default function ExpensesPage() {
   const { role } = useAuth()
+  const confirmDlg = useConfirm()
 
   const { projects: allProjects, isLoading: projectsLoading } = useProjectsContext()
   // Members chỉ nhập được dự án có effective input_expense = true
@@ -326,7 +332,7 @@ export default function ExpensesPage() {
     setGroupSaving(false)
   }
   async function deleteGroup(id: string) {
-    if (!confirm('Xóa danh mục này và tất cả CID trong đó?')) return
+    if (!(await confirmDlg({ title: 'Xóa danh mục này?', description: 'Tất cả CID trong danh mục cũng bị xóa.' }))) return
     const token = await getToken()
     await fetch('/api/expenses/rental-groups', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ id }) })
     await fetchRentalGroups()
@@ -360,7 +366,7 @@ export default function ExpensesPage() {
     setCidSaving(false)
   }
   async function deleteCid(id: string) {
-    if (!confirm('Xóa CID này khỏi nhóm?')) return
+    if (!(await confirmDlg({ title: 'Xóa CID này khỏi nhóm?' }))) return
     const token = await getToken()
     await fetch('/api/expenses/rental-group-cids', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ id }) })
     await fetchRentalGroups()
@@ -389,7 +395,7 @@ export default function ExpensesPage() {
     setOtherSaving(false)
   }
   async function deleteOther(id: string) {
-    if (!confirm('Xóa khoản chi phí này?')) return
+    if (!(await confirmDlg({ title: 'Xóa khoản chi phí này?' }))) return
     const token = await getToken()
     await fetch('/api/expenses/other', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ id }) })
     await fetchOtherCosts()
@@ -421,7 +427,7 @@ export default function ExpensesPage() {
     return newCat
   }
   async function deleteCategory(id: string) {
-    if (!confirm('Xóa danh mục này?')) return
+    if (!(await confirmDlg({ title: 'Xóa danh mục này?' }))) return
     const token = await getToken()
     await fetch('/api/expenses/categories', { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ id }) })
     await Promise.all([fetchCategories(), fetchOtherCosts()])
@@ -443,7 +449,7 @@ export default function ExpensesPage() {
     <div className="p-6 space-y-4">
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <h2 className="text-xl font-semibold text-slate-800">Nhập Chi Phí</h2>
+      <PageHeader title="Nhập Chi Phí" />
 
       {/* ── Navigation bar ─────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -461,20 +467,18 @@ export default function ExpensesPage() {
         />
 
         {/* Tab switcher */}
-        <div className="ml-auto flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
-          {([
-            { key: 'qc',      label: 'Chi phí QC' },
-            { key: 'rental',  label: 'Thuê tài khoản' },
-            { key: 'other',   label: 'Chi phí khác' },
-            { key: 'summary', label: 'Tổng hợp' },
-          ] as const).map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)}
-              className={cn('px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
-                tab === t.key ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          className="ml-auto"
+          size="sm"
+          value={tab}
+          onChange={v => setTab(v as Tab)}
+          options={[
+            { value: 'qc', label: 'Chi phí QC' },
+            { value: 'rental', label: 'Thuê tài khoản' },
+            { value: 'other', label: 'Chi phí khác' },
+            { value: 'summary', label: 'Tổng hợp' },
+          ]}
+        />
       </div>
 
       {/* ── Summary cards ──────────────────────────────────────────────────── */}
@@ -850,9 +854,11 @@ function GroupModal({ form, editing, saving, onChange, onSave, onClose }: {
   }[form.rate_type]
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl p-5 w-full max-w-md" onClick={e => e.stopPropagation()}>
-        <h3 className="font-semibold text-slate-800 mb-4">{editing ? 'Sửa danh mục' : 'Tạo danh mục thuê tài khoản'}</h3>
+    <Dialog open onOpenChange={o => { if (!o) onClose() }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{editing ? 'Sửa danh mục' : 'Tạo danh mục thuê tài khoản'}</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
           <Field label="Tên danh mục *">
             <input value={form.name} onChange={e => set({ name: e.target.value })}
@@ -892,15 +898,14 @@ function GroupModal({ form, editing, saving, onChange, onSave, onClose }: {
             <input value={form.note} onChange={e => set({ note: e.target.value })} className={INPUT} />
           </Field>
         </div>
-        <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">Hủy</button>
-          <button onClick={onSave} disabled={saving || !form.name.trim() || !form.rate_value}
-            className="px-4 py-1.5 text-xs bg-slate-800 text-white rounded-md hover:bg-slate-700 disabled:opacity-50 transition-colors font-medium">
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={onSave} disabled={saving || !form.name.trim() || !form.rate_value}>
             {saving ? 'Đang lưu...' : 'Lưu'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1027,9 +1032,11 @@ function CidModal({ form, projects, saving, onChange, onSave, onClose }: {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl p-5 w-full max-w-sm" onClick={e => e.stopPropagation()}>
-        <h3 className="font-semibold text-slate-800 mb-4">Thêm CID vào nhóm</h3>
+    <Dialog open onOpenChange={o => { if (!o) onClose() }}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Thêm CID vào nhóm</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
           <Field label="CID (Google Customer ID) *">
             <CidCombobox value={form.cid} projects={projects} onChange={handleCidSelect} />
@@ -1045,15 +1052,14 @@ function CidModal({ form, projects, saving, onChange, onSave, onClose }: {
             </select>
           </Field>
         </div>
-        <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">Hủy</button>
-          <button onClick={onSave} disabled={saving || !form.cid}
-            className="px-4 py-1.5 text-xs bg-slate-800 text-white rounded-md hover:bg-slate-700 disabled:opacity-50 transition-colors font-medium">
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={onSave} disabled={saving || !form.cid}>
             {saving ? 'Đang thêm...' : 'Thêm'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1084,9 +1090,11 @@ function OtherModal({ form, editing, categories, projects, saving, onChange, onS
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl p-5 w-full max-w-md" onClick={e => e.stopPropagation()}>
-        <h3 className="font-semibold text-slate-800 mb-4">{editing ? 'Sửa chi phí' : 'Thêm chi phí khác'}</h3>
+    <Dialog open onOpenChange={o => { if (!o) onClose() }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{editing ? 'Sửa chi phí' : 'Thêm chi phí khác'}</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Ngày *">
@@ -1153,15 +1161,14 @@ function OtherModal({ form, editing, categories, projects, saving, onChange, onS
             />
           </Field>
         </div>
-        <div className="flex justify-end gap-2 mt-5">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50">Hủy</button>
-          <button onClick={onSave} disabled={saving || !form.date || !form.amount}
-            className="px-4 py-1.5 text-xs bg-slate-800 text-white rounded-md hover:bg-slate-700 disabled:opacity-50 transition-colors font-medium">
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>Hủy</Button>
+          <Button size="sm" onClick={onSave} disabled={saving || !form.date || !form.amount}>
             {saving ? 'Đang lưu...' : 'Lưu'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

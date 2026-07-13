@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { ProjectCategory } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import PageHeader from '@/components/ui/PageHeader'
 
 const COLOR_PRESETS = [
   '#ef4444','#f97316','#eab308','#22c55e',
@@ -140,15 +141,15 @@ export default function AdminCategoriesPage() {
   return (
     <div className="p-6 max-w-2xl space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-slate-800">Quản lý Category</h2>
-          <p className="text-sm text-slate-500 mt-0.5">Phân loại dự án Affiliate</p>
-        </div>
-        <Button onClick={() => { setShowAdd(true); setNewName(''); setNewColor('#3b82f6') }} className="gap-1.5">
-          <Plus size={14} /> Thêm category
-        </Button>
-      </div>
+      <PageHeader
+        title="Quản lý Category"
+        subtitle="Phân loại dự án Affiliate"
+        actions={
+          <Button onClick={() => { setShowAdd(true); setNewName(''); setNewColor('#3b82f6') }} className="gap-1.5">
+            <Plus size={14} /> Thêm category
+          </Button>
+        }
+      />
 
       {/* Add form */}
       {showAdd && (

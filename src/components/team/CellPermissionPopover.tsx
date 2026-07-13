@@ -5,6 +5,7 @@ import { X, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { ShareAccessLevel, SharePermissions, SharePermissionId, ACCESS_LEVEL_DEFAULTS } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 const LEVEL_META: Record<ShareAccessLevel, { icon: string; label: string; desc: string; cls: string }> = {
   viewer:   { icon: '👁',  label: 'Viewer',   desc: 'Không xem được số liệu',  cls: 'border-gray-300 bg-gray-50 text-gray-700' },
@@ -45,6 +46,7 @@ export default function CellPermissionPopover({
   userId, projectId, shareId, initialLevel, initialPerms,
   memberName, projectName, onClose, onSaved, onRevoked,
 }: Props) {
+  const confirmDlg = useConfirm()
   const isNew = !shareId
   const [level, setLevel] = useState<ShareAccessLevel>(initialLevel ?? 'reporter')
   const [perms, setPerms] = useState<SharePermissions>(
@@ -93,7 +95,7 @@ export default function CellPermissionPopover({
 
   async function handleRevoke() {
     if (!shareId) return
-    if (!confirm(`Thu hồi quyền truy cập của ${memberName} vào dự án ${projectName}?`)) return
+    if (!(await confirmDlg({ title: `Thu hồi quyền truy cập của ${memberName}?`, description: `Khỏi dự án ${projectName}.`, confirmLabel: 'Thu hồi' }))) return
     setRevoking(true)
     const token = await getToken()
     await fetch(`/api/projects/${projectId}/shares/${shareId}`, {

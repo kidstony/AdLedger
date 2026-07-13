@@ -6,6 +6,7 @@ import { ShareAccessLevel, SharePermissions } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import CellPermissionPopover from './CellPermissionPopover'
 import { MatrixMember, MatrixProject, MatrixShare } from './MemberProjectList'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 type FilterKey = 'all' | 'granted' | 'none' | ShareAccessLevel
 
@@ -38,6 +39,7 @@ interface PopoverState {
 }
 
 export default function ProjectMemberList({ project, members, projectShares, getToken, onRefresh }: Props) {
+  const confirmDlg = useConfirm()
   const [search, setSearch]             = useState('')
   const [filter, setFilter]             = useState<FilterKey>('all')
   const [filterOpen, setFilterOpen]     = useState(false)
@@ -119,7 +121,7 @@ export default function ProjectMemberList({ project, members, projectShares, get
     const names = selectedWithAccess
       .map(s => members.find(m => m.user_id === s.user_id)?.full_name ?? s.user_id)
       .join(', ')
-    if (!confirm(`Thu hồi quyền của ${selectedWithAccess.length} thành viên khỏi "${project.name}"?\n${names}`)) return
+    if (!(await confirmDlg({ title: `Thu hồi quyền của ${selectedWithAccess.length} thành viên khỏi "${project.name}"?`, description: names, confirmLabel: 'Thu hồi' }))) return
     setRevoking(true)
     const token = await getToken()
     await Promise.all(selectedWithAccess.map(s =>

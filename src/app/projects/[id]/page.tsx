@@ -3,14 +3,19 @@
 import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
-import { ArrowLeft, Zap, Database, Monitor, Calendar, Banknote } from 'lucide-react'
+import { Zap, Database, Monitor, Calendar, Banknote } from 'lucide-react'
 import { MOCK_PNL_DAILY } from '@/lib/mock-data'
 import { useProjectsContext } from '@/context/ProjectsContext'
 import { supabase } from '@/lib/supabase'
 import ProfitChart from '@/components/project-detail/ProfitChart'
 import DateRangePicker from '@/components/ui/DateRangePicker'
+import PageHeader from '@/components/ui/PageHeader'
+import StatusPill from '@/components/ui/StatusPill'
+import StatCard from '@/components/ui/StatCard'
+import TabBar from '@/components/ui/TabBar'
+import SegmentedControl from '@/components/ui/SegmentedControl'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { formatVNDFull, formatROI, formatVND, getProfitTextClass, getRoiTextClass, formatCid, cn } from '@/lib/utils'
+import { formatVNDFull, formatROI, formatVND, getProfitTextClass, getRoiTextClass, formatCid } from '@/lib/utils'
 import { AdDevice, PnlDaily, RentalGroup, OtherCost, STATUS_CONFIG } from '@/lib/types'
 import { computeCidCostForDay } from '@/lib/costs'
 import { allocateSpendRow, splitSpend } from '@/lib/attribution'
@@ -280,35 +285,24 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="p-6 space-y-5">
-      <div>
-        <Link href="/dashboard" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 mb-3">
-          <ArrowLeft size={14} /> Quay lại Dashboard
-        </Link>
-        <div className="flex items-center gap-2">
-          <h2 className="text-xl font-semibold text-slate-800">
-            {project?.name ?? id}
-          </h2>
-          {!isLoading && (
-            dataSource === 'real' ? (
-              <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 font-medium border border-green-200">
-                <Zap size={10} /> Chi phí thật
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-medium border border-amber-200">
-                <Database size={10} /> Demo data
-              </span>
-            )
-          )}
-        </div>
-        {project && (
-          <p className="text-sm text-slate-500 mt-0.5">
+      <PageHeader
+        title={project?.name ?? id}
+        backHref="/dashboard"
+        backLabel="Quay lại Dashboard"
+        badge={!isLoading && (
+          dataSource === 'real'
+            ? <StatusPill tone="green" icon={Zap}>Chi phí thật</StatusPill>
+            : <StatusPill tone="amber" icon={Database}>Demo data</StatusPill>
+        )}
+        subtitle={project && (
+          <>
             CID: <span className="font-mono">{formatCid(project.cid)}</span> · {project.project_id}
             {project.google_campaign_id && (
               <span className="ml-2">· Campaign: <span className="font-mono">{project.google_campaign_id}</span></span>
             )}
-          </p>
+          </>
         )}
-      </div>
+      />
 
       {/* Camp Manager info strip */}
       {project && ((project.statuses?.length ?? 0) > 0 || project.category || project.camp_start_date || project.affiliate_network) && (
@@ -348,21 +342,14 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
 
       {/* Tab bar — chỉ hiện với super_admin và manager của team sở hữu dự án */}
       {canShare && (
-        <div className="flex gap-1 border-b border-slate-200">
-          {(['info', 'share'] as const).map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                activeTab === tab
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              {tab === 'info' ? 'Thông tin' : 'Chia sẻ'}
-            </button>
-          ))}
-        </div>
+        <TabBar
+          tabs={[
+            { key: 'info', label: 'Thông tin' },
+            { key: 'share', label: 'Chia sẻ' },
+          ]}
+          active={activeTab}
+          onChange={k => setActiveTab(k as 'info' | 'share')}
+        />
       )}
 
       {(!canShare || activeTab === 'info') && (<>
@@ -373,85 +360,61 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           to={toStr}
           onApply={(f, t) => { setFromStr(f); setToStr(t) }}
         />
-        <div className="ml-auto flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
-          <button
-            onClick={() => setDataView('screen')}
-            className={cn('flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
-              isScreen ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
-          >
-            <Monitor size={12} /> Tiền màn hình
-          </button>
-          <button
-            onClick={() => setDataView('confirmed')}
-            className={cn('flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
-              !isScreen ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700')}
-          >
-            <Banknote size={12} /> Thực nhận
-          </button>
-        </div>
+        <SegmentedControl
+          className="ml-auto"
+          size="sm"
+          value={isScreen ? 'screen' : 'confirmed'}
+          onChange={v => setDataView(v as 'screen' | 'confirmed')}
+          options={[
+            { value: 'screen', label: 'Tiền màn hình', icon: Monitor, activeClass: 'text-amber-600' },
+            { value: 'confirmed', label: 'Thực nhận', icon: Banknote, activeClass: 'text-blue-700' },
+          ]}
+        />
       </div>
 
       {/* Stats cards */}
-      {isLoading ? (
-        <div className="grid grid-cols-4 gap-4">
-          {[1,2,3,4].map(i => (
-            <div key={i} className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-              <div className="h-3 w-24 bg-slate-200 rounded animate-pulse mb-3" />
-              <div className="h-6 w-32 bg-slate-200 rounded animate-pulse" />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-4 gap-4">
-          {/* Tổng chi phí — with breakdown if rental or other > 0 */}
-          <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Tổng chi phí</p>
-            <p className="text-lg font-semibold text-slate-700">{canViewAdspend ? formatVNDFull(totalSpend) : '****'}</p>
-            {canViewAdspend && (rentalCost > 0 || otherCost > 0) && (
-              <div className="mt-2.5 space-y-1 border-t border-slate-100 pt-2">
-                <div className="flex justify-between text-[11px] text-slate-400">
-                  <span>Chi phí QC</span><span className="font-mono">{formatVND(qcSpend)}</span>
-                </div>
-                {rentalCost > 0 && (
-                  <div className="flex justify-between text-[11px] text-slate-400">
-                    <span>Thuê TK</span><span className="font-mono">{formatVND(rentalCost)}</span>
-                  </div>
-                )}
-                {otherCost > 0 && (
-                  <div className="flex justify-between text-[11px] text-slate-400">
-                    <span>CP khác</span><span className="font-mono">{formatVND(otherCost)}</span>
-                  </div>
-                )}
+      <div className="grid grid-cols-4 gap-4">
+        <StatCard
+          label="Tổng chi phí"
+          loading={isLoading}
+          value={canViewAdspend ? formatVNDFull(totalSpend) : '****'}
+          sub={canViewAdspend && (rentalCost > 0 || otherCost > 0) && (
+            <div className="space-y-1 border-t border-slate-100 pt-2 text-[11px]">
+              <div className="flex justify-between">
+                <span>Chi phí QC</span><span className="font-mono">{formatVND(qcSpend)}</span>
               </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
-              {isScreen ? 'Tiền màn hình' : 'Thực nhận'}
-            </p>
-            <p className={`text-lg font-semibold ${isScreen ? 'text-amber-500' : 'text-blue-600'}`}>
-              {canViewRevenue ? formatVNDFull(viewRevenue) : '****'}
-            </p>
-          </div>
-
-          <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
-              {isScreen ? 'LN màn hình' : 'Lợi nhuận'}
-            </p>
-            <p className={`text-lg font-semibold ${canViewProfit ? (isScreen ? 'text-amber-500' : getProfitTextClass(viewProfit)) : 'text-slate-400'}`}>
-              {canViewProfit ? (viewProfit >= 0 ? '+' : '') + formatVNDFull(viewProfit) : '****'}
-            </p>
-          </div>
-
-          <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">ROI</p>
-            <p className={`text-lg font-semibold ${canViewProfit ? (isScreen ? 'text-amber-500' : getRoiTextClass(viewRoi)) : 'text-slate-400'}`}>
-              {canViewProfit ? formatROI(viewRoi) : '****'}
-            </p>
-          </div>
-        </div>
-      )}
+              {rentalCost > 0 && (
+                <div className="flex justify-between">
+                  <span>Thuê TK</span><span className="font-mono">{formatVND(rentalCost)}</span>
+                </div>
+              )}
+              {otherCost > 0 && (
+                <div className="flex justify-between">
+                  <span>CP khác</span><span className="font-mono">{formatVND(otherCost)}</span>
+                </div>
+              )}
+            </div>
+          )}
+        />
+        <StatCard
+          label={isScreen ? 'Tiền màn hình' : 'Thực nhận'}
+          loading={isLoading}
+          value={canViewRevenue ? formatVNDFull(viewRevenue) : '****'}
+          valueClass={isScreen ? 'text-amber-500' : 'text-blue-600'}
+        />
+        <StatCard
+          label={isScreen ? 'LN màn hình' : 'Lợi nhuận'}
+          loading={isLoading}
+          value={canViewProfit ? (viewProfit >= 0 ? '+' : '') + formatVNDFull(viewProfit) : '****'}
+          valueClass={canViewProfit ? (isScreen ? 'text-amber-500' : getProfitTextClass(viewProfit)) : 'text-slate-400'}
+        />
+        <StatCard
+          label="ROI"
+          loading={isLoading}
+          value={canViewProfit ? formatROI(viewRoi) : '****'}
+          valueClass={canViewProfit ? (isScreen ? 'text-amber-500' : getRoiTextClass(viewRoi)) : 'text-slate-400'}
+        />
+      </div>
 
       {/* Chart */}
       <div className="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">

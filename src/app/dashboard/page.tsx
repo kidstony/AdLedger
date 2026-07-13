@@ -4,6 +4,10 @@ import { RefreshCw, Zap, Database, AlertTriangle, Monitor, TrendingUp } from 'lu
 import { usePnlData } from '@/hooks/usePnlData'
 import SummaryCards from '@/components/dashboard/SummaryCards'
 import DateRangePicker from '@/components/ui/DateRangePicker'
+import PageHeader from '@/components/ui/PageHeader'
+import StatusPill from '@/components/ui/StatusPill'
+import SegmentedControl from '@/components/ui/SegmentedControl'
+import { Button } from '@/components/ui/button'
 import PnlTable from '@/components/dashboard/PnlTable'
 import DailyPnlChart from '@/components/dashboard/DailyPnlChart'
 import DailyPnlTable from '@/components/dashboard/DailyPnlTable'
@@ -24,50 +28,28 @@ export default function DashboardPage() {
 
   return (
     <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-semibold text-slate-800">Dashboard P&L</h2>
-            {dataSource === 'real' ? (
-              <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 font-medium border border-green-200">
-                <Zap size={10} /> Chi phí thật
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-medium border border-amber-200">
-                <Database size={10} /> Demo data
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Tổng quan lãi/lỗ theo dự án
-            {lastSyncedAt && dataSource === 'real' && (
-              <span className="ml-2 text-slate-400">· Đồng bộ cuối: {formatSyncTime(lastSyncedAt)}</span>
-            )}
-          </p>
-        </div>
-
-        {/* Toggle 2 góc nhìn P&L */}
-        <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-          <button
-            onClick={() => setPnlView('screen')}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
-              pnlView === 'screen' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-            )}
-          >
-            <Monitor size={14} /> Tiền màn hình
-          </button>
-          <button
-            onClick={() => setPnlView('confirmed')}
-            className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
-              pnlView === 'confirmed' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-            )}
-          >
-            <TrendingUp size={14} /> Thực nhận
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Dashboard P&L"
+        badge={dataSource === 'real'
+          ? <StatusPill tone="green" icon={Zap}>Chi phí thật</StatusPill>
+          : <StatusPill tone="amber" icon={Database}>Demo data</StatusPill>}
+        subtitle={<>
+          Tổng quan lãi/lỗ theo dự án
+          {lastSyncedAt && dataSource === 'real' && (
+            <span className="ml-2 text-slate-400">· Đồng bộ cuối: {formatSyncTime(lastSyncedAt)}</span>
+          )}
+        </>}
+        actions={
+          <SegmentedControl
+            value={pnlView}
+            onChange={v => setPnlView(v as 'screen' | 'confirmed')}
+            options={[
+              { value: 'screen', label: 'Tiền màn hình', icon: Monitor, activeClass: 'text-amber-600' },
+              { value: 'confirmed', label: 'Thực nhận', icon: TrendingUp, activeClass: 'text-blue-600' },
+            ]}
+          />
+        }
+      />
 
       {/* Thanh công cụ toàn cục: điều khiển dữ liệu toàn trang */}
       <div className="flex items-center gap-3">
@@ -83,17 +65,10 @@ export default function DashboardPage() {
           onApply={setSelectedProjectIds}
         />
 
-        <button
-          onClick={refresh}
-          disabled={isLoading}
-          className={cn(
-            'ml-auto flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border transition-colors',
-            'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-60'
-          )}
-        >
+        <Button variant="outline" onClick={refresh} disabled={isLoading} className="ml-auto">
           <RefreshCw size={14} className={cn(isLoading && 'animate-spin')} />
           Làm mới
-        </button>
+        </Button>
       </div>
 
       <SummaryCards

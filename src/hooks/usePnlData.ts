@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase'
 import { computeCidCost, computeCidCostForDay } from '@/lib/costs'
 import { allocateSpendRow, buildSiblingsByCampaign, splitSpend } from '@/lib/attribution'
 import { type FilterProject } from '@/components/revenue/ProjectFilterDropdown'
+import { useLocalPref } from '@/hooks/useLocalPref'
 
 interface AdSpendRow {
   campaign_id: string
@@ -40,7 +41,8 @@ export function usePnlData() {
   const { dateRange, setDateRange } = useDateRange()
   const { role } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
-  const [pnlView, setPnlView] = useState<'screen' | 'confirmed'>('screen')
+  // Nhớ góc nhìn P&L qua localStorage — vào lại trang không phải chọn lại.
+  const [pnlView, setPnlView] = useLocalPref<'screen' | 'confirmed'>('pnl-view', 'screen')
   const [search, setSearch] = useState('')
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set())
   const [adSpendRows, setAdSpendRows] = useState<AdSpendRow[] | null>(null)

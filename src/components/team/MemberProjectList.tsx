@@ -5,6 +5,7 @@ import { Search, Trash2, ChevronDown } from 'lucide-react'
 import { ShareAccessLevel, SharePermissions } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import CellPermissionPopover from './CellPermissionPopover'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 export type MatrixMember  = { user_id: string; full_name: string; email: string; role: string }
 export type MatrixProject = { project_id: string; name: string }
@@ -44,6 +45,7 @@ interface PopoverState {
 }
 
 export default function MemberProjectList({ member, projects, memberShares, getToken, onRefresh }: Props) {
+  const confirmDlg = useConfirm()
   const [search, setSearch]             = useState('')
   const [filter, setFilter]             = useState<FilterKey>('all')
   const [filterOpen, setFilterOpen]     = useState(false)
@@ -128,7 +130,7 @@ export default function MemberProjectList({ member, projects, memberShares, getT
   async function bulkRevoke() {
     if (!selectedWithAccess.length) return
     const names = selectedWithAccess.map(s => shareMap.get(s.project_id)?.project_id ?? s.project_id).join(', ')
-    if (!confirm(`Thu hồi quyền của ${member.full_name} khỏi ${selectedWithAccess.length} dự án?\n${names}`)) return
+    if (!(await confirmDlg({ title: `Thu hồi quyền của ${member.full_name} khỏi ${selectedWithAccess.length} dự án?`, description: names, confirmLabel: 'Thu hồi' }))) return
     setRevoking(true)
     const token = await getToken()
     await Promise.all(selectedWithAccess.map(s =>

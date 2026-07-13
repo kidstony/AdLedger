@@ -24,6 +24,11 @@ import {
 } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import TableSkeleton from '@/components/ui/TableSkeleton'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
+import PageHeader from '@/components/ui/PageHeader'
+import TabBar from '@/components/ui/TabBar'
+import SegmentedControl from '@/components/ui/SegmentedControl'
+import { useLocalPref } from '@/hooks/useLocalPref'
 import { toast } from 'sonner'
 import { exportToCsv, cn } from '@/lib/utils'
 import { useAuth } from '@/context/AuthContext'
@@ -62,6 +67,7 @@ function rowBg(statuses: ProjectStatus[] = []) {
 function ProjectsPageInner() {
   const { projects, isLoading, addProject, updateProject, patchProjectLocal, deleteProject, deleteProjects } = useProjects()
   const { role, user } = useAuth()
+  const confirmDlg = useConfirm()
   const isAdminOrManager = role === 'super_admin' || role === 'manager'
   const canCreateProject = isAdminOrManager || role === 'member'
   const canManageCategories = role === 'super_admin' || role === 'manager'
@@ -156,8 +162,8 @@ function ProjectsPageInner() {
   const [syncingMcc, setSyncingMcc] = useState(false)
   const [shareCountMap, setShareCountMap] = useState<Map<string, number>>(new Map())
 
-  // ── view mode ──
-  const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table')
+  // ── view mode (nhớ qua localStorage — vào lại không phải chọn lại) ──
+  const [viewMode, setViewMode] = useLocalPref<'table' | 'kanban'>('projects-view', 'table')
 
   // ── reminder state ──
   const [reminderMap, setReminderMap] = useState<Map<string, boolean>>(new Map()) // projectId → has reminder
@@ -514,7 +520,7 @@ function ProjectsPageInner() {
     if (lines.length <= 1) return
     e.preventDefault()
     const affectedRows = sorted.slice(rowIndex, rowIndex + lines.length)
-    if (!window.confirm(`Paste ${lines.length} giá trị vào ${affectedRows.length} dòng?`)) return
+    if (!(await confirmDlg({ title: `Paste ${lines.length} giá trị vào ${affectedRows.length} dòng?`, destructive: false, confirmLabel: 'Paste' }))) return
     setEditingCell(null)
     const keys = affectedRows.map(proj => `${proj.project_id}-${field}`)
     await Promise.all(affectedRows.map((proj, i) => saveCell(proj, field, lines[i] ?? '', undefined, true)))
@@ -570,7 +576,7 @@ function ProjectsPageInner() {
     const list = [...groups.values()]
     const total = list.reduce((s, g) => s + g.fields.length, 0)
     if (total === 0) { setSel(null); return }
-    if (!window.confirm(`Xoá nội dung ${total} ô đã chọn?`)) return
+    if (!(await confirmDlg({ title: `Xoá nội dung ${total} ô đã chọn?`, confirmLabel: 'Xoá' }))) return
 
     // Snapshot previous values for undo (password needs plaintext)
     const snapshots = await Promise.all(list.map(async ({ project, fields }) => {
@@ -732,38 +738,31 @@ function ProjectsPageInner() {
     <div className="p-6 space-y-5">
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-slate-800">Quản lý dự án</h2>
-          <p className="text-sm text-slate-500 mt-0.5">{projects.length} dự án</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => handleExport()}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">
+      <PageHeader
+        title="Quản lý dự án"
+        subtitle={`${projects.length} dự án`}
+        actions={<>
+          <Button variant="outline" onClick={() => handleExport()}>
             <Download size={14} /> Export CSV
-          </button>
+          </Button>
           {canCreateProject && (
             <Button onClick={() => setDialog({ mode: 'add', data: role === 'member' ? { person_in_charge: user?.id ?? null } : undefined })} className="gap-1.5">
               <Plus size={14} /> Thêm dự án
             </Button>
           )}
-        </div>
-      </div>
+        </>}
+      />
 
       {/* Tab switcher */}
-      <div className="flex border-b border-slate-200">
-        {([['manage', '📁 Quản lý Dự Án'], ['ads', '📢 Ads Mapping'], ['master', '🏢 Tổng Dự Án']] as const).map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)}
-            className={cn(
-              'px-4 py-2.5 text-sm font-medium border-b-2 transition-colors',
-              tab === key
-                ? 'border-slate-800 text-slate-800'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
-            )}>
-            {label}
-          </button>
-        ))}
-      </div>
+      <TabBar
+        tabs={[
+          { key: 'manage', label: 'Quản lý dự án' },
+          { key: 'ads', label: 'Ads mapping' },
+          { key: 'master', label: 'Tổng dự án' },
+        ]}
+        active={tab}
+        onChange={k => setTab(k as typeof tab)}
+      />
 
       {/* ═══ TAB 1: QUẢN LÝ DỰ ÁN ═══════════════════════════════════════ */}
       {tab === 'manage' && (
@@ -841,16 +840,16 @@ function ProjectsPageInner() {
             >
               <Bell size={13} /> Có nhắc nhở
             </button>
-            <div className="ml-auto flex items-center gap-1 border border-slate-200 rounded-md p-0.5">
-              <button onClick={() => setViewMode('table')}
-                className={cn('p-1.5 rounded transition-colors', viewMode === 'table' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-700')}>
-                <List size={14} />
-              </button>
-              <button onClick={() => setViewMode('kanban')}
-                className={cn('p-1.5 rounded transition-colors', viewMode === 'kanban' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-700')}>
-                <LayoutGrid size={14} />
-              </button>
-            </div>
+            <SegmentedControl
+              className="ml-auto"
+              size="sm"
+              value={viewMode}
+              onChange={v => setViewMode(v as 'table' | 'kanban')}
+              options={[
+                { value: 'table', label: 'Bảng', icon: List },
+                { value: 'kanban', label: 'Kanban', icon: LayoutGrid },
+              ]}
+            />
           </div>
 
           {/* Bulk action bar */}

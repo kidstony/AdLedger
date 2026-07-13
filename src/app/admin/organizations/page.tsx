@@ -8,12 +8,15 @@ import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
+import PageHeader from '@/components/ui/PageHeader'
 
 interface Org { id: string; name: string; created_at: string }
 interface OrgTeam { id: string; name: string; color: string; organization_id: string | null }
 interface OrgAdmin { user_id: string; full_name: string; organization_id: string | null }
 
 export default function OrganizationsPage() {
+  const confirmDlg = useConfirm()
   const { user, role, organizationId } = useAuth()
   const router = useRouter()
 
@@ -89,7 +92,7 @@ export default function OrganizationsPage() {
       toast.error('Vui lòng bỏ gán toàn bộ teams và admins trước khi xóa tổ chức')
       return
     }
-    if (!confirm(`Xóa tổ chức "${org.name}"?`)) return
+    if (!(await confirmDlg({ title: `Xóa tổ chức "${org.name}"?` }))) return
     const { error } = await supabase.from('organizations').delete().eq('id', org.id)
     if (error) { toast.error('Không thể xóa'); return }
     setOrgs(prev => prev.filter(o => o.id !== org.id))
@@ -125,12 +128,10 @@ export default function OrganizationsPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-4xl">
-      <div>
-        <h2 className="text-xl font-semibold text-slate-800">Quản lý Tổ chức</h2>
-        <p className="text-sm text-slate-500 mt-0.5">
-          {orgs.length} tổ chức · {unassignedTeams.length} team chưa phân nhóm · {unassignedAdmins.length} admin chưa phân nhóm
-        </p>
-      </div>
+      <PageHeader
+        title="Quản lý Tổ chức"
+        subtitle={`${orgs.length} tổ chức · ${unassignedTeams.length} team chưa phân nhóm · ${unassignedAdmins.length} admin chưa phân nhóm`}
+      />
 
       {/* Create org */}
       <div className="flex gap-2">

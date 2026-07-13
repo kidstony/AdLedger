@@ -9,6 +9,9 @@ import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import AccessMatrix from '@/components/team/AccessMatrix'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
+import PageHeader from '@/components/ui/PageHeader'
+import TabBar from '@/components/ui/TabBar'
 
 interface Member { user_id: string; full_name: string; role: string }
 interface TeamProject { project_id: string; name: string }
@@ -21,6 +24,7 @@ interface TeamDetail {
 const BLANK_CREATE = { full_name: '', email: '', password: '' }
 
 export default function TeamDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const confirmDlg = useConfirm()
   const { id } = use(params)
   const { role, teamId: myTeamId } = useAuth()
   const router = useRouter()
@@ -113,7 +117,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   async function removeMember(userId: string) {
-    if (!confirm('Xóa thành viên này khỏi team?')) return
+    if (!(await confirmDlg({ title: 'Xóa thành viên này khỏi team?' }))) return
     const res = await adminFetch(`/api/teams/${id}/members`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
@@ -145,7 +149,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   async function unassignProject(projectId: string) {
-    if (!confirm('Bỏ gán dự án này khỏi team?')) return
+    if (!(await confirmDlg({ title: 'Bỏ gán dự án này khỏi team?', confirmLabel: 'Bỏ gán' }))) return
     const res = await adminFetch(`/api/teams/${id}/projects`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
@@ -165,37 +169,27 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
 
   return (
     <div className="p-6 space-y-5">
-      <div className="flex items-center gap-3">
-        <button onClick={() => router.push(isAdmin ? '/teams' : '/dashboard')}
-          className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors">
-          <ArrowLeft size={16} />
-        </button>
-        <span className="w-4 h-4 rounded-full" style={{ backgroundColor: team.color }} />
-        <h2 className="text-xl font-semibold text-slate-800">{team.name}</h2>
-        <span className="text-sm text-slate-400">{team.members.length} thành viên · {team.projects.length} dự án</span>
-      </div>
+      <PageHeader
+        backHref={isAdmin ? '/teams' : '/dashboard'}
+        title={
+          <span className="flex items-center gap-2">
+            <span className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: team.color }} />
+            {team.name}
+          </span>
+        }
+        subtitle={`${team.members.length} thành viên · ${team.projects.length} dự án`}
+      />
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b border-slate-200">
-        {[
-          { id: 'members' as const,  label: 'Thành viên',         icon: <Users size={14} /> },
-          { id: 'projects' as const, label: 'Dự án',              icon: <FolderOpen size={14} /> },
-          { id: 'matrix' as const,   label: 'Ma trận phân quyền', icon: <LayoutGrid size={14} /> },
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={cn(
-              'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors',
-              activeTab === tab.id
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-slate-500 hover:text-slate-700'
-            )}
-          >
-            {tab.icon} {tab.label}
-          </button>
-        ))}
-      </div>
+      <TabBar
+        tabs={[
+          { key: 'members', label: <span className="flex items-center gap-1.5"><Users size={14} /> Thành viên</span> },
+          { key: 'projects', label: <span className="flex items-center gap-1.5"><FolderOpen size={14} /> Dự án</span> },
+          { key: 'matrix', label: <span className="flex items-center gap-1.5"><LayoutGrid size={14} /> Ma trận phân quyền</span> },
+        ]}
+        active={activeTab}
+        onChange={k => setActiveTab(k as 'members' | 'projects' | 'matrix')}
+      />
 
       {/* Tab: Thành viên */}
       {activeTab === 'members' && (

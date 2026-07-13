@@ -36,10 +36,24 @@ Tool quản lý P&L cho nhiều dự án affiliate marketing (Google Ads): proje
 
 ## Component patterns
 
+### Shared components (`src/components/ui/`) — dùng thay vì tự chế
+
+| Component | Dùng cho | Ghi chú |
+|---|---|---|
+| `PageHeader` | Header mọi trang: title, subtitle, badge, backHref, actions | Thay `text-xl font-semibold text-slate-800` chép tay |
+| `ConfirmDialog` (`useConfirm`) | Xác nhận xóa/hành động nguy hiểm | **Cấm `window.confirm()`/`alert()`**; `if (!(await confirmDlg({ title }))) return` |
+| `StatusPill` | Pill trạng thái tone cố định (green/amber/red/blue/indigo/slate) | KHÔNG dùng cho pill màu theo DB (project status, category) |
+| `StatCard` | Thẻ chỉ số (label/value/sub/icon, active để làm card-as-tab, loading skeleton) | Wrapper domain (SummaryCards…) compose từ đây |
+| `SegmentedControl` | Toggle nhóm nút (Tiền màn hình/Thực nhận, table/kanban) | `activeClass` để đổi màu chữ active (amber/blue) |
+| `TabBar` | Tab underline cấp trang | Active = `indigo-600` (accent chuẩn duy nhất) |
+| Hook `useAsyncAction` | Nút async: pending + toast lỗi/thành công | `src/hooks/useAsyncAction.ts` |
+
+Quy tắc: primary button = `ui/Button` variant `default`; hủy = `outline`; xóa = `destructive`. Accent tab/link active = `indigo-600`.
+
 ### Summary Cards
 ```
 grid grid-cols-4 gap-4
-card: bg-white rounded-lg border border-slate-200 p-5 shadow-sm
+card: bg-white rounded-lg border border-slate-200 p-5 shadow-sm  (= StatCard)
 ```
 - Thứ tự: Chi phí → Doanh thu → Lợi nhuận → ROI
 - Sub-label pending: `<Monitor size={10} />` + amber text bên dưới main value
