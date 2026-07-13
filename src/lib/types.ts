@@ -266,6 +266,9 @@ export type OptSuggestionType =
   | 'harvest_keyword'  // gặt search term thắng thành keyword exact (playbook 4a)
   | 'fix_geo_setting'  // Presence-or-interest → đổi sang Presence (playbook 1a-phụ)
   | 'split_test'       // giả thuyết từ phân tích ngày thắng/thua — tách camp/test mới
+  | 'geo_exclude'      // quốc gia tiêu tiền nhưng 0 doanh thu breakdown → loại trừ (ROI thật)
+  | 'geo_scale'        // quốc gia ROI cao theo doanh thu breakdown → tách camp / tăng bid
+  | 'data_quality'     // dữ liệu chưa đủ/khớp kỳ để tính ROI theo segment → ẩn gợi ý + báo lý do
 
 export type OptSeverity = 'high' | 'medium' | 'low'
 // 'roi' = dựa trên doanh thu thật (chắc chắn); 'engagement' = chỉ tín hiệu hiệu
@@ -373,6 +376,34 @@ export interface SegmentAgg {
   clicks: number
   cost: number
   ctr: number
+  // Doanh thu breakdown từ network affiliate (revenue_breakdown, USD) — chỉ có khi Engine
+  // đã thu dữ liệu chiều này. undefined = chưa có dữ liệu; 0 = có dữ liệu nhưng segment
+  // này không ra tiền (khác nhau quan trọng cho rule geo_exclude).
+  revenue?: number | null
+  conversions?: number | null
+  roi?: number | null          // % — (revenue − cost QC)/cost QC; null khi cost = 0
+}
+
+// Doanh thu breakdown đã gộp về value-space của Google Ads segment
+// (country ISO → geo criterion ID, device → MOBILE/DESKTOP/TABLET, hour → '0'..'23').
+export interface SegmentRevenueAgg {
+  segment_type: SegmentType
+  segment_value: string
+  revenue: number             // USD
+  conversions: number | null
+}
+
+// Meta chất lượng dữ liệu breakdown trong kỳ — gate độ tin cậy trước khi nâng
+// gợi ý segment lên confidence 'roi'.
+export interface BreakdownMeta {
+  coverageRatio: number       // Σ revenue breakdown / DT Màn hình (0..1, cap 1)
+  hasGeo: boolean
+  hasDevice: boolean
+  hasHour: boolean
+  subIdCoverage: number       // 0..1 — tỉ trọng doanh thu có sub_id (→ attribution campaign)
+  attribution: 'campaign' | 'project'  // doanh thu breakdown gắn theo campaign (sub-id) hay project
+  geoCapped: boolean          // geo có dòng "khác"/uncategorized (server cap top-N) → nước vắng ≠ 0đ
+  revenueOverRange: boolean   // DT breakdown (vd snapshot window_end) VƯỢT kỳ DT Màn hình → lệch kỳ chi phí, ROI segment không tin cậy
 }
 
 // Phân tích ngày thắng/thua (Insight Miner): so cơ cấu chi phí phân khúc giữa nhóm
@@ -419,6 +450,7 @@ export interface CampaignOptimizerResult {
   health: CampaignHealth
   suggestions: OptimizationSuggestion[]
   hasConversionTracking: boolean
+  hasBreakdownRevenue: boolean   // có doanh thu breakdown đủ độ phủ → segment ROI tin được
   estimatedSavings: number   // ước tính chi phí có thể tiết kiệm/kỳ (chặn search-term rác)
   dataMaturity: 'young' | 'ok'   // 'young' = camp mới/ít ngày dữ liệu → kết luận thận trọng
   winDayAnalysis: WinDayAnalysis | null   // null khi chưa đủ ngày chín / thiếu nhóm win-lose

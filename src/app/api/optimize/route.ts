@@ -4,8 +4,9 @@ import { getCallerProfile } from '@/lib/require-role'
 import { computeCidCost } from '@/lib/costs'
 import { optimizeCampaign } from '@/lib/campaign-optimizer'
 import { computeScreenRevenue, PendingRow } from '@/lib/screen-revenue'
-import { splitSpend, AttrProject } from '@/lib/attribution'
-import { CampaignMetric, CampaignSettings, KeywordMetric, RentalGroup, SearchTermMetric, SegmentMetric } from '@/lib/types'
+import { splitSpend, allocateSpendRow, AttrProject } from '@/lib/attribution'
+import { BreakdownRow, breakdownMeta, filterForAttribution, toSegmentRevenue, dedupeSnapshotRows, snapshotKeysFromConfigs } from '@/lib/breakdown-revenue'
+import { AdDevice, CampaignMetric, CampaignSettings, KeywordMetric, RentalGroup, SearchTermMetric, SegmentMetric } from '@/lib/types'
 
 // GET /api/optimize?project_id=...&from=...&to=...
 // Phân tích 1 camp (theo project) và trả gợi ý tối ưu. Dùng service_role +
@@ -47,7 +48,7 @@ export async function GET(req: Request) {
   }
   const campaign_id = project.google_campaign_id
 
-  const [metricsRes, revenueRes, adSpendRes, otherRes, keywordRes, searchTermRes, segmentRes, settingsRes] = await Promise.all([
+  const [metricsRes, revenueRes, adSpendRes, otherRes, keywordRes, searchTermRes, segmentRes, settingsRes, breakdownRes] = await Promise.all([
     supabaseAdmin
       .from('campaign_metrics')
       .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is, top_is, abs_top_is')
@@ -62,7 +63,7 @@ export async function GET(req: Request) {
 
     supabaseAdmin
       .from('ad_spend')
-      .select('date, spend')
+      .select('date, spend, device, ad_group_id')
       .eq('campaign_id', campaign_id)
       .gte('date', from).lte('date', to),
 
@@ -95,6 +96,14 @@ export async function GET(req: Request) {
       .select('campaign_id, daily_budget, bidding_strategy, target_cpa, target_roas, currency_code, geo_target_type')
       .eq('campaign_id', campaign_id)
       .maybeSingle(),
+
+    // Doanh thu breakdown từ network affiliate (Engine thu) — quốc gia/thiết bị/giờ/sub-id.
+    // Bảng chưa migrate / chưa có dữ liệu → error/rỗng → degrade về hành vi cũ (engagement).
+    supabaseAdmin
+      .from('revenue_breakdown')
+      .select('date, country, device, hour, sub_id, campaign_id, revenue, currency, revenue_usd, conversions, revenue_type, network_id, report')
+      .eq('project_id', project_id)
+      .gte('date', from).lte('date', to),
   ])
 
   const metrics = (metricsRes.data ?? []) as CampaignMetric[]
@@ -132,13 +141,25 @@ export async function GET(req: Request) {
     .filter(r => r.type === 'confirmed')
     .reduce((s, r) => s + (r.amount ?? 0), 0)
 
-  const spendByDate: Record<string, number> = {}
-  let totalSpend = 0
-  for (const s of adSpends) {
-    const amt = s.spend ?? 0
-    spendByDate[s.date] = (spendByDate[s.date] ?? 0) + amt
-    totalSpend += amt
+  // ── Doanh thu breakdown theo segment (join với chi phí Google Ads) ────────
+  // Đủ sub-id (≥80% DT) → lọc đúng dòng của campaign này (attribution 'campaign');
+  // chưa → dùng toàn bộ dòng của project. KHÔNG cộng vào totalRevenue (tránh double-count).
+  const rawBdRows = (breakdownRes.data ?? []) as BreakdownRow[]
+  // Bỏ trùng report snapshot (date_mode='window_end' — mỗi sync ghi 1 dòng tổng-cả-kỳ) trước khi
+  // gộp segment/coverage, tránh cộng chồng kỳ làm doanh thu nguồn phình.
+  let snapshotKeys = new Set<string>()
+  if (rawBdRows.length) {
+    const nets = [...new Set(rawBdRows.map(r => r.network_id))]
+    const { data: cfgs } = await supabaseAdmin.from('engine_network_configs').select('network_id, config').in('network_id', nets)
+    snapshotKeys = snapshotKeysFromConfigs(cfgs ?? [])
   }
+  const allBdRows = dedupeSnapshotRows(rawBdRows, snapshotKeys)
+  const { rows: bdRows, attribution } = filterForAttribution(allBdRows, campaign_id)
+  const segmentRevenue = toSegmentRevenue(bdRows)
+  const bdMeta = allBdRows.length ? breakdownMeta(bdRows, totalRevenue, attribution) : null
+
+  // Chi phí campaign THÔ (chưa attribute) — dùng làm mẫu số base rental (theo cid) + tỷ lệ segment.
+  const fullSpend = adSpends.reduce((s, r) => s + (r.spend ?? 0), 0)
 
   const total_other = others.reduce((s, r) => s + (r.amount ?? 0), 0)
 
@@ -148,7 +169,7 @@ export async function GET(req: Request) {
   const [cidProjectsRes, rentalRes] = await Promise.all([
     supabaseAdmin
       .from('projects')
-      .select('project_id, google_campaign_id, screen_revenue_type, attribution_weight')
+      .select('project_id, google_campaign_id, screen_revenue_type, attribution_type, attribution_device, attribution_ad_group_id, attribution_from, attribution_to, attribution_weight')
       .eq('cid', project.cid),
     (() => {
       let q = supabaseAdmin.from('rental_groups').select('*, rental_group_cids(*)')
@@ -158,11 +179,25 @@ export async function GET(req: Request) {
   ])
   const cidProjects = cidProjectsRes.data?.length
     ? cidProjectsRes.data
-    : [{ project_id, google_campaign_id: campaign_id, screen_revenue_type: project.screen_revenue_type, attribution_weight: null }]
+    : [{ project_id, google_campaign_id: campaign_id, screen_revenue_type: project.screen_revenue_type,
+         attribution_type: null, attribution_device: null, attribution_ad_group_id: null, attribution_from: null, attribution_to: null, attribution_weight: null }]
   const rentalGroups = (rentalRes.data ?? []) as unknown as RentalGroup[]
 
+  // Sibling THEO CAMPAIGN (nhiều ref-link project chung 1 google_campaign_id) → attribute chi phí QC.
+  const campSiblings: AttrProject[] = cidProjects
+    .filter(p => p.google_campaign_id === campaign_id)
+    .map(p => ({
+      project_id: p.project_id,
+      attribution_type: p.attribution_type ?? null,
+      attribution_device: p.attribution_device ?? null,
+      attribution_ad_group_id: p.attribution_ad_group_id ?? null,
+      attribution_from: p.attribution_from ?? null,
+      attribution_to: p.attribution_to ?? null,
+      attribution_weight: p.attribution_weight ?? null,
+    }))
+
   // Base % rental = tổng ad spend theo CID (mọi campaign của các project chung cid).
-  let cidSpend = totalSpend
+  let cidSpend = fullSpend
   const cidCampaignIds = [...new Set(cidProjects.map(p => p.google_campaign_id).filter(Boolean))] as string[]
   const needsCidSpend = !(cidCampaignIds.length <= 1 && cidCampaignIds[0] === campaign_id)
   if (needsCidSpend && cidCampaignIds.length) {
@@ -191,6 +226,32 @@ export async function GET(req: Request) {
       revenueBasis.set(p.project_id, total)
     }
   }
+
+  // Attribution chi phí QC về ĐÚNG project này theo cấu hình tách (device/ad_group/khoảng ngày/%/
+  // doanh thu) — DÙNG LẠI allocateSpendRow như P&L. 1 ref-link/campaign → trả full (siblings=1).
+  const attribSpend = (rows: { date: string; spend: number | null; device?: string | null; ad_group_id?: string | null }[]) => {
+    const byDate: Record<string, number> = {}
+    let total = 0
+    for (const r of rows) {
+      const portion = campSiblings.length > 1
+        ? (allocateSpendRow({ campaign_id, date: r.date, spend: r.spend ?? 0, device: (r.device ?? '') as AdDevice, ad_group_id: r.ad_group_id ?? '' }, campSiblings, revenueBasis).get(project_id) ?? 0)
+        : (r.spend ?? 0)
+      byDate[r.date] = (byDate[r.date] ?? 0) + portion
+      total += portion
+    }
+    return { byDate, total }
+  }
+  const { byDate: spendByDate, total: totalSpend } = attribSpend(adSpends)
+  // Chi phí segment (geo/device/giờ): device-row khớp thiết bị (chính xác); giờ/geo chia theo DT.
+  const segmentsAttr: SegmentMetric[] = campSiblings.length > 1
+    ? segments.map(s => ({
+        ...s,
+        cost: allocateSpendRow(
+          { campaign_id, date: s.date, spend: s.cost, device: (s.segment_type === 'device' ? s.segment_value : '') as AdDevice, ad_group_id: '' },
+          campSiblings, revenueBasis,
+        ).get(project_id) ?? 0,
+      }))
+    : segments
 
   let total_rental = 0
   for (const rg of rentalGroups) {
@@ -227,12 +288,12 @@ export async function GET(req: Request) {
     supabaseAdmin.from('campaign_metrics')
       .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is, top_is, abs_top_is')
       .eq('campaign_id', campaign_id).gte('date', prevFrom).lte('date', prevTo),
-    supabaseAdmin.from('ad_spend').select('spend').eq('campaign_id', campaign_id).gte('date', prevFrom).lte('date', prevTo),
+    supabaseAdmin.from('ad_spend').select('date, spend, device, ad_group_id').eq('campaign_id', campaign_id).gte('date', prevFrom).lte('date', prevTo),
     supabaseAdmin.from('affiliate_revenue').select('date, amount, cycle_end')
       .eq('project_id', project_id).eq('type', 'pending').gte('date', prevFrom).lte('date', prevTo),
   ])
   const prevMetrics = (prevMetricsRes.data ?? []) as CampaignMetric[]
-  const prevSpend = (prevSpendRes.data ?? []).reduce((s, r) => s + (r.spend ?? 0), 0)
+  const prevSpend = attribSpend(prevSpendRes.data ?? []).total
   let prevBaseline = 0
   if (isCumulative) {
     const { data: pb } = await supabaseAdmin.from('affiliate_revenue')
@@ -249,13 +310,22 @@ export async function GET(req: Request) {
   // ── Lũy kế từ khi start camp (cho stop-loss ở Lộ trình test camp mới) ─────
   const lifeFrom = project.camp_start_date ?? '2000-01-01'
   const [lifeSpendRes, lifePendingRes] = await Promise.all([
-    supabaseAdmin.from('ad_spend').select('spend').eq('campaign_id', campaign_id).gte('date', lifeFrom),
+    supabaseAdmin.from('ad_spend').select('date, spend, device, ad_group_id').eq('campaign_id', campaign_id).gte('date', lifeFrom),
     supabaseAdmin.from('affiliate_revenue').select('date, amount, cycle_end')
       .eq('project_id', project_id).eq('type', 'pending').gte('date', lifeFrom),
   ])
-  const lifetimeSpend = (lifeSpendRes.data ?? []).reduce((s, r) => s + (r.spend ?? 0), 0)
+  const lifetimeSpend = attribSpend(lifeSpendRes.data ?? []).total
   const lifePendingRows: PendingRow[] = (lifePendingRes.data ?? []).map(r => ({ date: r.date, amount: r.amount ?? 0, cycle_end: r.cycle_end }))
   const { total: lifetimeRevenue } = computeScreenRevenue(lifePendingRows, isCumulative, 0)
+
+  // Độ phủ chi phí segment: segment_metrics thường chỉ có MỘT SỐ ngày (Google Ads sync thiếu/cũ)
+  // → chi phí theo quốc gia/thiết bị/giờ HỤT → ROI segment không đáng tin. So chi phí segment THÔ
+  // (theo type có nhiều chi phí nhất) với tổng chi phí campaign_metrics — dùng segments THÔ (không
+  // attribute) để không nhiễu tỷ lệ. 0..1; thấp = thiếu ngày → optimizer sẽ khóa ROI theo segment.
+  const metricCostTotal = metrics.reduce((s, m) => s + m.cost, 0)
+  const segCostByType = new Map<string, number>()
+  for (const s of segments) segCostByType.set(s.segment_type, (segCostByType.get(s.segment_type) ?? 0) + (s.cost ?? 0))
+  const segmentCostCoverage = metricCostTotal > 0 ? Math.max(0, ...segCostByType.values()) / metricCostTotal : 0
 
   const result = optimizeCampaign({
     campaign_id,
@@ -269,12 +339,15 @@ export async function GET(req: Request) {
     totalSpend,
     keywords,
     searchTerms,
-    segments,
+    segments: segmentsAttr,
     prev,
     settings,
     campStartDate: project.camp_start_date ?? null,
     testBudget: project.test_budget ?? null,
     lifetime: { spend: lifetimeSpend, revenue: lifetimeRevenue },
+    segmentRevenue,
+    breakdownMeta: bdMeta ?? undefined,
+    segmentCostCoverage,
   })
 
   return NextResponse.json({
@@ -284,6 +357,7 @@ export async function GET(req: Request) {
     revenue: { screen: totalRevenue, confirmed: confirmedRevenue },
     settings: settings ?? null,
     hasMetrics: metrics.length > 0,
+    breakdown: bdMeta,
     ...result,
   })
 }

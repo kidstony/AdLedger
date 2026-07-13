@@ -1,4 +1,5 @@
 import {
+  BreakdownMeta,
   CampaignHealth,
   CampaignMetric,
   CampaignOptimizerResult,
@@ -12,6 +13,7 @@ import {
   SearchTermMetric,
   SegmentAgg,
   SegmentMetric,
+  SegmentRevenueAgg,
   SegmentType,
 } from './types'
 import { countryNameByGeoId } from './geo-targets'
@@ -57,6 +59,11 @@ export const CFG = {
   HARVEST_CTR_RATIO: 1.2,       // CTR term ≥ 120% CTR campaign = đúng intent
   CAMP_YOUNG_DAYS: 7,           // camp chạy < N ngày = dữ liệu còn non (playbook 0)
   ABS_TOP_HIGH: 0.7,            // Abs-top IS ≥ 70% + margin mỏng → đua top vô ích (playbook 2c)
+  // Doanh thu breakdown từ network affiliate (revenue_breakdown — Engine thu):
+  BD_COVERAGE_MIN: 0.5,         // breakdown phải phủ ≥ 50% DT Màn hình mới tin segment ROI
+  BD_SEG_MIN_CLICKS: 10,        // segment cần ≥ N click mới kết luận "không ra tiền"
+  BD_MIN_SEG_REVENUE: 5,        // $ — DT segment tối thiểu để gợi ý geo_scale
+  SEG_COST_COVERAGE_MIN: 0.7,   // chi phí segment phải phủ ≥ 70% chi phí camp mới tin ROI segment (tránh chia rác khi Google Ads sync thiếu ngày)
 } as const
 
 interface PeriodTotals {
@@ -84,6 +91,9 @@ export interface OptimizerInput {
   campStartDate?: string | null          // projects.camp_start_date — cờ "camp non" (playbook 0)
   testBudget?: number | null             // projects.test_budget — stop-loss test camp mới
   lifetime?: { spend: number; revenue: number }  // lũy kế từ start camp (cho stop-loss)
+  segmentRevenue?: SegmentRevenueAgg[]   // DT breakdown từ network theo segment (value-space Google)
+  breakdownMeta?: BreakdownMeta          // độ phủ/chất lượng dữ liệu breakdown (gate tin cậy)
+  segmentCostCoverage?: number           // Σ chi phí segment / tổng chi phí camp (0..1) — thấp = thiếu ngày → khóa ROI segment
 }
 
 // Chiến lược giá thầu tự động (không đặt bid tay được) → đổi lời khuyên "tăng bid".
@@ -144,7 +154,10 @@ export function aggregateSearchTerms(rows: SearchTermMetric[]): SearchTermAgg[] 
 }
 
 // Gộp segment (device/hour/geo) theo (type, value) trên toàn kỳ. Sắp theo chi phí.
-export function aggregateSegments(rows: SegmentMetric[]): SegmentAgg[] {
+// segmentRevenue (tùy chọn) = DT breakdown từ network: loại segment nào CÓ dữ liệu doanh
+// thu thì mọi segment chi phí của loại đó được gán revenue (không khớp = 0 — nghĩa là
+// "có dữ liệu, không ra tiền"); loại không có dữ liệu giữ revenue undefined ("chưa biết").
+export function aggregateSegments(rows: SegmentMetric[], segmentRevenue?: SegmentRevenueAgg[]): SegmentAgg[] {
   const m = new Map<string, SegmentAgg>()
   for (const r of rows) {
     const key = `${r.segment_type}|${r.segment_value}`
@@ -156,6 +169,29 @@ export function aggregateSegments(rows: SegmentMetric[]): SegmentAgg[] {
   }
   const out = [...m.values()]
   for (const e of out) e.ctr = e.impressions > 0 ? (e.clicks / e.impressions) * 100 : 0
+
+  if (segmentRevenue?.length) {
+    const revByKey = new Map(segmentRevenue.map(r => [`${r.segment_type}|${r.segment_value}`, r]))
+    const typesWithRev = new Set(segmentRevenue.map(r => r.segment_type))
+    for (const e of out) {
+      if (!typesWithRev.has(e.segment_type)) continue
+      const key = `${e.segment_type}|${e.segment_value}`
+      const rv = revByKey.get(key)
+      e.revenue = rv?.revenue ?? 0
+      e.conversions = rv?.conversions ?? null
+      e.roi = e.cost > 0 ? ((e.revenue - e.cost) / e.cost) * 100 : null
+      revByKey.delete(key)
+    }
+    // DT ở segment KHÔNG có chi phí (vd chuyển đổi từ nước ngoài geo target) → thêm dòng
+    // cost=0 để bảng breakdown nhìn thấy (tín hiệu rò/organic), rule không đụng tới.
+    for (const rv of revByKey.values()) {
+      out.push({
+        segment_type: rv.segment_type, segment_value: rv.segment_value,
+        impressions: 0, clicks: 0, cost: 0, ctr: 0,
+        revenue: rv.revenue, conversions: rv.conversions, roi: null,
+      })
+    }
+  }
   return out.sort((a, b) => b.cost - a.cost)
 }
 
@@ -643,8 +679,39 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     }))
   }
 
-  // 7d. Phân khúc device/giờ/geo (P3) — engagement, gợi ý điều chỉnh bid/lịch.
-  const segAgg = aggregateSegments(input.segments ?? [])
+  // 7d. Phân khúc device/giờ/geo (P3). Mặc định engagement (CTR); loại segment nào có
+  //     doanh thu breakdown từ network (Engine thu, đủ độ phủ) → nâng lên test LỢI NHUẬN
+  //     thật với confidence 'roi'.
+  const bdMeta = input.breakdownMeta
+  const bdCoverage = bdMeta?.coverageRatio ?? 0
+  // ROI theo segment (device/hour/geo dựa DT network) CHỈ đáng tin khi CẢ HAI nguồn khớp KỲ:
+  //  • chi phí segment phủ đủ (segment_metrics không thiếu ngày) — nếu không, chi phí per-segment hụt
+  //    → ROI phồng (vd chỉ có 3/12 ngày chi phí → ROI cả trăm nghìn %).
+  //  • doanh thu breakdown KHÔNG vượt kỳ (snapshot window_end tổng-cả-kỳ ≠ DT khoảng ngày).
+  const segCostCoverage = input.segmentCostCoverage ?? 1
+  const segCostOk = segCostCoverage >= CFG.SEG_COST_COVERAGE_MIN
+  const revenueKindOk = !bdMeta?.revenueOverRange
+  const hasSegmentRevenue = (input.segmentRevenue?.length ?? 0) > 0
+  const hasBreakdownRevenue = hasSegmentRevenue && bdCoverage >= CFG.BD_COVERAGE_MIN && segCostOk && revenueKindOk
+  // Có DT breakdown + phủ đủ DT, nhưng LỆCH KỲ với chi phí (thiếu ngày chi phí HOẶC doanh thu snapshot
+  // vượt kỳ) → KHÔNG tính ROI theo quốc gia/thiết bị (tránh số rác kiểu 200.000%). Báo rõ 1 dòng lý do.
+  if (hasSegmentRevenue && bdCoverage >= CFG.BD_COVERAGE_MIN && (!segCostOk || !revenueKindOk)) {
+    const reasons: string[] = []
+    if (!segCostOk) reasons.push(`chi phí Google Ads theo quốc gia/thiết bị chỉ phủ ${pct(segCostCoverage * 100, 0)} chi phí camp (đồng bộ thiếu/cũ ngày)`)
+    if (!revenueKindOk) reasons.push('doanh thu network theo quốc gia là snapshot tổng-cả-kỳ, KHÔNG cùng kỳ với khoảng ngày đang xem')
+    suggestions.push(makeSuggestion({
+      type: 'data_quality', severity: 'low', confidence: 'engagement', scope,
+      title: 'ROI theo quốc gia/thiết bị CHƯA đáng tin — thiếu dữ liệu khớp kỳ',
+      detail: `Chưa hiện gợi ý tối ưu theo quốc gia/thiết bị vì ${reasons.join(' và ')}. Cần dữ liệu chi phí + doanh thu CÙNG kỳ (theo ngày) mới tính ROI quốc gia chính xác.`,
+      evidence: [
+        { metric: 'Độ phủ chi phí segment', value: pct(segCostCoverage * 100, 0) },
+        { metric: 'DT breakdown vượt kỳ', value: bdMeta?.revenueOverRange ? 'Có' : 'Không' },
+      ],
+      recommendedAction: 'Đồng bộ đủ chi phí Google Ads cho khoảng ngày đang xem; thu doanh thu network theo quốc gia × NGÀY (không dùng snapshot tổng-cả-kỳ).',
+      impactScore: 0,
+    }))
+  }
+  const segAgg = aggregateSegments(input.segments ?? [], input.segmentRevenue)
   const SEG_META: Record<SegmentType, { type: OptimizationSuggestion['type']; noun: string; action: string }> = {
     device: { type: 'device_adjust', noun: 'thiết bị', action: 'Giảm bid ở thiết bị kém hiệu suất (device bid adjustment).' },
     hour:   { type: 'daypart',       noun: 'khung giờ', action: 'Giảm bid hoặc tắt lịch ở khung giờ kém (ad schedule).' },
@@ -654,44 +721,147 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     s.segment_type === 'hour' ? `${s.segment_value}h`
     : s.segment_type === 'geo' ? (countryNameByGeoId(s.segment_value) ?? s.segment_value)
     : s.segment_value
+  const TZ_CAVEAT = ' Lưu ý: chi phí theo giờ (múi giờ tài khoản Google Ads) và doanh thu theo giờ (múi giờ nguồn network) CHƯA canh khớp, cộng độ trễ chuyển đổi → ROI theo giờ chỉ mang tính THAM KHẢO, cân nhắc kỹ trước khi đặt lịch.'
   for (const stype of ['device', 'hour', 'geo'] as SegmentType[]) {
     const segs = segAgg.filter(s => s.segment_type === stype)
     if (!segs.length) continue
-    const bad = segs.filter(s =>
-      (s.clicks === 0 && s.cost > 0) ||
-      (s.cost >= sigCost && s.ctr < health.ctr * CFG.LOW_CTR_RATIO),
-    )
+    const revMode = hasBreakdownRevenue && segs.some(s => s.revenue != null)
+    const bad = revMode
+      ? segs.filter(s =>
+          s.cost >= sigCost && s.clicks >= CFG.BD_SEG_MIN_CLICKS && s.revenue != null &&
+          (stype === 'geo'
+            // geo 0 DT có rule geo_exclude riêng (7e) — ở đây chỉ bắt geo lỗ sâu CÓ doanh thu
+            ? ((s.revenue ?? 0) > 0 && s.roi != null && s.roi < CFG.LOSS_ROI)
+            : (s.revenue === 0 || (s.roi != null && s.roi < CFG.LOSS_ROI))),
+        )
+      : segs.filter(s =>
+          (s.clicks === 0 && s.cost > 0) ||
+          (s.cost >= sigCost && s.ctr < health.ctr * CFG.LOW_CTR_RATIO),
+        )
     if (!bad.length) continue
     const wasted = bad.reduce((s, x) => s + x.cost, 0)
+    const badRevenue = bad.reduce((s, x) => s + (x.revenue ?? 0), 0)
     const meta = SEG_META[stype]
     const top = bad.slice(0, 3).map(fmtSegVal).join(', ')
     suggestions.push(makeSuggestion({
-      type: meta.type, severity: roiNeg ? 'medium' : 'low', confidence: 'engagement',
+      type: meta.type,
+      // GIỜ: hạ độ tin cậy — ROI theo giờ không đáng tin (múi giờ chưa canh + độ trễ chuyển đổi)
+      // → luôn severity 'low', không bao giờ "gấp". device/geo giữ nguyên.
+      severity: stype === 'hour' ? 'low' : (revMode ? (roiNeg ? 'high' : 'medium') : (roiNeg ? 'medium' : 'low')),
+      confidence: revMode ? 'roi' : 'engagement',
       scope: { level: 'segment', label: `${bad.length} ${meta.noun}`, campaign_id, project_id, segment_type: stype },
-      title: `${meta.noun[0].toUpperCase()}${meta.noun.slice(1)} hiệu suất kém — ${bad.length} mục`,
-      detail: `Chi phí cao nhưng CTR thấp / không click. Ví dụ: ${top}. Tổng chi phí liên quan ${money(wasted)}.`,
-      evidence: [
-        { metric: `Số ${meta.noun}`, value: String(bad.length) },
-        { metric: 'Chi phí liên quan', value: money(wasted) },
-        { metric: 'CTR campaign', value: pct(health.ctr) },
-      ],
-      recommendedAction: meta.action,
-      impactScore: wasted,
+      title: revMode
+        ? `${meta.noun[0].toUpperCase()}${meta.noun.slice(1)} đang lỗ theo doanh thu thật — ${bad.length} mục`
+        : `${meta.noun[0].toUpperCase()}${meta.noun.slice(1)} hiệu suất kém — ${bad.length} mục`,
+      detail: revMode
+        ? `Chi phí đáng kể nhưng doanh thu từ network thấp/không có ở ${meta.noun} này. Ví dụ: ${top}. Chi ${money(wasted)}, DT chỉ ${money(badRevenue)}.${stype === 'hour' ? TZ_CAVEAT : ''}`
+        : `Chi phí cao nhưng CTR thấp / không click. Ví dụ: ${top}. Tổng chi phí liên quan ${money(wasted)}.${stype === 'hour' ? TZ_CAVEAT : ''}`,
+      evidence: revMode
+        ? [
+            { metric: `Số ${meta.noun}`, value: String(bad.length) },
+            { metric: 'Chi phí liên quan', value: money(wasted) },
+            { metric: 'DT nguồn (các mục)', value: money(badRevenue) },
+            { metric: 'Độ phủ breakdown', value: pct(bdCoverage * 100, 0) },
+          ]
+        : [
+            { metric: `Số ${meta.noun}`, value: String(bad.length) },
+            { metric: 'Chi phí liên quan', value: money(wasted) },
+            { metric: 'CTR campaign', value: pct(health.ctr) },
+          ],
+      recommendedAction: meta.action + (stype === 'hour' ? TZ_CAVEAT : ''),
+      impactScore: (revMode ? wasted - badRevenue : wasted) * (stype === 'hour' ? 0.3 : 1),
       items: bad.slice(0, 8).map(s => ({
         label: fmtSegVal(s), cost: s.cost,
-        meta: `${count(s.clicks)} click · CTR ${pct(s.ctr)}`,
+        meta: s.revenue != null
+          ? `DT ${money(s.revenue)}${s.roi != null ? ` · ROI ${pct(s.roi, 0)}` : ''} · ${count(s.clicks)} click`
+          : `${count(s.clicks)} click · CTR ${pct(s.ctr)}`,
       })),
     }))
   }
 
+  // 7e. Geo theo doanh thu thật (breakdown — confidence 'roi'):
+  //     - geo_exclude: quốc gia tiêu tiền + đủ click mà DT = 0 trong khi các nước khác
+  //       ra tiền → loại trừ (chắc hơn hẳn tín hiệu CTR).
+  //     - geo_scale: quốc gia ROI cao, còn dư địa (chưa chiếm hết chi phí) → tách camp/bid up.
+  if (hasBreakdownRevenue && enoughData) {
+    const geoSegs = segAgg.filter(s => s.segment_type === 'geo' && s.revenue != null)
+    const geoRevTotal = geoSegs.reduce((s, x) => s + (x.revenue ?? 0), 0)
+    // geoCapped: network chỉ trả top-N nước + dòng "khác" → nước vắng khỏi breakdown CHƯA CHẮC 0đ
+    // (có thể nằm trong "khác") → KHÔNG khuyên loại trừ, tránh cắt nhầm nước đang ra tiền.
+    const zeroRev = (geoRevTotal > 0 && !bdMeta?.geoCapped)
+      ? geoSegs.filter(s =>
+          (s.revenue ?? 0) === 0 && s.clicks >= CFG.BD_SEG_MIN_CLICKS &&
+          s.cost >= Math.max(sigCost, metricCost * 0.05))
+      : []
+    if (zeroRev.length) {
+      const wasted = zeroRev.reduce((s, x) => s + x.cost, 0)
+      const top = zeroRev.slice(0, 3).map(fmtSegVal).join(', ')
+      suggestions.push(makeSuggestion({
+        type: 'geo_exclude', severity: roiNeg ? 'high' : 'medium', confidence: 'roi',
+        scope: { level: 'segment', label: `${zeroRev.length} quốc gia`, campaign_id, project_id, segment_type: 'geo' },
+        title: `${zeroRev.length} quốc gia tiêu tiền nhưng 0 doanh thu — loại trừ`,
+        detail: `Theo dữ liệu chuyển đổi từ network: ${top} đã chi ${money(wasted)} mà không tạo doanh thu nào, trong khi các nước khác vẫn ra tiền (${money(geoRevTotal)}).`,
+        evidence: [
+          { metric: 'Quốc gia 0 DT', value: String(zeroRev.length) },
+          { metric: 'Chi phí lãng phí', value: money(wasted) },
+          { metric: 'DT geo toàn camp', value: money(geoRevTotal) },
+          { metric: 'Độ phủ breakdown', value: pct(bdCoverage * 100, 0) },
+        ],
+        recommendedAction: 'Campaign settings → Locations → Exclude các quốc gia này (hoặc bid adjustment −100%).',
+        impactScore: wasted,
+        items: zeroRev.slice(0, 8).map(s => ({
+          label: fmtSegVal(s), cost: s.cost,
+          meta: `${count(s.clicks)} click · DT $0.00`,
+        })),
+      }))
+    }
+    const scalable = geoSegs.filter(s =>
+      s.roi != null && s.roi >= CFG.TARGET_ROI && (s.revenue ?? 0) >= CFG.BD_MIN_SEG_REVENUE &&
+      metricCost > 0 && s.cost / metricCost < 0.5,
+    )
+    if (scalable.length) {
+      const scaleRev = scalable.reduce((s, x) => s + (x.revenue ?? 0), 0)
+      const top = scalable.slice(0, 3).map(s => `${fmtSegVal(s)} (ROI ${pct(s.roi!, 0)})`).join(', ')
+      suggestions.push(makeSuggestion({
+        type: 'geo_scale', severity: 'medium', confidence: 'roi',
+        scope: { level: 'segment', label: `${scalable.length} quốc gia lãi`, campaign_id, project_id, segment_type: 'geo' },
+        title: `${scalable.length} quốc gia đang lãi tốt — tách camp / tăng bid để scale`,
+        detail: `Theo doanh thu thật từ network: ${top} sinh ${money(scaleRev)} với ROI vượt ${CFG.TARGET_ROI}% nhưng mới chiếm phần nhỏ chi phí — còn dư địa scale.`,
+        evidence: [
+          { metric: 'Quốc gia lãi', value: String(scalable.length) },
+          { metric: 'DT các nước này', value: money(scaleRev) },
+          { metric: 'Độ phủ breakdown', value: pct(bdCoverage * 100, 0) },
+        ],
+        recommendedAction: 'Tách campaign riêng cho quốc gia lãi để kiểm soát budget/bid độc lập, hoặc đặt location bid adjustment +10–20% từng bước.',
+        impactScore: scaleRev * 0.3,
+        items: scalable.slice(0, 8).map(s => ({
+          label: fmtSegVal(s), cost: s.cost,
+          meta: `DT ${money(s.revenue ?? 0)} · ROI ${pct(s.roi ?? 0, 0)}`,
+        })),
+      }))
+    }
+  }
+
   // 8. Luôn nhắc nếu thiếu conversion tracking (mở khóa tối ưu sâu hơn).
+  //    Đã có dữ liệu breakdown từ network nhưng CHƯA truyền sub-id → đổi lời khuyên thành
+  //    hướng dẫn gắn {campaignid} vào tracking link (mở khóa attribution theo campaign).
   if (!hasConversionTracking) {
+    const hasBdData = (input.segmentRevenue?.length ?? 0) > 0
+    const wantSubId = hasBdData && (bdMeta?.subIdCoverage ?? 0) === 0
     suggestions.push(makeSuggestion({
       type: 'setup_tracking', severity: 'low', confidence: 'engagement', scope,
-      title: 'Chưa có conversion tracking — tối ưu sâu bị giới hạn',
-      detail: 'Cơ sở phân tích là DT Màn hình (ước tính sớm, có thể lệch DT Thực). Google Ads không thấy doanh thu (chuyển đổi ở site merchant qua link ref) nên ROI chỉ biết ở mức project × ngày; keyword/search term/device/giờ/geo chỉ tối ưu bằng tín hiệu hiệu suất.',
-      evidence: [{ metric: 'Conversion trong kỳ', value: '0' }],
-      recommendedAction: 'Cân nhắc import postback/conversion từ network để mở khóa tối ưu ở mức keyword.',
+      title: wantSubId
+        ? 'Gắn sub-id vào tracking link — mở khóa attribution theo campaign'
+        : 'Chưa có conversion tracking — tối ưu sâu bị giới hạn',
+      detail: wantSubId
+        ? 'Engine đã thu được dữ liệu chuyển đổi theo quốc gia/thiết bị từ network, nhưng chưa có sub-id nên doanh thu chỉ gắn được theo dự án. Truyền {campaignid} của Google Ads qua sub-id → doanh thu gắn đúng từng campaign, chính xác cả khi nhiều camp chung 1 dự án.'
+        : 'Cơ sở phân tích là DT Màn hình (ước tính sớm, có thể lệch DT Thực). Google Ads không thấy doanh thu (chuyển đổi ở site merchant qua link ref) nên ROI chỉ biết ở mức project × ngày; keyword/search term/device/giờ/geo chỉ tối ưu bằng tín hiệu hiệu suất.',
+      evidence: wantSubId
+        ? [{ metric: 'DT có sub-id', value: '0%' }, { metric: 'Độ phủ breakdown', value: pct(bdCoverage * 100, 0) }]
+        : [{ metric: 'Conversion trong kỳ', value: '0' }],
+      recommendedAction: wantSubId
+        ? 'Google Ads → Campaign settings → Final URL suffix: thêm `<tham_số_sub_của_network>={campaignid}` (vd `aff_sub={campaignid}` hoặc `s1={campaignid}`). Network trả sub-id theo từng chuyển đổi, Engine tự tách campaign — không cần script.'
+        : 'Cân nhắc import postback/conversion từ network để mở khóa tối ưu ở mức keyword.',
       impactScore: 0,
     }))
   }
@@ -742,6 +912,7 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     health,
     suggestions,
     hasConversionTracking,
+    hasBreakdownRevenue,
     estimatedSavings,
     dataMaturity,
     winDayAnalysis,

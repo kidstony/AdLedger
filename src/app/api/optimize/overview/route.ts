@@ -3,7 +3,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCallerProfile, getOrgTeamIds } from '@/lib/require-role'
 import { optimizeCampaign } from '@/lib/campaign-optimizer'
 import { computeScreenRevenue, PendingRow } from '@/lib/screen-revenue'
-import { CampaignMetric } from '@/lib/types'
+import { allocateSpendRow, AttrProject } from '@/lib/attribution'
+import { AdDevice, CampaignMetric } from '@/lib/types'
 
 // GET /api/optimize/overview?from&to
 // Bảng tổng quan: tính health + gợi ý (rút gọn) cho MỌI camp caller thấy, xếp theo
@@ -20,7 +21,7 @@ export async function GET(req: Request) {
   // Các project caller được xem (theo role).
   let projQuery = supabaseAdmin
     .from('projects')
-    .select('project_id, name, cid, google_campaign_id, screen_revenue_type')
+    .select('project_id, name, cid, google_campaign_id, screen_revenue_type, attribution_type, attribution_device, attribution_ad_group_id, attribution_from, attribution_to, attribution_weight')
     .not('google_campaign_id', 'is', null)
 
   if (caller.role === 'super_admin') {
@@ -47,7 +48,7 @@ export async function GET(req: Request) {
     supabaseAdmin.from('campaign_metrics')
       .select('campaign_id, date, impressions, clicks, cost, conversions, conversions_value, search_impression_share, search_budget_lost_is, search_rank_lost_is, top_is, abs_top_is')
       .in('campaign_id', campaignIds).gte('date', from).lte('date', to),
-    supabaseAdmin.from('ad_spend').select('campaign_id, spend').in('campaign_id', campaignIds).gte('date', from).lte('date', to),
+    supabaseAdmin.from('ad_spend').select('campaign_id, date, spend, device, ad_group_id').in('campaign_id', campaignIds).gte('date', from).lte('date', to),
     supabaseAdmin.from('affiliate_revenue').select('project_id, date, amount, cycle_end')
       .in('project_id', projectIds).eq('type', 'pending').gte('date', from).lte('date', to),
   ])
@@ -57,19 +58,46 @@ export async function GET(req: Request) {
     const arr = metricsByCampaign.get(m.campaign_id) ?? []
     arr.push(m); metricsByCampaign.set(m.campaign_id, arr)
   }
-  const spendByCampaign = new Map<string, number>()
-  for (const s of spendRes.data ?? []) spendByCampaign.set(s.campaign_id, (spendByCampaign.get(s.campaign_id) ?? 0) + (s.spend ?? 0))
+  // Rows spend theo campaign (giữ device/ad_group/date để attribute per project).
+  const spendRowsByCampaign = new Map<string, { date: string; spend: number | null; device?: string | null; ad_group_id?: string | null }[]>()
+  for (const s of spendRes.data ?? []) {
+    const arr = spendRowsByCampaign.get(s.campaign_id) ?? []
+    arr.push(s); spendRowsByCampaign.set(s.campaign_id, arr)
+  }
   const pendingByProject = new Map<string, PendingRow[]>()
   for (const r of pendingRes.data ?? []) {
     const arr = pendingByProject.get(r.project_id) ?? []
     arr.push({ date: r.date, amount: r.amount ?? 0, cycle_end: r.cycle_end }); pendingByProject.set(r.project_id, arr)
   }
+  // DT màn hình per project (cơ sở chia khi tách theo doanh thu) + sibling theo campaign.
+  const revenueByProject = new Map<string, number>()
+  for (const p of projects) {
+    const { total } = computeScreenRevenue(pendingByProject.get(p.project_id) ?? [], p.screen_revenue_type === 'cumulative', 0)
+    revenueByProject.set(p.project_id, total)
+  }
+  const siblingsByCampaign = new Map<string, AttrProject[]>()
+  for (const p of projects) {
+    const cid = p.google_campaign_id as string
+    const arr = siblingsByCampaign.get(cid) ?? []
+    arr.push({
+      project_id: p.project_id,
+      attribution_type: p.attribution_type ?? null, attribution_device: p.attribution_device ?? null,
+      attribution_ad_group_id: p.attribution_ad_group_id ?? null, attribution_from: p.attribution_from ?? null,
+      attribution_to: p.attribution_to ?? null, attribution_weight: p.attribution_weight ?? null,
+    })
+    siblingsByCampaign.set(cid, arr)
+  }
 
   const rows = projects.map(p => {
     const campaign_id = p.google_campaign_id as string
     const metrics = metricsByCampaign.get(campaign_id) ?? []
-    const spend = spendByCampaign.get(campaign_id) ?? 0
-    const { total: revenue } = computeScreenRevenue(pendingByProject.get(p.project_id) ?? [], p.screen_revenue_type === 'cumulative', 0)
+    // Chi phí QC attribute về project này theo cấu hình tách (đồng bộ P&L).
+    const sibs = siblingsByCampaign.get(campaign_id) ?? []
+    const sRows = spendRowsByCampaign.get(campaign_id) ?? []
+    const spend = sibs.length > 1
+      ? sRows.reduce((sum, r) => sum + (allocateSpendRow({ campaign_id, date: r.date, spend: r.spend ?? 0, device: (r.device ?? '') as AdDevice, ad_group_id: r.ad_group_id ?? '' }, sibs, revenueByProject).get(p.project_id) ?? 0), 0)
+      : sRows.reduce((sum, r) => sum + (r.spend ?? 0), 0)
+    const revenue = revenueByProject.get(p.project_id) ?? 0
     const res = optimizeCampaign({
       campaign_id, campaignLabel: p.name, project_id: p.project_id,
       metrics, revenueByDate: {}, spendByDate: {},

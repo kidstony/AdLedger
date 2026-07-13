@@ -20,6 +20,8 @@ const PLACE: Partial<Record<OptSuggestionType, string>> = {
   fix_geo_setting: 'Google Ads → Settings → Locations → Location options',
   split_test: 'Google Ads → tạo campaign/ad group riêng',
   margin_alert: 'Theo dõi — chưa cần bấm gì',
+  geo_exclude: 'Google Ads → Settings → Locations → Exclude',
+  geo_scale: 'Google Ads → Locations (bid adj.) / tách campaign',
 }
 
 export default function NextSteps({ suggestions }: { suggestions: OptimizationSuggestion[] }) {

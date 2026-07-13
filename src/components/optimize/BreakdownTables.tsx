@@ -43,15 +43,28 @@ function SegValueCell({ s }: { s: SegmentAgg }) {
 
 function SegmentTable({ type, rows }: { type: SegmentType; rows: SegmentAgg[] }) {
   if (rows.length === 0) return null
+  // Có doanh thu breakdown từ network (Engine thu) → thêm cột DT/ROI + đổi tiêu chí highlight
+  // từ "0 click" sang "tiêu tiền mà 0 doanh thu" (tín hiệu chắc hơn hẳn).
+  const hasRevenue = rows.some(s => s.revenue != null)
   return (
-    <TableCard title={SEG_LABEL[type]} hint="Phân khúc chi phí cao + CTR thấp → cân nhắc điều chỉnh bid / lịch / loại trừ.">
+    <TableCard
+      title={SEG_LABEL[type]}
+      hint={hasRevenue
+        ? 'DT (nguồn) = doanh thu network theo phân khúc; ROI so với chi phí QC. Dòng vàng = tiêu tiền mà 0 doanh thu → ứng viên loại trừ.'
+        : 'Phân khúc chi phí cao + CTR thấp → cân nhắc điều chỉnh bid / lịch / loại trừ.'}
+    >
       <table className="w-full text-xs">
         <thead className="bg-slate-50">
-          <tr><Th>{SEG_LABEL[type]}</Th><Th right>Hiển thị</Th><Th right>Click</Th><Th right>CTR</Th><Th right>Chi phí</Th></tr>
+          <tr>
+            <Th>{SEG_LABEL[type]}</Th><Th right>Hiển thị</Th><Th right>Click</Th><Th right>CTR</Th><Th right>Chi phí</Th>
+            {hasRevenue && <><Th right>DT (nguồn)</Th><Th right>ROI</Th></>}
+          </tr>
         </thead>
         <tbody className="divide-y divide-slate-50">
           {rows.map((s, i) => {
-            const wasteful = s.clicks === 0 && s.cost > 0
+            const wasteful = hasRevenue
+              ? s.cost > 0 && s.revenue === 0
+              : s.clicks === 0 && s.cost > 0
             return (
               <tr key={i} className={wasteful ? 'bg-amber-50/50' : ''}>
                 <td className="px-3 py-2 text-slate-700"><SegValueCell s={s} /></td>
@@ -59,6 +72,18 @@ function SegmentTable({ type, rows }: { type: SegmentType; rows: SegmentAgg[] })
                 <td className="px-3 py-2 text-right tabular-nums text-slate-500">{fmtCount(s.clicks)}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-slate-500">{s.ctr.toFixed(1)}%</td>
                 <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-800">{formatVND(s.cost)}</td>
+                {hasRevenue && (
+                  <>
+                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-800">
+                      {s.revenue != null ? formatVND(s.revenue) : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className={`px-3 py-2 text-right font-semibold tabular-nums ${
+                      s.roi == null ? 'text-slate-300' : s.roi >= 0 ? 'text-green-600' : 'text-red-600'
+                    }`}>
+                      {s.roi != null ? `${s.roi.toFixed(0)}%` : '—'}
+                    </td>
+                  </>
+                )}
               </tr>
             )
           })}
@@ -68,26 +93,33 @@ function SegmentTable({ type, rows }: { type: SegmentType; rows: SegmentAgg[] })
   )
 }
 
-export default function BreakdownTables({ keywords, searchTerms, segments }: {
+// sections: 'keywords' = chỉ search-term + keyword (tab Dữ liệu Camp); 'segments' = chỉ bảng
+// device/hour/geo kèm ROI (tab Đề xuất tối ưu); 'all' = cả hai (mặc định).
+export default function BreakdownTables({ keywords, searchTerms, segments, sections = 'all' }: {
   keywords: KeywordAgg[]
   searchTerms: SearchTermAgg[]
   segments: SegmentAgg[]
+  sections?: 'all' | 'keywords' | 'segments'
 }) {
+  const showKw = sections !== 'segments'
+  const showSeg = sections !== 'keywords'
   const devices = segments.filter(s => s.segment_type === 'device')
   const hours = segments.filter(s => s.segment_type === 'hour')
   const geos = segments.filter(s => s.segment_type === 'geo')
 
-  if (keywords.length === 0 && searchTerms.length === 0 && segments.length === 0) {
+  const kwEmpty = keywords.length === 0 && searchTerms.length === 0
+  const segEmpty = segments.length === 0
+  if ((showKw && kwEmpty || !showKw) && (showSeg && segEmpty || !showSeg)) {
     return (
       <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center text-xs text-slate-400">
-        Chưa có số liệu keyword / search term / phân khúc. Chạy script &ldquo;Hàng ngày&rdquo; bản mới để đồng bộ (không có ở tab Lịch sử).
+        Chưa có số liệu {showKw && !showSeg ? 'keyword / search term' : showSeg && !showKw ? 'phân khúc' : 'keyword / search term / phân khúc'}. Chạy script &ldquo;Hàng ngày&rdquo; bản mới để đồng bộ (không có ở tab Lịch sử).
       </div>
     )
   }
 
   return (
     <div className="space-y-4">
-      {searchTerms.length > 0 && (
+      {showKw && searchTerms.length > 0 && (
         <TableCard title="Search term theo chi phí" hint="Truy vấn tốn chi phí mà CTR thấp / không click → ứng viên negative keyword.">
           <table className="w-full text-xs">
             <thead className="bg-slate-50">
@@ -113,7 +145,7 @@ export default function BreakdownTables({ keywords, searchTerms, segments }: {
         </TableCard>
       )}
 
-      {keywords.length > 0 && (
+      {showKw && keywords.length > 0 && (
         <TableCard title="Keyword theo chi phí" hint="Chi phí cao + CTR thấp / Quality Score kém → cân nhắc tắt hoặc giảm bid.">
           <table className="w-full text-xs">
             <thead className="bg-slate-50">
@@ -152,9 +184,11 @@ export default function BreakdownTables({ keywords, searchTerms, segments }: {
         </TableCard>
       )}
 
-      <SegmentTable type="device" rows={devices} />
-      <SegmentTable type="hour" rows={hours} />
-      <SegmentTable type="geo" rows={geos} />
+      {showSeg && <>
+        <SegmentTable type="device" rows={devices} />
+        <SegmentTable type="hour" rows={hours} />
+        <SegmentTable type="geo" rows={geos} />
+      </>}
     </div>
   )
 }

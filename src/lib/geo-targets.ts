@@ -40,6 +40,35 @@ function displayNames(): { vi: Intl.DisplayNames | null; en: Intl.DisplayNames |
   return { vi: viNames, en: enNames }
 }
 
+// Map ngược alpha-2 → Google geo ID (build 1 lần từ NUMERIC_TO_ALPHA2 để luôn khớp bảng thuận).
+// Dùng join doanh thu breakdown (country ISO alpha-2 từ network) với chi phí segment_metrics (geo ID).
+const ALPHA2_TO_GEO_ID: Record<string, string> = Object.fromEntries(
+  Object.entries(NUMERIC_TO_ALPHA2).map(([num, a2]) => [a2, String(2000 + Number(num))])
+)
+
+// Google geo ID → ISO alpha-2 ('2840' → 'US'). Không nhận diện được → null.
+export function alpha2ByGeoId(geoId: string): string | null {
+  const n = Number(geoId)
+  if (!Number.isFinite(n) || n <= 2000 || n >= 3000) return null
+  return NUMERIC_TO_ALPHA2[n - 2000] ?? null
+}
+
+// ISO alpha-2 → Google geo ID ('US' → '2840'). Không nhận diện được → null.
+export function geoIdByAlpha2(alpha2: string): string | null {
+  return ALPHA2_TO_GEO_ID[alpha2.toUpperCase()] ?? null
+}
+
+// Tên nước từ mã ISO alpha-2 ('US' → 'Hoa Kỳ') — ưu tiên tiếng Việt, fallback tiếng Anh/mã.
+export function countryNameByAlpha2(alpha2: string): string {
+  const code = alpha2.toUpperCase()
+  const { vi, en } = displayNames()
+  try {
+    return vi?.of(code) ?? en?.of(code) ?? code
+  } catch {
+    return code
+  }
+}
+
 // Trả tên nước cho một Google geo ID (dạng string). Không nhận diện được → null.
 export function countryNameByGeoId(geoId: string): string | null {
   const n = Number(geoId)
