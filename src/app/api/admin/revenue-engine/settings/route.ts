@@ -15,10 +15,10 @@ export async function GET(req: Request) {
   if (!(await guard(req))) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { data, error } = await supabaseAdmin
     .from('engine_settings')
-    .select('auto_sync_enabled, interval_hours, last_auto_sync_at')
+    .select('auto_sync_enabled, interval_hours, last_auto_sync_at, worker_last_seen_at')
     .eq('id', 1).maybeSingle()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ settings: data ?? { auto_sync_enabled: false, interval_hours: 6, last_auto_sync_at: null } })
+  return NextResponse.json({ settings: data ?? { auto_sync_enabled: false, interval_hours: 6, last_auto_sync_at: null, worker_last_seen_at: null } })
 }
 
 export async function PUT(req: Request) {
@@ -37,7 +37,7 @@ export async function PUT(req: Request) {
   const { data, error } = await supabaseAdmin
     .from('engine_settings')
     .upsert({ id: 1, ...patch }, { onConflict: 'id' })
-    .select('auto_sync_enabled, interval_hours, last_auto_sync_at')
+    .select('auto_sync_enabled, interval_hours, last_auto_sync_at, worker_last_seen_at')
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
   return NextResponse.json({ settings: data })

@@ -16,11 +16,29 @@ export async function GET(req: Request) {
   if (!(await guard(req))) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { data, error } = await supabaseAdmin
     .from('engine_commands')
-    .select('id, type, account_id, network_id, status, message, created_at, finished_at')
+    .select('id, type, account_id, network_id, status, message, created_at, started_at, finished_at')
     .order('created_at', { ascending: false })
     .limit(50)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ commands: data ?? [] })
+}
+
+// Hủy MỌI lệnh đang chờ/chạy của 1 account — lối thoát khi "Đang kết nối…" bị kẹt (worker
+// tắt/treo, hoặc login chờ quá lâu). Đặt status='error' để worker bỏ qua & UI hết "busy" ngay.
+// Lưu ý: không cắt ngang được việc worker đang chạy dở từ đây — nếu 1 cửa sổ Chrome đang mở
+// chờ đăng nhập, nó sẽ tự đóng khi hết thời gian chờ (tối đa 5 phút).
+export async function DELETE(req: Request) {
+  if (!(await guard(req))) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const body = await req.json().catch(() => null)
+  const account_id = body?.account_id ? String(body.account_id) : null
+  if (!account_id) return NextResponse.json({ error: 'Thiếu account_id' }, { status: 400 })
+  const { data, error } = await supabaseAdmin
+    .from('engine_commands')
+    .update({ status: 'error', message: 'Đã hủy bởi admin', finished_at: new Date().toISOString() })
+    .eq('account_id', account_id).in('status', ['pending', 'running'])
+    .select('id')
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+  return NextResponse.json({ ok: true, canceled: data?.length ?? 0 })
 }
 
 // Đặt tín hiệu cho lệnh (vd discover: user bấm "Phân tích" → signal='analyze').
@@ -47,8 +65,9 @@ export async function POST(req: Request) {
   const force = !!body?.force // login: xoá phiên cũ, buộc đăng nhập lại
   const discover_url = body?.discover_url ? String(body.discover_url).trim() : null // dò trang khác dashboard (payout)
   const discover_actions = Array.isArray(body?.discover_actions) ? body.discover_actions : null // thao tác trước khi đọc (click…)
-  if (!['login', 'fetch', 'discover'].includes(type)) {
-    return NextResponse.json({ error: 'type phải là login|fetch|discover' }, { status: 400 })
+  const discover_scan = !!body?.discover_scan // auto-scan: sau đăng nhập, tự quét link menu tìm trang báo cáo
+  if (!['login', 'fetch', 'discover', 'fetch_breakdown'].includes(type)) {
+    return NextResponse.json({ error: 'type phải là login|fetch|discover|fetch_breakdown' }, { status: 400 })
   }
   if (!account_id) return NextResponse.json({ error: 'Thiếu account_id' }, { status: 400 })
 
@@ -60,8 +79,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Account chưa có URL dashboard — nhập URL trước khi kết nối' }, { status: 400 })
   }
 
-  if (type === 'fetch') {
-    // Fetch: tránh trùng (đồng bộ 2 lần cùng lúc vô nghĩa).
+  if (type === 'fetch' || type === 'fetch_breakdown') {
+    // Fetch: tránh trùng (đồng bộ 2 lần cùng lúc vô nghĩa). Filter theo type →
+    // fetch và fetch_breakdown là 2 namespace riêng, queue song song được (worker chạy tuần tự).
     const { data: dup } = await supabaseAdmin
       .from('engine_commands').select('id')
       .eq('account_id', account_id).eq('type', type).in('status', ['pending', 'running']).limit(1)
@@ -75,7 +95,7 @@ export async function POST(req: Request) {
 
   const { data, error } = await supabaseAdmin
     .from('engine_commands')
-    .insert({ type, account_id, network_id: acct.network_id, force: type === 'login' ? force : false, discover_url: type === 'discover' ? discover_url : null, discover_actions: type === 'discover' ? discover_actions : null, created_by: caller.user_id })
+    .insert({ type, account_id, network_id: acct.network_id, force: type === 'login' ? force : false, discover_url: type === 'discover' ? discover_url : null, discover_actions: type === 'discover' ? discover_actions : null, discover_scan: type === 'discover' ? discover_scan : false, created_by: caller.user_id })
     .select('id, type, account_id, network_id, status, created_at')
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })

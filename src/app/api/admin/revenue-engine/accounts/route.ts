@@ -31,7 +31,7 @@ export async function GET(req: Request) {
       .select(ACCOUNT_COLS)
       .order('network_id').order('account_id'),
     netQuery,
-    supabaseAdmin.from('projects').select('project_id, name, affiliate_network').order('name'),
+    supabaseAdmin.from('projects').select('project_id, name, affiliate_network, affiliate_url').order('name'),
     supabaseAdmin.from('engine_network_configs').select('network_id').eq('enabled', true),
   ])
   if (accounts.error) return NextResponse.json({ error: accounts.error.message }, { status: 500 })

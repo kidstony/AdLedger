@@ -10,10 +10,10 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  // 50 lần chạy gần nhất
+  // 50 lần chạy gần nhất (kind: 'revenue' | 'breakdown' — 2 pipeline chạy run riêng)
   const { data: runs, error: runsErr } = await supabaseAdmin
     .from('engine_runs')
-    .select('id, network_id, status, date_from, date_to, records_captured, records_mapped, records_upserted, error_type, error_message, started_at, finished_at')
+    .select('id, network_id, kind, status, date_from, date_to, records_captured, records_mapped, records_upserted, breakdown_upserted, error_type, error_message, started_at, finished_at')
     .order('started_at', { ascending: false })
     .limit(50)
   if (runsErr) return NextResponse.json({ error: runsErr.message }, { status: 500 })
@@ -27,11 +27,23 @@ export async function GET(req: Request) {
   if (alertsErr) return NextResponse.json({ error: alertsErr.message }, { status: 500 })
 
   // revenue_raw theo (dự án, tài khoản, ngày). Mỗi tài khoản ~30-60 dòng nên gộp trong JS.
-  const { data: rawRows, error: rawErr } = await supabaseAdmin
+  const RAW_COLS = 'network_id, account_id, account_label, project_id, date, revenue, revenue_usd, currency, fetched_at'
+  let { data: rawRows, error: rawErr } = await supabaseAdmin
     .from('revenue_raw')
-    .select('network_id, account_id, account_label, project_id, date, revenue, revenue_usd, currency, fetched_at')
+    .select(`${RAW_COLS}, revenue_type`)
     .order('date', { ascending: false })
     .limit(5000)
+  // Cột revenue_type chưa migrate (migration Lô 2 chưa chạy) → truy vấn lại không có cột;
+  // coi mọi dòng là pending để trang vẫn chạy.
+  if (rawErr) {
+    const fb = await supabaseAdmin
+      .from('revenue_raw')
+      .select(RAW_COLS)
+      .order('date', { ascending: false })
+      .limit(5000)
+    rawRows = fb.data as typeof rawRows
+    rawErr = fb.error
+  }
   if (rawErr) return NextResponse.json({ error: rawErr.message }, { status: 500 })
 
   // Tên dự án để hiển thị (project_id → name)
@@ -48,6 +60,8 @@ export async function GET(req: Request) {
     date: string
     revenue: number
     revenue_usd: number | null
+    revenueConfirmed: number
+    revenueUsdConfirmed: number | null
     currency: string
     rows: number
     last_fetched: string
@@ -65,14 +79,24 @@ export async function GET(req: Request) {
       date: r.date,
       revenue: 0,
       revenue_usd: null,
+      revenueConfirmed: 0,
+      revenueUsdConfirmed: null,
       currency: r.currency ?? '',
       rows: 0,
       last_fetched: r.fetched_at,
     }
     s.rows += 1
-    s.revenue += Number(r.revenue) || 0
-    // revenue_usd có thể null (lần fetch chưa lấy được tỷ giá) → chỉ cộng khi có số.
-    if (r.revenue_usd != null) s.revenue_usd = (s.revenue_usd ?? 0) + Number(r.revenue_usd)
+    const rev = Number(r.revenue) || 0
+    const usd = r.revenue_usd != null ? Number(r.revenue_usd) : null
+    // Tách pending (tiền màn hình) vs confirmed (payout/tiền thực): TỔNG chỉ tính pending,
+    // confirmed để riêng → không đội số ở ngày có payout. revenue_type có thể vắng (chưa migrate) → pending.
+    if ((r as { revenue_type?: string }).revenue_type === 'confirmed') {
+      s.revenueConfirmed += rev
+      if (usd != null) s.revenueUsdConfirmed = (s.revenueUsdConfirmed ?? 0) + usd
+    } else {
+      s.revenue += rev
+      if (usd != null) s.revenue_usd = (s.revenue_usd ?? 0) + usd
+    }
     if (r.fetched_at > s.last_fetched) s.last_fetched = r.fetched_at
     dayMap.set(key, s)
   }

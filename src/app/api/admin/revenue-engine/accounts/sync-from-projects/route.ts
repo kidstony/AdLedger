@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCallerProfile } from '@/lib/require-role'
+import { normalizeDashboardUrl } from '@/lib/dashboard-url'
 
 // Reconcile: với mỗi project đã gán affiliate_network (có slug engine) mà CHƯA có
-// engine_account nào → tự tạo 1 account (account_id auto theo slug). Idempotent,
-// không xoá/sửa account có sẵn. Engine ghi doanh thu theo engine_accounts.project_id.
+// engine_account nào → tự tạo 1 account (account_id auto theo slug, dashboard_url
+// lấy từ projects.affiliate_url). Account cũ gán project mà thiếu URL cũng được
+// điền — nhưng KHÔNG ghi đè URL đã có (người dùng có thể đã sửa tay). Idempotent,
+// không xoá account có sẵn. Engine ghi doanh thu theo engine_accounts.project_id.
 const ALLOWED = ['super_admin', 'manager']
 const SLUG = /^[a-z0-9_-]+$/i
 
@@ -27,14 +30,14 @@ export async function POST(req: Request) {
   // 2. projects đã gán affiliate_network
   const { data: projects, error: projErr } = await supabaseAdmin
     .from('projects')
-    .select('project_id, name, affiliate_network')
+    .select('project_id, name, affiliate_network, affiliate_url')
     .not('affiliate_network', 'is', null)
   if (projErr) return NextResponse.json({ error: projErr.message }, { status: 500 })
 
   // 3. engine_accounts hiện có
   const { data: existing, error: accErr } = await supabaseAdmin
     .from('engine_accounts')
-    .select('network_id, account_id, project_id')
+    .select('id, network_id, account_id, project_id, dashboard_url')
   if (accErr) return NextResponse.json({ error: accErr.message }, { status: 500 })
 
   const projectsWithAccount = new Set((existing ?? []).map(a => a.project_id).filter(Boolean))
@@ -54,8 +57,15 @@ export async function POST(req: Request) {
     return candidate
   }
 
+  const urlByProject = new Map<string, string>()
+  for (const p of projects ?? []) {
+    const url = normalizeDashboardUrl(p.affiliate_url)
+    if (url) urlByProject.set(p.project_id, url)
+  }
+
   const toInsert: {
-    network_id: string; account_id: string; label: string; project_id: string; created_by: string
+    network_id: string; account_id: string; label: string; project_id: string
+    dashboard_url: string | null; created_by: string
   }[] = []
   for (const p of projects ?? []) {
     if (projectsWithAccount.has(p.project_id)) continue
@@ -66,17 +76,31 @@ export async function POST(req: Request) {
       account_id: nextAccountId(slug),
       label: p.name,
       project_id: p.project_id,
+      dashboard_url: urlByProject.get(p.project_id) ?? null,
       created_by: caller.user_id,
     })
   }
 
-  if (toInsert.length === 0) return NextResponse.json({ created: 0, accounts: [] })
+  // 4. Backfill: account cũ gán project mà chưa có dashboard_url → điền từ affiliate_url.
+  let urlFilled = 0
+  for (const a of existing ?? []) {
+    if (a.dashboard_url || !a.project_id) continue
+    const url = urlByProject.get(a.project_id)
+    if (!url) continue
+    const { error: updErr } = await supabaseAdmin
+      .from('engine_accounts')
+      .update({ dashboard_url: url, updated_at: new Date().toISOString() })
+      .eq('id', a.id)
+    if (!updErr) urlFilled++
+  }
+
+  if (toInsert.length === 0) return NextResponse.json({ created: 0, url_filled: urlFilled, accounts: [] })
 
   const { data, error } = await supabaseAdmin
     .from('engine_accounts')
     .insert(toInsert)
-    .select('id, network_id, account_id, label, project_id, enabled, created_at')
+    .select('id, network_id, account_id, label, project_id, enabled, dashboard_url, created_at')
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
-  return NextResponse.json({ created: data?.length ?? 0, accounts: data ?? [] })
+  return NextResponse.json({ created: data?.length ?? 0, url_filled: urlFilled, accounts: data ?? [] })
 }
