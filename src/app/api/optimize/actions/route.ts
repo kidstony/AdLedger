@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCallerProfile } from '@/lib/require-role'
-import { canReadProject } from '@/lib/optimizer/access'
+import { canReadProject, resolveProjectOrg } from '@/lib/optimizer/access'
 import { rowToSuggestion, SuggestionRow } from '@/lib/optimizer/persisted'
 import { ruleReliability, RuleStat } from '@/lib/optimizer/defaults'
 
@@ -17,6 +17,11 @@ export async function GET(req: Request) {
   if (!(await canReadProject(caller, project_id)))
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
+  // Org đọc theo PROJECT (không theo caller): Global Admin không thuộc org nào nhưng
+  // vẫn phải thấy đúng trạng thái phân tích của org sở hữu project.
+  const { organizationId: projOrg, orphan } = await resolveProjectOrg(project_id)
+  const orgId = projOrg ?? caller.organization_id ?? null
+
   const since = new Date(Date.now() - 60 * 86400000).toISOString()
   const [sugRes, stateRes] = await Promise.all([
     supabaseAdmin.from('optimizer_suggestions')
@@ -25,9 +30,9 @@ export async function GET(req: Request) {
       .gte('issued_at', since)
       .order('issued_at', { ascending: false })
       .limit(200),
-    caller.organization_id
+    orgId
       ? supabaseAdmin.from('optimizer_state')
-          .select('last_run_at, rule_stats').eq('organization_id', caller.organization_id).maybeSingle()
+          .select('last_run_at, rule_stats').eq('organization_id', orgId).maybeSingle()
       : Promise.resolve({ data: null }),
   ])
 
@@ -47,5 +52,6 @@ export async function GET(req: Request) {
     dismissed: rows.filter(r => ['dismissed', 'expired'].includes(r.state)),
     reliability,
     lastRunAt: (stateRes.data as { last_run_at?: string } | null)?.last_run_at ?? null,
+    orphan,   // project chưa gán team → engine bỏ qua khi phân tích — UI cảnh báo
   })
 }

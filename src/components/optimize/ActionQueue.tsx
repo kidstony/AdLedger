@@ -22,6 +22,7 @@ interface ActionsResponse {
   dismissed: PersistedSuggestion[]
   reliability: Record<string, { won: number; lost: number; reliability: number }>
   lastRunAt: string | null
+  orphan?: boolean   // project chưa gán team → engine bỏ qua khi phân tích
   error?: string
 }
 
@@ -168,15 +169,32 @@ export default function ActionQueue({ projectId, canManage }: { projectId: strin
         )}
       </div>
 
+      {/* Project chưa gán team: VẪN được phân tích (org chính nhận hộ) — chỉ nhắc nên gán
+          team để phân quyền/báo cáo đúng tổ chức. */}
+      {data.orphan && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-700">
+          ℹ️ Dự án này chưa gán team — hệ thống <b>vẫn phân tích bình thường</b>. Nên vào{' '}
+          <b>Quản lý dự án</b> gán team để phân quyền và báo cáo đúng tổ chức.
+        </div>
+      )}
+
       {/* Đề xuất mới */}
       <section>
         <h3 className="mb-2 text-sm font-semibold text-slate-700">
           Đề xuất mới {data.open.length > 0 && <span className="text-slate-400">({data.open.length})</span>}
         </h3>
         {data.open.length === 0 ? (
-          <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-5 text-center text-sm text-green-700">
-            Không có đề xuất mới — camp đang ổn. 🎉
-          </div>
+          data.lastRunAt ? (
+            <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-5 text-center text-sm text-green-700">
+              Không có đề xuất mới — camp đang ổn. 🎉
+            </div>
+          ) : (
+            // CHƯA từng phân tích → không được khen "camp đang ổn" (có thể camp đang lỗ mà chưa ai soi)
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-5 text-center text-sm text-amber-800">
+              Dự án này <b>chưa được phân tích nền lần nào</b> — chưa thể kết luận camp ổn hay không.
+              {canManage ? ' Bấm "Phân tích lại" ở trên để chạy ngay.' : ' Nhờ quản trị viên bấm "Phân tích lại".'}
+            </div>
+          )
         ) : (
           <div className="space-y-2.5">
             {data.open.map(s => (

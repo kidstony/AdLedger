@@ -9,7 +9,6 @@ import { supabase } from '@/lib/supabase'
 import { cn, formatCid, formatVND } from '@/lib/utils'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import HealthScorecard from '@/components/optimize/HealthScorecard'
-import SuggestionCard from '@/components/optimize/SuggestionCard'
 import BreakdownTables from '@/components/optimize/BreakdownTables'
 import PortfolioTable, { type OverviewRow } from '@/components/optimize/PortfolioTable'
 import WinDayPanel from '@/components/optimize/WinDayPanel'
@@ -46,12 +45,11 @@ interface OptimizeResponse {
   code?: string
 }
 
-type Mode = 'camp' | 'network' | 'advice' | 'actions'
+type Mode = 'camp' | 'network' | 'advice'
 const TABS: { key: Mode; label: string }[] = [
   { key: 'camp', label: 'Dữ liệu Camp' },
   { key: 'network', label: 'Dữ liệu Network' },
-  { key: 'advice', label: 'Đề xuất tối ưu' },
-  { key: 'actions', label: 'Hành động & Test' },
+  { key: 'advice', label: 'Đề xuất & Hành động' },
 ]
 
 export default function OptimizePage() {
@@ -79,7 +77,7 @@ export default function OptimizePage() {
   const [ovLoading, setOvLoading] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
 
-  const isCampish = mode === 'camp' || mode === 'advice' || mode === 'actions'
+  const isCampish = mode === 'camp' || mode === 'advice'
   const netSelectedId = netProjectId || allProjects[0]?.project_id || ''
 
   const authFetch = async (url: string) => {
@@ -87,10 +85,10 @@ export default function OptimizePage() {
     return fetch(url, { headers: session ? { Authorization: `Bearer ${session.access_token}` } : {} }).then(r => r.json())
   }
 
-  // Chi tiết 1 camp (tab Camp/Đề xuất, khi đã chọn camp). Tab Hành động & Test
-  // tự fetch API riêng (/actions, /tests, /anomalies) — không cần payload này.
+  // Chi tiết 1 camp (tab Camp/Đề xuất, khi đã chọn camp). Hàng đợi hành động/phiếu
+  // test/chỉ số bất thường tự fetch API riêng (/actions, /tests, /anomalies).
   useEffect(() => {
-    if (!(mode === 'camp' || mode === 'advice') || !openId) return
+    if (!isCampish || !openId) return
     let cancelled = false
     const run = async () => {
       setLoading(true); setError(null)
@@ -107,7 +105,7 @@ export default function OptimizePage() {
     }
     run()
     return () => { cancelled = true }
-  }, [mode, openId, fromStr, toStr, refreshKey])
+  }, [isCampish, openId, fromStr, toStr, refreshKey])
 
   // Danh sách camp (tab Camp/Đề xuất, khi chưa chọn camp).
   useEffect(() => {
@@ -262,11 +260,18 @@ export default function OptimizePage() {
         </div>
       )}
 
-      {/* ── Tab Đề xuất tối ưu ── */}
+      {/* ── Tab Đề xuất & Hành động: MỘT nguồn đề xuất duy nhất (ActionQueue — có nút
+             Đã áp dụng/Bỏ qua + vòng đo kết quả) + checklist camp mới + phiếu test +
+             chỉ số bất thường + phân tích ngày lãi/lỗ ── */}
       {mode === 'advice' && (
         openId ? (
-          <div className="space-y-5">
+          <div className="space-y-6">
             {errorBox}
+            {canManage && (
+              <div className="flex justify-end">
+                <ThresholdSettings />
+              </div>
+            )}
             {/* Lộ trình test camp mới — hiện cả khi CHƯA có metrics (lúc cần nhất) */}
             {!error && data && data.launchPlan && (
               <LaunchChecklist plan={data.launchPlan} projectId={openId} onSaved={() => setRefreshKey(k => k + 1)} />
@@ -286,60 +291,39 @@ export default function OptimizePage() {
                   </div>
                 )}
 
-                <section>
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <h2 className="text-sm font-semibold text-slate-700">
-                      Kế hoạch hành động {data.suggestions.length > 0 && <span className="text-slate-400">({data.suggestions.length})</span>}
-                    </h2>
-                    {data.estimatedSavings >= 0.5 && (
-                      <span className="rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-green-200">
-                        Ước tính tiết kiệm ~{formatVND(data.estimatedSavings)}/kỳ nếu chặn search-term rác
-                      </span>
-                    )}
+                {data.estimatedSavings >= 0.5 && (
+                  <div className="flex justify-end">
+                    <span className="rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-green-200">
+                      Ước tính tiết kiệm ~{formatVND(data.estimatedSavings)}/kỳ nếu chặn search-term rác
+                    </span>
                   </div>
-                  {data.suggestions.length === 0 ? (
-                    <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-6 text-center text-sm text-green-700">
-                      Không có cảnh báo nào — camp đang ổn trong khoảng thời gian này. 🎉
-                    </div>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {data.suggestions.map(s => <SuggestionCard key={s.id} s={s} />)}
-                    </div>
-                  )}
-                </section>
+                )}
+              </>
+            )}
 
+            {/* Hàng đợi đề xuất — nguồn DUY NHẤT hiển thị SuggestionCard (hết trùng 2 tab) */}
+            {!error && <ActionQueue projectId={openId} canManage={canManage} />}
+
+            {!error && (
+              <>
                 <section>
-                  <h2 className="mb-2 text-sm font-semibold text-slate-700">Phân tích ngày lãi / ngày lỗ</h2>
-                  <WinDayPanel analysis={data.winDayAnalysis} />
+                  <h2 className="mb-2 text-sm font-semibold text-slate-700">Phiếu test</h2>
+                  <TestTicketsPanel projectId={openId} canManage={canManage} />
+                </section>
+                <section>
+                  <h2 className="mb-2 text-sm font-semibold text-slate-700">Chỉ số bất thường</h2>
+                  <AnomalyFeed projectId={openId} canManage={canManage} />
                 </section>
               </>
             )}
-            {!error && !data && loadingBox}
-          </div>
-        ) : (
-          overview ? <PortfolioTable rows={overview} variant="advice" onSelect={setOpenId} /> : loadingBox
-        )
-      )}
 
-      {/* ── Tab Hành động & Test (Optimizer v2): hàng đợi đề xuất có vòng đời +
-             phiếu test + chỉ số bất thường + chỉnh ngưỡng ── */}
-      {mode === 'actions' && (
-        openId ? (
-          <div className="space-y-6">
-            {canManage && (
-              <div className="flex justify-end">
-                <ThresholdSettings />
-              </div>
+            {!error && data && data.hasMetrics && (
+              <section>
+                <h2 className="mb-2 text-sm font-semibold text-slate-700">Phân tích ngày lãi / ngày lỗ</h2>
+                <WinDayPanel analysis={data.winDayAnalysis} />
+              </section>
             )}
-            <ActionQueue projectId={openId} canManage={canManage} />
-            <section>
-              <h2 className="mb-2 text-sm font-semibold text-slate-700">Phiếu test</h2>
-              <TestTicketsPanel projectId={openId} canManage={canManage} />
-            </section>
-            <section>
-              <h2 className="mb-2 text-sm font-semibold text-slate-700">Chỉ số bất thường</h2>
-              <AnomalyFeed projectId={openId} canManage={canManage} />
-            </section>
+            {!error && !data && loadingBox}
           </div>
         ) : (
           overview ? <PortfolioTable rows={overview} variant="advice" onSelect={setOpenId} /> : loadingBox

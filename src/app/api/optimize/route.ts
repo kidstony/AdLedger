@@ -5,6 +5,7 @@ import { getCallerProfile } from '@/lib/require-role'
 import { optimizeCampaign } from '@/lib/campaign-optimizer'
 import { loadCampaignBundle } from '@/lib/optimizer/stats-loader'
 import { markDirty, runAnalysis } from '@/lib/optimizer/engine'
+import { resolveProjectOrg } from '@/lib/optimizer/access'
 import { rowToSuggestion, PersistedSuggestion, SuggestionRow } from '@/lib/optimizer/persisted'
 import { OptSeverity } from '@/lib/types'
 
@@ -53,7 +54,9 @@ export async function GET(req: Request) {
   const result = optimizeCampaign(bundle.input)
 
   // ── Optimizer v2: đề xuất persist + anomaly + phiếu test + lần chạy cuối ──
-  const orgId = caller.organization_id ?? null
+  // Org đọc theo PROJECT (Global Admin không thuộc org nào vẫn thấy đúng trạng thái).
+  const { organizationId: projOrg } = await resolveProjectOrg(project_id)
+  const orgId = projOrg ?? caller.organization_id ?? null
   let lastRunAt: string | null = null
   let persisted = false
   let v2Suggestions: PersistedSuggestion[] = []

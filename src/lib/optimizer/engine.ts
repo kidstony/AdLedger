@@ -11,6 +11,7 @@ import { computeConfirmRate, ConfirmRateResult } from './confirm-rate'
 import { evaluateOutcome, windowsOverlap, EvalDailyStat } from './evaluate'
 import { synthesizeTicket, evaluateTicket, TicketDay, TicketTarget } from './tests'
 import { getTelegramCfg, sendSafe, buildDigestText, DigestSummary } from './notify'
+import { resolveAdoptiveOrg } from './access'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Optimizer v2 — engine chạy nền. Kích hoạt khi dữ liệu về (webhook ads-script,
@@ -45,7 +46,15 @@ interface RunStats {
   tickets_created: number
   tickets_evaluated: number
   errors: string[]
+  notes?: string[]     // thông tin không phải lỗi (vd nhận phân tích project chưa gán team)
   incomplete?: boolean
+}
+
+interface OrgProject {
+  project_id: string
+  name: string
+  google_campaign_id: string | null
+  screen_revenue_type: string | null
 }
 
 // Đánh dấu "có dữ liệu mới" — trigger (webhook/nhập tay) đặt TRƯỚC khi gọi
@@ -73,10 +82,22 @@ export async function runAnalysis(opts: {
     orgIds = (data ?? []).map(o => o.id)
   }
 
+  // Đề xuất tối ưu KHÔNG phụ thuộc gán team: project chưa gán team (mồ côi) vẫn được
+  // phân tích — "org chính" (resolveAdoptiveOrg) nhận phân tích hộ trong run của nó
+  // (optimizer_state/Telegram/ngưỡng key theo org nên cần 1 org đứng tên).
+  const { data: orphanRows } = await supabaseAdmin
+    .from('projects')
+    .select('project_id, name, google_campaign_id, screen_revenue_type')
+    .is('team_id', null)
+    .not('google_campaign_id', 'is', null)
+  const orphanProjects = orphanRows ?? []
+  const adoptiveOrgId = orphanProjects.length ? await resolveAdoptiveOrg() : null
+
   let ran = 0
   for (const orgId of orgIds) {
     try {
-      const ok = await runOrgAnalysis(orgId, opts.trigger, opts.force ?? opts.trigger === 'manual')
+      const ok = await runOrgAnalysis(orgId, opts.trigger, opts.force ?? opts.trigger === 'manual',
+        orgId === adoptiveOrgId ? orphanProjects : [])
       if (ok) ran++
     } catch (e) {
       console.error(`[optimizer] org ${orgId} failed:`, e)
@@ -85,7 +106,7 @@ export async function runAnalysis(opts: {
   return { ran: ran > 0, orgs: ran }
 }
 
-async function runOrgAnalysis(orgId: string, trigger: AnalyzeTrigger, force: boolean): Promise<boolean> {
+async function runOrgAnalysis(orgId: string, trigger: AnalyzeTrigger, force: boolean, orphanProjects: OrgProject[] = []): Promise<boolean> {
   const startedAt = Date.now()
   const nowIso = new Date().toISOString()
 
@@ -129,15 +150,22 @@ async function runOrgAnalysis(orgId: string, trigger: AnalyzeTrigger, force: boo
     const projSettings = new Map((settingRows ?? []).filter(s => s.project_id).map(s => [s.project_id as string, s]))
     const orgOverrides = (orgSetting?.thresholds ?? {}) as Record<string, number>
 
-    // ── Danh sách project của org (qua teams) có gắn campaign ────────────────
+    // ── Danh sách project của org (qua teams) có gắn campaign + project mồ côi
+    //    được "nhận nuôi" (đề xuất tối ưu không phụ thuộc gán team) ────────────
     const { data: teams } = await supabaseAdmin.from('teams').select('id').eq('organization_id', orgId)
     const teamIds = (teams ?? []).map(t => t.id)
-    if (!teamIds.length) { await finishRun(runId, orgId, stats, state, dirtyAtStart, null); return true }
-    const { data: projects } = await supabaseAdmin.from('projects')
-      .select('project_id, name, google_campaign_id, screen_revenue_type')
-      .in('team_id', teamIds)
-      .not('google_campaign_id', 'is', null)
-    const projList = projects ?? []
+    let projList: OrgProject[] = []
+    if (teamIds.length) {
+      const { data: projects } = await supabaseAdmin.from('projects')
+        .select('project_id, name, google_campaign_id, screen_revenue_type')
+        .in('team_id', teamIds)
+        .not('google_campaign_id', 'is', null)
+      projList = (projects ?? []) as OrgProject[]
+    }
+    if (orphanProjects.length) {
+      projList = [...projList, ...orphanProjects]
+      stats.notes = [`Nhận phân tích ${orphanProjects.length} project chưa gán team: ${orphanProjects.map(p => p.project_id).join(', ')} (nên gán team trong Quản lý dự án để phân quyền đúng)`]
+    }
     if (!projList.length) { await finishRun(runId, orgId, stats, state, dirtyAtStart, null); return true }
 
     const baseTh = mergeThresholds(orgOverrides)
