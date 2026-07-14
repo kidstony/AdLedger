@@ -3,7 +3,8 @@
 import {
   TrendingUp, Scissors, Wallet, ArrowUpCircle, ArrowDownCircle,
   Ban, PauseCircle, Sparkles, AlertTriangle, MonitorSmartphone,
-  CalendarClock, Target, Filter, Sprout, MapPin, FlaskConical, MapPinOff, Globe, Info, type LucideIcon,
+  CalendarClock, Target, Filter, Sprout, MapPin, FlaskConical, MapPinOff, Globe, Info,
+  FileWarning, type LucideIcon,
 } from 'lucide-react'
 import { cn, formatVND } from '@/lib/utils'
 import type { OptimizationSuggestion, OptSuggestionType, OptSeverity } from '@/lib/types'
@@ -28,6 +29,7 @@ const ICONS: Record<OptSuggestionType, LucideIcon> = {
   geo_exclude: MapPinOff,
   geo_scale: Globe,
   data_quality: Info,
+  fix_landing_page: FileWarning,
 }
 
 // Màu theo mức độ (bám DESIGN_SYSTEM: đỏ=nguy, amber=cần chú ý, slate=thông tin).

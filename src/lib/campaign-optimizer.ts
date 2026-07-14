@@ -64,7 +64,11 @@ export const CFG = {
   BD_SEG_MIN_CLICKS: 10,        // segment cần ≥ N click mới kết luận "không ra tiền"
   BD_MIN_SEG_REVENUE: 5,        // $ — DT segment tối thiểu để gợi ý geo_scale
   SEG_COST_COVERAGE_MIN: 0.7,   // chi phí segment phải phủ ≥ 70% chi phí camp mới tin ROI segment (tránh chia rác khi Google Ads sync thiếu ngày)
+  QS_DIAG_MAX: 5,               // QS ≤ mức này + chi phí đáng kể → chẩn bệnh theo 3 thành phần QS
 } as const
+
+// Ngưỡng có thể override từ DB (optimizer_settings.thresholds) — Optimizer v2.
+export type OptimizerCfg = { -readonly [K in keyof typeof CFG]: (typeof CFG)[K] extends number ? number : (typeof CFG)[K] }
 
 interface PeriodTotals {
   metrics: CampaignMetric[]
@@ -230,7 +234,7 @@ function cpcTrend(metrics: CampaignMetric[]): number | null {
   return ((second - first) / first) * 100
 }
 
-function computeHealth(d: PeriodTotals): CampaignHealth {
+function computeHealth(d: PeriodTotals, cfg: OptimizerCfg = CFG as unknown as OptimizerCfg): CampaignHealth {
   const { metrics, totalRevenue, totalCost, totalSpend } = d
   const impressions = metrics.reduce((s, m) => s + m.impressions, 0)
   const clicks = metrics.reduce((s, m) => s + m.clicks, 0)
@@ -250,7 +254,7 @@ function computeHealth(d: PeriodTotals): CampaignHealth {
   //   ROI (±40), CTR (±20), Impression Share (±20), xu hướng CPC (±20).
   let score = 50
   if (roi != null) score += Math.max(-40, Math.min(40, roi * 0.8))
-  score += Math.max(-20, Math.min(20, (ctr - CFG.CTR_FLOOR) * 8))
+  score += Math.max(-20, Math.min(20, (ctr - cfg.CTR_FLOOR) * 8))
   if (isRate != null) score += (isRate - 0.5) * 40
   const trend = cpcTrend(metrics)
   if (trend != null) score -= Math.max(0, Math.min(20, trend * 0.4))
@@ -289,13 +293,17 @@ let seq = 0
 function makeSuggestion(
   s: Omit<OptimizationSuggestion, 'id'> & { id?: string },
 ): OptimizationSuggestion {
-  return { id: s.id ?? `sug-${++seq}`, ...s }
+  // dedupeKey mặc định = ruleKey (1 card/rule/camp); rule theo scope tự truyền dedupeKey riêng.
+  return { ...s, id: s.id ?? `sug-${++seq}`, dedupeKey: s.dedupeKey ?? s.ruleKey }
 }
 
-export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult {
+// cfgOverride (Optimizer v2): ngưỡng override từ optimizer_settings.thresholds —
+// không truyền = dùng CFG mặc định (hành vi cũ giữ nguyên).
+export function optimizeCampaign(input: OptimizerInput, cfgOverride?: Partial<OptimizerCfg>): CampaignOptimizerResult {
+  const cfg: OptimizerCfg = { ...(CFG as unknown as OptimizerCfg), ...cfgOverride }
   seq = 0
-  const health = computeHealth(input)
-  if (input.prev) health.trend = computeTrend(health, computeHealth(input.prev))
+  const health = computeHealth(input, cfg)
+  if (input.prev) health.trend = computeTrend(health, computeHealth(input.prev, cfg))
   const suggestions: OptimizationSuggestion[] = []
 
   const { metrics, totalRevenue, totalCost, totalSpend, campaign_id, campaignLabel, project_id } = input
@@ -304,13 +312,14 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   const scope = { level: 'campaign' as const, label: campaignLabel, campaign_id, project_id }
   // Gate "đủ dữ liệu để kết luận" theo SỐ CLICK (không phụ thuộc tiền tệ — trước
   // đây dùng ngưỡng VND nên tài khoản USD không bao giờ vượt → chặn hết rule cut).
-  const enoughData = health.clicks >= CFG.MIN_CLICKS_TO_JUDGE && days >= CFG.MIN_DAYS_TO_JUDGE
+  const enoughData = health.clicks >= cfg.MIN_CLICKS_TO_JUDGE && days >= cfg.MIN_DAYS_TO_JUDGE
 
   // ── ROI-based (confidence 'roi') ──────────────────────────────────────────
 
   // 1. Chi tiêu đáng kể nhưng KHÔNG có doanh thu → CẮT.
   if (enoughData && totalRevenue === 0) {
     suggestions.push(makeSuggestion({
+      ruleKey: 'cut_no_revenue',
       type: 'cut', severity: 'high', confidence: 'roi', scope,
       title: 'Cắt camp — tiêu tiền nhưng chưa có DT Màn hình',
       detail: `Đã chi ${money(totalSpend)} trong ${days} ngày mà DT Màn hình = 0. Camp đang lỗ toàn bộ chi phí.`,
@@ -325,12 +334,13 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   }
 
   // 2. Có doanh thu nhưng ROI âm nặng → CẮT / thu hẹp.
-  if (enoughData && totalRevenue > 0 && health.roi != null && health.roi < CFG.LOSS_ROI) {
+  if (enoughData && totalRevenue > 0 && health.roi != null && health.roi < cfg.LOSS_ROI) {
     const loss = totalCost - totalRevenue
     suggestions.push(makeSuggestion({
+      ruleKey: 'cut_deep_loss',
       type: 'cut', severity: 'high', confidence: 'roi', scope,
       title: 'Camp lỗ — ROI âm sâu',
-      detail: `ROI ${pct(health.roi)} (dưới ngưỡng ${CFG.LOSS_ROI}%). Lỗ khoảng ${money(loss)} trong kỳ.`,
+      detail: `ROI ${pct(health.roi)} (dưới ngưỡng ${cfg.LOSS_ROI}%). Lỗ khoảng ${money(loss)} trong kỳ.`,
       evidence: [
         { metric: 'ROI', value: pct(health.roi) },
         { metric: 'DT Màn hình', value: money(totalRevenue) },
@@ -342,17 +352,19 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   }
 
   // 3. Đủ lãi + IS mất do NGÂN SÁCH cao → TĂNG BUDGET (scale).
-  if (health.roi != null && health.roi > CFG.TARGET_ROI
-      && health.isLostBudget != null && health.isLostBudget / 100 > CFG.IS_BUDGET_THRESHOLD) {
+  if (health.roi != null && health.roi > cfg.TARGET_ROI
+      && health.isLostBudget != null && health.isLostBudget / 100 > cfg.IS_BUDGET_THRESHOLD) {
     const lostFrac = health.isLostBudget / 100
     const upside = totalRevenue * (lostFrac / Math.max(0.01, 1 - lostFrac))
     const budget = input.settings?.daily_budget ?? null
     const suggestedBudget = budget != null ? budget * (1 + Math.min(0.3, lostFrac + 0.1)) : null
     const budgetEvidence = budget != null ? [{ metric: 'Ngân sách/ngày', value: money(budget) }] : []
     const budgetAction = suggestedBudget != null
-      ? `Tăng ngân sách từ ${money(budget!)} → thử ~${money(suggestedBudget)}/ngày (từng bước 15–25%), giữ ROI trên ${CFG.TARGET_ROI}%.`
-      : `Tăng ngân sách từng bước (15–25%/lần), theo dõi ROI giữ trên ${CFG.TARGET_ROI}%.`
+      ? `Tăng ngân sách từ ${money(budget!)} → thử ~${money(suggestedBudget)}/ngày (từng bước 15–25%), giữ ROI trên ${cfg.TARGET_ROI}%.`
+      : `Tăng ngân sách từng bước (15–25%/lần), theo dõi ROI giữ trên ${cfg.TARGET_ROI}%.`
     suggestions.push(makeSuggestion({
+      ruleKey: 'raise_budget_scale',
+      params: { roi: health.roi, isLostBudget: health.isLostBudget, dailyBudget: budget, suggestedBudget },
       type: 'raise_budget', severity: 'high', confidence: 'roi', scope,
       title: 'Scale — tăng ngân sách để giành thêm hiển thị',
       detail: `Camp đang lãi (ROI ${pct(health.roi)}) nhưng mất ${pct(health.isLostBudget)} hiển thị vì hết ngân sách. Đang bỏ lỡ traffic sinh lời.`,
@@ -372,14 +384,16 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   //    GUARD: nếu CPC đã vượt trần lời-mỗi-click (rule 4b) thì KHÔNG gợi ý tăng —
   //    trần bid là kim chỉ nam (playbook 3c), tránh 2 lời khuyên ngược nhau.
   const revPerClickAll = totalRevenue > 0 && health.clicks > 0 ? totalRevenue / health.clicks : null
-  const bidCeiling = revPerClickAll != null ? revPerClickAll * CFG.BID_CEILING_RATIO : null
+  const bidCeiling = revPerClickAll != null ? revPerClickAll * cfg.BID_CEILING_RATIO : null
   const cpcOverCeiling = enoughData && bidCeiling != null && health.avgCpc > 0 && health.avgCpc > bidCeiling
-  if (!cpcOverCeiling && health.roi != null && health.roi > CFG.TARGET_ROI
-      && health.isLostRank != null && health.isLostRank / 100 > CFG.IS_RANK_THRESHOLD) {
+  if (!cpcOverCeiling && health.roi != null && health.roi > cfg.TARGET_ROI
+      && health.isLostRank != null && health.isLostRank / 100 > cfg.IS_RANK_THRESHOLD) {
     const strategy = input.settings?.bidding_strategy ?? null
     const automated = isAutomatedBidding(strategy)
     const strategyEvidence = strategy ? [{ metric: 'Chiến lược bid', value: strategy }] : []
     suggestions.push(makeSuggestion({
+      ruleKey: 'raise_bid_rank',
+      params: { roi: health.roi, isLostRank: health.isLostRank, avgCpc: health.avgCpc, automated },
       type: 'raise_bid', severity: 'medium', confidence: 'roi', scope,
       title: automated ? 'Nới target — đang thua thứ hạng dù có lãi' : 'Tăng bid — đang thua thứ hạng dù có lãi',
       detail: `Mất ${pct(health.isLostRank)} hiển thị do Ad Rank thấp trong khi camp vẫn lãi (ROI ${pct(health.roi)}).${automated ? ` Camp dùng bid tự động (${strategy}) nên không đặt bid tay được.` : ''}`,
@@ -404,9 +418,11 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     {
       const ratio = (health.avgCpc / revPerClick) * 100
       suggestions.push(makeSuggestion({
+        ruleKey: 'bid_ceiling',
+        params: { avgCpc: health.avgCpc, revPerClick, ceiling },
         type: 'lower_bid', severity: health.roi != null && health.roi < 0 ? 'high' : 'medium', confidence: 'roi', scope,
         title: 'CPC vượt trần an toàn — giảm bid từng nấc',
-        detail: `Mỗi click tạo ~${money(revPerClick)} DT Màn hình nhưng đang trả ${money(health.avgCpc)}/click (${ratio.toFixed(0)}% giá trị click, trần an toàn ${CFG.BID_CEILING_RATIO * 100}%). Biên không đủ nuôi chi phí.`,
+        detail: `Mỗi click tạo ~${money(revPerClick)} DT Màn hình nhưng đang trả ${money(health.avgCpc)}/click (${ratio.toFixed(0)}% giá trị click, trần an toàn ${cfg.BID_CEILING_RATIO * 100}%). Biên không đủ nuôi chi phí.`,
         evidence: [
           { metric: 'CPC trung bình', value: money(health.avgCpc) },
           { metric: 'DT/click', value: money(revPerClick) },
@@ -421,9 +437,11 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   // 4c. Đua top vô ích (playbook 2c): đứng vị trí 1 tuyệt đối quá nhiều trong khi
   //     margin mỏng → thử tụt 1 hạng, CPC thường giảm mạnh hơn lượng click mất.
   const absTop = health.absTopIs
-  if (absTop != null && absTop >= CFG.ABS_TOP_HIGH * 100
-      && health.roi != null && health.roi >= 0 && health.roi < CFG.TARGET_ROI) {
+  if (absTop != null && absTop >= cfg.ABS_TOP_HIGH * 100
+      && health.roi != null && health.roi >= 0 && health.roi < cfg.TARGET_ROI) {
     suggestions.push(makeSuggestion({
+      ruleKey: 'abs_top_wasteful',
+      params: { absTopIs: absTop, roi: health.roi, avgCpc: health.avgCpc },
       type: 'lower_bid', severity: 'medium', confidence: 'roi', scope,
       title: 'Đua top tuyệt đối trong khi margin mỏng — thử giảm bid 1 nấc',
       detail: `${pct(absTop, 0)} hiển thị đang ở vị trí 1 tuyệt đối nhưng ROI chỉ ${pct(health.roi)}. Tụt 1 hạng thường giảm CPC mạnh hơn lượng click mất → tổng lời tăng.`,
@@ -441,6 +459,7 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   //     chứ không *ở* geo — mặc định của Google. Đổi sang Presence là cắt rò an toàn.
   if (input.settings?.geo_target_type === 'PRESENCE_OR_INTEREST') {
     suggestions.push(makeSuggestion({
+      ruleKey: 'fix_geo_presence',
       type: 'fix_geo_setting', severity: 'medium', confidence: 'engagement', scope,
       title: 'Location đang là "Presence or interest" — rò cost ngoài geo target',
       detail: 'Cài đặt hiện tại cho phép hiển thị với người *quan tâm* tới geo (ở nơi khác) chứ không chỉ người *đang ở* geo. Với affiliate trả tiền theo geo, đây là rò kinh điển.',
@@ -450,22 +469,9 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     }))
   }
 
-  // 5. CPC tăng nhanh + biên mỏng → CẢNH BÁO MARGIN.
-  if (health.cpcTrendPct != null && health.cpcTrendPct > CFG.CPC_TREND_ALERT
-      && (health.roi == null || health.roi < CFG.TARGET_ROI)) {
-    suggestions.push(makeSuggestion({
-      type: 'margin_alert', severity: 'medium', confidence: 'roi', scope,
-      title: 'Cảnh báo margin — CPC đang tăng',
-      detail: `CPC nửa sau kỳ tăng ${pct(health.cpcTrendPct)} so nửa đầu, trong khi ROI chưa vượt ${CFG.TARGET_ROI}%. Biên lợi nhuận đang bị bào mòn.`,
-      evidence: [
-        { metric: 'Xu hướng CPC', value: `+${pct(health.cpcTrendPct)}` },
-        { metric: 'CPC trung bình', value: money(health.avgCpc) },
-        { metric: 'ROI', value: health.roi != null ? pct(health.roi) : '—' },
-      ],
-      recommendedAction: 'Rà bid strategy, thêm negative keyword, kiểm giá thầu đối thủ; cân nhắc giảm bid.',
-      impactScore: totalSpend * 0.5,
-    }))
-  }
+  // (Rule 5 cũ "CPC nửa sau +25%" đã bỏ — Optimizer v2 thay bằng detector trend
+  //  Theil–Sen 21 ngày trong src/lib/optimizer/anomaly.ts: baseline dài hơn, kháng
+  //  nhiễu, không trùng card với anomaly CPC. cpcTrendPct vẫn tính cho health score.)
 
   // 6. Lãi theo THỨ trong tuần (ROI ở mức ngày vẫn hợp lệ) → gợi ý dayparting.
   //    Xấp xỉ profit ngày = doanh thu − ad_spend (bỏ qua rental/other để bắt tín hiệu).
@@ -487,13 +493,15 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
       byWeekday.set(wd, cur)
     }
     const WD = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7']
-    const daypartMinSpend = totalSpend * CFG.DAYPART_SPEND_FRACTION
+    const daypartMinSpend = totalSpend * cfg.DAYPART_SPEND_FRACTION
     const losers = [...byWeekday.entries()]
       .filter(([, v]) => v.profit < 0 && v.spend >= daypartMinSpend)
       .sort((a, b) => a[1].profit - b[1].profit)
     if (enoughData && totalRevenue > 0 && losers.length) {
       const [wd, v] = losers[0]
       suggestions.push(makeSuggestion({
+        ruleKey: 'daypart_loss',
+        params: { weekday: wd, loss: -v.profit, spend: v.spend },
         type: 'daypart', severity: 'medium', confidence: 'roi', scope,
         title: 'Dayparting — có ngày trong tuần đang lỗ',
         detail: `${WD[wd]} lỗ khoảng ${money(-v.profit)} (chi ${money(v.spend)}). Cân nhắc giảm bid/tắt lịch ngày này.`,
@@ -508,58 +516,22 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     }
   }
 
-  // 6b. Cảnh báo momentum — so kỳ trước cùng độ dài (WoW). Chỉ chạy khi có health.trend.
-  const tr = health.trend
-  if (tr) {
-    // Chi phí tăng nhưng DT Màn hình giảm → xấu rõ.
-    if (tr.spendPct != null && tr.spendPct > CFG.WOW_SPEND_UP && tr.revenuePct != null && tr.revenuePct < -CFG.WOW_REV_DOWN) {
-      suggestions.push(makeSuggestion({
-        type: 'margin_alert', severity: 'high', confidence: 'roi', scope,
-        title: 'Xấu đi so kỳ trước — chi phí tăng nhưng doanh thu giảm',
-        detail: `So kỳ trước: chi phí ${tr.spendPct >= 0 ? '+' : ''}${pct(tr.spendPct)} nhưng DT Màn hình ${pct(tr.revenuePct)}. Hiệu quả đang tụt.`,
-        evidence: [
-          { metric: 'Chi phí WoW', value: `${tr.spendPct >= 0 ? '+' : ''}${pct(tr.spendPct)}` },
-          { metric: 'DT Màn hình WoW', value: pct(tr.revenuePct) },
-        ],
-        recommendedAction: 'Rà nguyên nhân (CPC, cạnh tranh, mùa vụ); cân nhắc giảm chi/thu hẹp về phần còn hiệu quả.',
-        impactScore: totalCost * 0.5,
-      }))
-    }
-    // ROI tụt mạnh so kỳ trước.
-    if (tr.roiDelta != null && tr.roiDelta < -CFG.WOW_ROI_DROP) {
-      suggestions.push(makeSuggestion({
-        type: 'margin_alert', severity: 'medium', confidence: 'roi', scope,
-        title: 'ROI giảm mạnh so kỳ trước',
-        detail: `ROI giảm ${Math.abs(tr.roiDelta).toFixed(0)} điểm % so kỳ trước${health.roi != null ? ` (nay ${pct(health.roi)})` : ''}.`,
-        evidence: [{ metric: 'ROI WoW', value: `${tr.roiDelta >= 0 ? '+' : ''}${tr.roiDelta.toFixed(0)} đpt` }],
-        recommendedAction: 'Kiểm CPC/độ cạnh tranh/chất lượng traffic; siết keyword & negative.',
-        impactScore: totalCost * 0.3,
-      }))
-    }
-    // CPC tăng nhanh so kỳ trước (tín hiệu chi phí).
-    if (tr.cpcPct != null && tr.cpcPct > CFG.WOW_CPC_ALERT) {
-      suggestions.push(makeSuggestion({
-        type: 'margin_alert', severity: 'medium', confidence: 'engagement', scope,
-        title: 'CPC tăng so kỳ trước',
-        detail: `CPC +${pct(tr.cpcPct)} so kỳ trước (nay ${money(health.avgCpc)}). Chi phí traffic đang đắt lên.`,
-        evidence: [
-          { metric: 'CPC WoW', value: `+${pct(tr.cpcPct)}` },
-          { metric: 'CPC hiện tại', value: money(health.avgCpc) },
-        ],
-        recommendedAction: 'Thêm negative keyword, xem lại bid/đối thủ; cân nhắc siết match type.',
-        impactScore: totalSpend * 0.2,
-      }))
-    }
-  }
+  // (Cụm 6b cũ "so kỳ trước" — WoW spend↑&rev↓ / ROI drop / CPC alert — đã bỏ.
+  //  Optimizer v2 thay bằng anomaly engine (z-score trên baseline 28 ngày, biết thứ
+  //  trong tuần) trong src/lib/optimizer/anomaly.ts: cùng bắt các tình huống đó nhưng
+  //  ít báo sai hơn và không sinh 2 card cho cùng 1 vấn đề. health.trend vẫn tính
+  //  để hiển thị trên HealthScorecard.)
 
   // ── Engagement-based (confidence 'engagement' — "cần xem xét") ─────────────
 
   // 7. CTR thấp → nghi mẫu quảng cáo kém.
-  if (health.impressions >= CFG.MIN_IMPR_FOR_CTR && health.ctr < CFG.CTR_FLOOR) {
+  if (health.impressions >= cfg.MIN_IMPR_FOR_CTR && health.ctr < cfg.CTR_FLOOR) {
     suggestions.push(makeSuggestion({
+      ruleKey: 'low_ctr_creative',
+      params: { ctr: health.ctr, impressions: health.impressions },
       type: 'fix_creative', severity: 'medium', confidence: 'engagement', scope,
       title: 'CTR thấp — xem lại mẫu quảng cáo',
-      detail: `CTR ${pct(health.ctr)} dưới ngưỡng ${CFG.CTR_FLOOR}% với ${count(health.impressions)} hiển thị. Quảng cáo có thể chưa đủ hấp dẫn/đúng truy vấn.`,
+      detail: `CTR ${pct(health.ctr)} dưới ngưỡng ${cfg.CTR_FLOOR}% với ${count(health.impressions)} hiển thị. Quảng cáo có thể chưa đủ hấp dẫn/đúng truy vấn.`,
       evidence: [
         { metric: 'CTR', value: pct(health.ctr) },
         { metric: 'Hiển thị', value: count(health.impressions) },
@@ -574,17 +546,19 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   const kwAgg = aggregateKeywords(input.keywords ?? [])
   const stAgg = aggregateSearchTerms(input.searchTerms ?? [])
   const metricCost = metrics.reduce((s, m) => s + m.cost, 0)
-  const sigCost = metricCost * CFG.KW_COST_FRACTION
+  const sigCost = metricCost * cfg.KW_COST_FRACTION
   const roiNeg = health.roi != null && health.roi < 0
 
   const badKws = kwAgg.filter(k =>
     (k.clicks === 0 && k.cost > 0) ||
-    (k.cost >= sigCost && (k.ctr < health.ctr * CFG.LOW_CTR_RATIO || (k.quality_score != null && k.quality_score <= CFG.QS_LOW))),
+    (k.cost >= sigCost && (k.ctr < health.ctr * cfg.LOW_CTR_RATIO || (k.quality_score != null && k.quality_score <= cfg.QS_LOW))),
   )
   if (badKws.length) {
     const wasted = badKws.reduce((s, k) => s + k.cost, 0)
     const top = badKws.slice(0, 3).map(k => k.keyword_text || '(?)').join(', ')
     suggestions.push(makeSuggestion({
+      ruleKey: 'pause_keyword',
+      params: { count: badKws.length, wasted },
       type: 'pause_keyword', severity: roiNeg ? 'high' : 'medium', confidence: 'engagement',
       scope: { level: 'keyword', label: `${badKws.length} keyword`, campaign_id, project_id },
       title: `${badKws.length} keyword hiệu suất kém — cân nhắc tắt`,
@@ -608,12 +582,14 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
 
   const badTerms = stAgg.filter(t =>
     (t.clicks === 0 && t.cost > 0) ||
-    (t.cost >= sigCost && t.ctr < health.ctr * CFG.LOW_CTR_RATIO),
+    (t.cost >= sigCost && t.ctr < health.ctr * cfg.LOW_CTR_RATIO),
   )
   if (badTerms.length) {
     const wasted = badTerms.reduce((s, t) => s + t.cost, 0)
     const top = badTerms.slice(0, 3).map(t => `"${t.search_term}"`).join(', ')
     suggestions.push(makeSuggestion({
+      ruleKey: 'add_negative',
+      params: { count: badTerms.length, wasted },
       type: 'add_negative', severity: roiNeg ? 'high' : 'medium', confidence: 'engagement',
       scope: { level: 'search_term', label: `${badTerms.length} search term`, campaign_id, project_id },
       title: `${badTerms.length} search term nghi phí rác — cân nhắc negative`,
@@ -638,6 +614,8 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   if (broadKws.length) {
     const broadCost = broadKws.reduce((s, k) => s + k.cost, 0)
     suggestions.push(makeSuggestion({
+      ruleKey: 'tighten_broad',
+      params: { count: broadKws.length, broadCost },
       type: 'tighten_match', severity: roiNeg ? 'high' : 'medium', confidence: 'engagement',
       scope: { level: 'keyword', label: `${broadKws.length} broad keyword`, campaign_id, project_id },
       title: `${broadKws.length} keyword broad match đang chi tiêu lớn — siết về phrase/exact`,
@@ -656,14 +634,16 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   //       → thêm exact riêng để kiểm soát bid cho đúng cụm ăn tiền.
   const kwTextSet = new Set(kwAgg.map(k => (k.keyword_text || '').toLowerCase().trim()).filter(Boolean))
   const winners = stAgg.filter(t =>
-    t.clicks >= CFG.HARVEST_MIN_CLICKS &&
+    t.clicks >= cfg.HARVEST_MIN_CLICKS &&
     t.cost >= sigCost &&
-    health.ctr > 0 && t.ctr >= health.ctr * CFG.HARVEST_CTR_RATIO &&
+    health.ctr > 0 && t.ctr >= health.ctr * cfg.HARVEST_CTR_RATIO &&
     !kwTextSet.has(t.search_term.toLowerCase().trim()),
   )
   if (winners.length) {
     const winCost = winners.reduce((s, t) => s + t.cost, 0)
     suggestions.push(makeSuggestion({
+      ruleKey: 'harvest_keyword',
+      params: { count: winners.length, winCost, terms: winners.slice(0, 8).map(t => t.search_term) },
       type: 'harvest_keyword', severity: 'medium', confidence: 'engagement',
       scope: { level: 'search_term', label: `${winners.length} cụm thắng`, campaign_id, project_id },
       title: `${winners.length} search term đang thắng — thêm làm keyword exact riêng`,
@@ -679,6 +659,53 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     }))
   }
 
+  // 7c-4. Chẩn bệnh Quality Score theo 3 thành phần (Optimizer v2) — dữ liệu đã có
+  //       sẵn trong keyword_metrics.qs_* nhưng trước đây chỉ dùng QS tổng. Nói rõ
+  //       "điểm thấp VÌ trang đích" / "VÌ ad lệch keyword" thay vì chỉ khuyên tắt.
+  //       (qs_expected_ctr BELOW_AVERAGE đã được rule creative/CTR hiện có bao phủ.)
+  {
+    const qsSig = kwAgg.filter(k =>
+      k.quality_score != null && k.quality_score <= cfg.QS_DIAG_MAX && k.cost >= sigCost)
+    const lpBad = qsSig.filter(k => k.qs_landing_page === 'BELOW_AVERAGE')
+    const adBad = qsSig.filter(k => k.qs_ad_relevance === 'BELOW_AVERAGE' && k.qs_landing_page !== 'BELOW_AVERAGE')
+    if (lpBad.length) {
+      const wasted = lpBad.reduce((s, k) => s + k.cost, 0)
+      suggestions.push(makeSuggestion({
+        ruleKey: 'fix_landing_page',
+        params: { count: lpBad.length, wasted },
+        type: 'fix_landing_page', severity: 'medium', confidence: 'engagement',
+        scope: { level: 'keyword', label: `${lpBad.length} keyword`, campaign_id, project_id },
+        title: `${lpBad.length} keyword điểm thấp VÌ trang đích — sửa landing page`,
+        detail: `Google chấm thành phần "Landing page experience" dưới trung bình cho các keyword này (QS ≤ ${cfg.QS_DIAG_MAX}). Trang đích chậm/lệch nội dung làm CPC đắt lên ở mọi phiên đấu giá — sửa trang đích rẻ hơn nhiều so với tăng bid.`,
+        evidence: [
+          { metric: 'Keyword bị chấm kém', value: String(lpBad.length) },
+          { metric: 'Chi phí liên quan', value: money(wasted) },
+        ],
+        recommendedAction: 'Tăng tốc độ tải (ảnh, script), đưa từ khóa vào tiêu đề/nội dung trang, khớp nội dung trang với ý định tìm kiếm. Sau 1–2 tuần Google chấm lại QS.',
+        impactScore: wasted * 0.3,
+        items: lpBad.slice(0, 8).map(k => ({ label: k.keyword_text || '(?)', cost: k.cost, meta: `QS ${k.quality_score} · landing kém` })),
+      }))
+    }
+    if (adBad.length) {
+      const wasted = adBad.reduce((s, k) => s + k.cost, 0)
+      suggestions.push(makeSuggestion({
+        ruleKey: 'fix_ad_relevance',
+        params: { count: adBad.length, wasted },
+        type: 'fix_creative', severity: 'medium', confidence: 'engagement',
+        scope: { level: 'keyword', label: `${adBad.length} keyword`, campaign_id, project_id },
+        title: `${adBad.length} keyword điểm thấp VÌ ad lệch keyword — viết lại mẫu quảng cáo`,
+        detail: `Google chấm thành phần "Ad relevance" dưới trung bình: mẫu quảng cáo không nhắc tới từ khóa người dùng gõ (QS ≤ ${cfg.QS_DIAG_MAX}). Nhóm lại ad group cho chặt chủ đề + đưa keyword vào tiêu đề ad sẽ kéo QS lên, CPC rẻ đi.`,
+        evidence: [
+          { metric: 'Keyword bị chấm kém', value: String(adBad.length) },
+          { metric: 'Chi phí liên quan', value: money(wasted) },
+        ],
+        recommendedAction: 'Tách ad group theo cụm keyword sát nghĩa; viết tiêu đề ad chứa đúng từ khóa; xóa keyword lạc chủ đề khỏi ad group.',
+        impactScore: wasted * 0.3,
+        items: adBad.slice(0, 8).map(k => ({ label: k.keyword_text || '(?)', cost: k.cost, meta: `QS ${k.quality_score} · ad lệch keyword` })),
+      }))
+    }
+  }
+
   // 7d. Phân khúc device/giờ/geo (P3). Mặc định engagement (CTR); loại segment nào có
   //     doanh thu breakdown từ network (Engine thu, đủ độ phủ) → nâng lên test LỢI NHUẬN
   //     thật với confidence 'roi'.
@@ -689,17 +716,18 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
   //    → ROI phồng (vd chỉ có 3/12 ngày chi phí → ROI cả trăm nghìn %).
   //  • doanh thu breakdown KHÔNG vượt kỳ (snapshot window_end tổng-cả-kỳ ≠ DT khoảng ngày).
   const segCostCoverage = input.segmentCostCoverage ?? 1
-  const segCostOk = segCostCoverage >= CFG.SEG_COST_COVERAGE_MIN
+  const segCostOk = segCostCoverage >= cfg.SEG_COST_COVERAGE_MIN
   const revenueKindOk = !bdMeta?.revenueOverRange
   const hasSegmentRevenue = (input.segmentRevenue?.length ?? 0) > 0
-  const hasBreakdownRevenue = hasSegmentRevenue && bdCoverage >= CFG.BD_COVERAGE_MIN && segCostOk && revenueKindOk
+  const hasBreakdownRevenue = hasSegmentRevenue && bdCoverage >= cfg.BD_COVERAGE_MIN && segCostOk && revenueKindOk
   // Có DT breakdown + phủ đủ DT, nhưng LỆCH KỲ với chi phí (thiếu ngày chi phí HOẶC doanh thu snapshot
   // vượt kỳ) → KHÔNG tính ROI theo quốc gia/thiết bị (tránh số rác kiểu 200.000%). Báo rõ 1 dòng lý do.
-  if (hasSegmentRevenue && bdCoverage >= CFG.BD_COVERAGE_MIN && (!segCostOk || !revenueKindOk)) {
+  if (hasSegmentRevenue && bdCoverage >= cfg.BD_COVERAGE_MIN && (!segCostOk || !revenueKindOk)) {
     const reasons: string[] = []
     if (!segCostOk) reasons.push(`chi phí Google Ads theo quốc gia/thiết bị chỉ phủ ${pct(segCostCoverage * 100, 0)} chi phí camp (đồng bộ thiếu/cũ ngày)`)
     if (!revenueKindOk) reasons.push('doanh thu network theo quốc gia là snapshot tổng-cả-kỳ, KHÔNG cùng kỳ với khoảng ngày đang xem')
     suggestions.push(makeSuggestion({
+      ruleKey: 'data_quality_segment',
       type: 'data_quality', severity: 'low', confidence: 'engagement', scope,
       title: 'ROI theo quốc gia/thiết bị CHƯA đáng tin — thiếu dữ liệu khớp kỳ',
       detail: `Chưa hiện gợi ý tối ưu theo quốc gia/thiết bị vì ${reasons.join(' và ')}. Cần dữ liệu chi phí + doanh thu CÙNG kỳ (theo ngày) mới tính ROI quốc gia chính xác.`,
@@ -728,15 +756,15 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     const revMode = hasBreakdownRevenue && segs.some(s => s.revenue != null)
     const bad = revMode
       ? segs.filter(s =>
-          s.cost >= sigCost && s.clicks >= CFG.BD_SEG_MIN_CLICKS && s.revenue != null &&
+          s.cost >= sigCost && s.clicks >= cfg.BD_SEG_MIN_CLICKS && s.revenue != null &&
           (stype === 'geo'
             // geo 0 DT có rule geo_exclude riêng (7e) — ở đây chỉ bắt geo lỗ sâu CÓ doanh thu
-            ? ((s.revenue ?? 0) > 0 && s.roi != null && s.roi < CFG.LOSS_ROI)
-            : (s.revenue === 0 || (s.roi != null && s.roi < CFG.LOSS_ROI))),
+            ? ((s.revenue ?? 0) > 0 && s.roi != null && s.roi < cfg.LOSS_ROI)
+            : (s.revenue === 0 || (s.roi != null && s.roi < cfg.LOSS_ROI))),
         )
       : segs.filter(s =>
           (s.clicks === 0 && s.cost > 0) ||
-          (s.cost >= sigCost && s.ctr < health.ctr * CFG.LOW_CTR_RATIO),
+          (s.cost >= sigCost && s.ctr < health.ctr * cfg.LOW_CTR_RATIO),
         )
     if (!bad.length) continue
     const wasted = bad.reduce((s, x) => s + x.cost, 0)
@@ -744,6 +772,9 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     const meta = SEG_META[stype]
     const top = bad.slice(0, 3).map(fmtSegVal).join(', ')
     suggestions.push(makeSuggestion({
+      ruleKey: 'segment_perf',
+      dedupeKey: `segment_perf:${stype}`,
+      params: { segmentType: stype, count: bad.length, wasted, badRevenue, revMode },
       type: meta.type,
       // GIỜ: hạ độ tin cậy — ROI theo giờ không đáng tin (múi giờ chưa canh + độ trễ chuyển đổi)
       // → luôn severity 'low', không bao giờ "gấp". device/geo giữ nguyên.
@@ -790,13 +821,15 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     // (có thể nằm trong "khác") → KHÔNG khuyên loại trừ, tránh cắt nhầm nước đang ra tiền.
     const zeroRev = (geoRevTotal > 0 && !bdMeta?.geoCapped)
       ? geoSegs.filter(s =>
-          (s.revenue ?? 0) === 0 && s.clicks >= CFG.BD_SEG_MIN_CLICKS &&
+          (s.revenue ?? 0) === 0 && s.clicks >= cfg.BD_SEG_MIN_CLICKS &&
           s.cost >= Math.max(sigCost, metricCost * 0.05))
       : []
     if (zeroRev.length) {
       const wasted = zeroRev.reduce((s, x) => s + x.cost, 0)
       const top = zeroRev.slice(0, 3).map(fmtSegVal).join(', ')
       suggestions.push(makeSuggestion({
+        ruleKey: 'geo_exclude',
+        params: { geos: zeroRev.map(s => s.segment_value), wasted },
         type: 'geo_exclude', severity: roiNeg ? 'high' : 'medium', confidence: 'roi',
         scope: { level: 'segment', label: `${zeroRev.length} quốc gia`, campaign_id, project_id, segment_type: 'geo' },
         title: `${zeroRev.length} quốc gia tiêu tiền nhưng 0 doanh thu — loại trừ`,
@@ -816,17 +849,19 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
       }))
     }
     const scalable = geoSegs.filter(s =>
-      s.roi != null && s.roi >= CFG.TARGET_ROI && (s.revenue ?? 0) >= CFG.BD_MIN_SEG_REVENUE &&
+      s.roi != null && s.roi >= cfg.TARGET_ROI && (s.revenue ?? 0) >= cfg.BD_MIN_SEG_REVENUE &&
       metricCost > 0 && s.cost / metricCost < 0.5,
     )
     if (scalable.length) {
       const scaleRev = scalable.reduce((s, x) => s + (x.revenue ?? 0), 0)
       const top = scalable.slice(0, 3).map(s => `${fmtSegVal(s)} (ROI ${pct(s.roi!, 0)})`).join(', ')
       suggestions.push(makeSuggestion({
+        ruleKey: 'geo_scale',
+        params: { geos: scalable.map(s => s.segment_value), scaleRev },
         type: 'geo_scale', severity: 'medium', confidence: 'roi',
         scope: { level: 'segment', label: `${scalable.length} quốc gia lãi`, campaign_id, project_id, segment_type: 'geo' },
         title: `${scalable.length} quốc gia đang lãi tốt — tách camp / tăng bid để scale`,
-        detail: `Theo doanh thu thật từ network: ${top} sinh ${money(scaleRev)} với ROI vượt ${CFG.TARGET_ROI}% nhưng mới chiếm phần nhỏ chi phí — còn dư địa scale.`,
+        detail: `Theo doanh thu thật từ network: ${top} sinh ${money(scaleRev)} với ROI vượt ${cfg.TARGET_ROI}% nhưng mới chiếm phần nhỏ chi phí — còn dư địa scale.`,
         evidence: [
           { metric: 'Quốc gia lãi', value: String(scalable.length) },
           { metric: 'DT các nước này', value: money(scaleRev) },
@@ -849,6 +884,7 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     const hasBdData = (input.segmentRevenue?.length ?? 0) > 0
     const wantSubId = hasBdData && (bdMeta?.subIdCoverage ?? 0) === 0
     suggestions.push(makeSuggestion({
+      ruleKey: 'setup_tracking',
       type: 'setup_tracking', severity: 'low', confidence: 'engagement', scope,
       title: wantSubId
         ? 'Gắn sub-id vào tracking link — mở khóa attribution theo campaign'
@@ -872,7 +908,7 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     ? Math.floor((Date.now() - new Date(input.campStartDate + 'T00:00:00Z').getTime()) / 86400000)
     : null
   const dataMaturity: 'young' | 'ok' =
-    days < CFG.MIN_DAYS_TO_JUDGE || (campAgeDays != null && campAgeDays >= 0 && campAgeDays < CFG.CAMP_YOUNG_DAYS)
+    days < cfg.MIN_DAYS_TO_JUDGE || (campAgeDays != null && campAgeDays >= 0 && campAgeDays < cfg.CAMP_YOUNG_DAYS)
       ? 'young' : 'ok'
 
   // Lộ trình test camp mới (Launch Checklist) — chỉ khác null khi camp còn non.
@@ -918,9 +954,9 @@ export function optimizeCampaign(input: OptimizerInput): CampaignOptimizerResult
     winDayAnalysis,
     launchPlan,
     breakdowns: {
-      keywords: kwAgg.slice(0, CFG.BREAKDOWN_LIMIT),
-      searchTerms: stAgg.slice(0, CFG.BREAKDOWN_LIMIT),
-      segments: segAgg.slice(0, CFG.BREAKDOWN_LIMIT * 3),
+      keywords: kwAgg.slice(0, cfg.BREAKDOWN_LIMIT),
+      searchTerms: stAgg.slice(0, cfg.BREAKDOWN_LIMIT),
+      segments: segAgg.slice(0, cfg.BREAKDOWN_LIMIT * 3),
     },
   }
 }

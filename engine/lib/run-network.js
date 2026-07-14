@@ -142,17 +142,17 @@ export async function runAccount(config, account, dryRun, kind = 'revenue') {
   // (revenue_breakdown, KHÔNG vào P&L — tránh double-count doanh thu).
   let batch = []
   let breakdownBatch = []
-  let totalMapped = 0, totalInvalidAll = 0
+  let totalMapped = 0, totalInvalidAll = 0, totalSkippedAll = 0
   let anyOk = false // có report nào qua validate (kể cả 0 dòng khi min_mapped_rows=0)
   const failReasons = []
   for (const [ri, payloads] of payloadsByReport) {
     const report = scoped.reports[ri] // index khớp mảng ĐÃ lọc theo kind (đã truyền vào capture)
     if (!report) continue
     const isBreakdown = report.kind === 'breakdown'
-    let mappedR = [], invalidR = 0, samplesR = []
+    let mappedR = [], invalidR = 0, skippedR = 0, samplesR = []
     for (const { payload, date } of payloads) {
       const rawRows = extractRows(payload, report.rows_path)
-      const { mapped, invalid, errorSamples } = isBreakdown
+      const { mapped, invalid, skipped, errorSamples } = isBreakdown
         ? mapBreakdownRows(rawRows, report.mapping, report.dimensions, {
             timezone: config.timezone,
             // per_day: ngày = NGÀY TRUY VẤN (bơm từ capture) → dữ liệu quốc gia × ngày thật.
@@ -160,16 +160,18 @@ export async function runAccount(config, account, dryRun, kind = 'revenue') {
             windowEndDate: report.per_day ? date : (report.date_mode === 'window_end' ? window.toISO : null),
           })
         : mapRows(rawRows, report.mapping)
-      mappedR.push(...mapped); invalidR += invalid; samplesR.push(...errorSamples)
+      mappedR.push(...mapped); invalidR += invalid; skippedR += skipped ?? 0; samplesR.push(...errorSamples)
     }
-    totalMapped += mappedR.length; totalInvalidAll += invalidR
+    totalMapped += mappedR.length; totalInvalidAll += invalidR; totalSkippedAll += skippedR
+    // Dòng ô-trống (skippedR) là dòng phụ/tổng của bảng hoặc click chưa chuyển đổi —
+    // KHÔNG tính vào tỷ lệ lỗi (trước đây tính → vượt ngưỡng → vứt oan cả report).
     const totalR = mappedR.length + invalidR
     // 0 dòng (totalR=0): coi tỷ lệ lỗi = OK (nguồn rỗng hợp lệ khi min_mapped_rows=0, vd payout chưa có khoản nào).
     const ratioOk = totalR === 0 ? true : invalidR / totalR <= report.validation.max_invalid_row_ratio
     const v = report.validation
     if (mappedR.length < v.min_mapped_rows || !ratioOk) {
-      failReasons.push(`report "${report.name}" [${isBreakdown ? 'breakdown' : report.revenue_type}]: ${mappedR.length}/${totalR} (lỗi ${invalidR}) — ${samplesR.slice(0, 2).join(' | ') || '?'}`)
-      log.warn(`bỏ qua report "${report.name}" [${isBreakdown ? 'breakdown' : report.revenue_type}]: map ${mappedR.length}/${totalR}, lỗi ${invalidR}. Mẫu: ${samplesR.slice(0, 2).join(' | ') || '(không có)'}`, tag)
+      failReasons.push(`report "${report.name}" [${isBreakdown ? 'breakdown' : report.revenue_type}]: ${mappedR.length}/${totalR} (lỗi ${invalidR}${skippedR ? `, ${skippedR} dòng trống bỏ qua` : ''}) — ${samplesR.slice(0, 2).join(' | ') || '?'}`)
+      log.warn(`bỏ qua report "${report.name}" [${isBreakdown ? 'breakdown' : report.revenue_type}]: map ${mappedR.length}/${totalR}, lỗi ${invalidR}${skippedR ? `, ${skippedR} dòng trống` : ''}. Mẫu: ${samplesR.slice(0, 2).join(' | ') || '(không có)'}`, tag)
       continue
     }
     anyOk = true // report qua validate (kể cả rỗng)
@@ -199,7 +201,7 @@ export async function runAccount(config, account, dryRun, kind = 'revenue') {
 
   counts.records_mapped = isBd ? breakdownBatch.length : batch.length
   log.info(
-    `map OK [${kind}]: ${totalMapped} dòng thô → ${counts.records_mapped} dòng sau gộp (${totalInvalidAll} dòng lỗi bỏ qua)`,
+    `map OK [${kind}]: ${totalMapped} dòng thô → ${counts.records_mapped} dòng sau gộp (${totalInvalidAll} dòng lỗi${totalSkippedAll ? `, ${totalSkippedAll} dòng trống` : ''} bỏ qua)`,
     tag
   )
 

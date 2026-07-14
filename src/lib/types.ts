@@ -269,6 +269,7 @@ export type OptSuggestionType =
   | 'geo_exclude'      // quốc gia tiêu tiền nhưng 0 doanh thu breakdown → loại trừ (ROI thật)
   | 'geo_scale'        // quốc gia ROI cao theo doanh thu breakdown → tách camp / tăng bid
   | 'data_quality'     // dữ liệu chưa đủ/khớp kỳ để tính ROI theo segment → ẩn gợi ý + báo lý do
+  | 'fix_landing_page' // QS thành phần landing BELOW_AVERAGE → sửa trang đích (Optimizer v2)
 
 export type OptSeverity = 'high' | 'medium' | 'low'
 // 'roi' = dựa trên doanh thu thật (chắc chắn); 'engagement' = chỉ tín hiệu hiệu
@@ -313,6 +314,10 @@ export interface OptimizationSuggestion {
   recommendedAction: string
   impactScore: number   // ~ chi phí đang đặt cược (đơn vị tiền tài khoản) → xếp hạng + hiển thị $
   items?: OptItem[]      // các mục cụ thể cần xử lý (top offenders)
+  // Optimizer v2 — persist + vòng đời (optional để không phá code cũ):
+  ruleKey?: string       // định danh rule ổn định ('bid_ceiling', 'geo_exclude'...) → reliability per-rule
+  dedupeKey?: string     // ruleKey + scope — mỗi (campaign, dedupeKey) chỉ 1 đề xuất đang mở trong DB
+  params?: Record<string, unknown>  // giá trị máy đọc lúc trigger (để engine đánh giá kết quả sau khi áp)
 }
 
 export interface CampaignHealth {

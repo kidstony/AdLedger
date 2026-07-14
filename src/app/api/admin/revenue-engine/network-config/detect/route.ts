@@ -129,6 +129,13 @@ const TRACKER_HOST = /intercom\.io|sentry\.io|nr-data\.net|yandex|google-analyti
 function isTrackerUrl(url: string): boolean {
   try { return TRACKER_HOST.test(new URL(url).host) } catch { return false }
 }
+// File tĩnh của website (manifest/favicon/ảnh/css/js/font...) — KHÔNG bao giờ là dữ liệu
+// doanh thu. Đã từng nhận nhầm /assets/favicon/manifest.json (mảng icons có density/src)
+// thành "report thiết bị" → ghi doanh thu giả. Chỉ áp cho nguồn XHR (bảng DOM dùng URL trang).
+const STATIC_ASSET = /favicon|\.webmanifest|manifest\.json|\.(png|jpe?g|gif|svg|ico|css|js|mjs|map|woff2?|ttf|otf|eot|mp4|webm|txt|xml)(\?|#|$)/i
+function isStaticAssetUrl(url: string): boolean {
+  try { const u = new URL(url); return STATIC_ASSET.test(u.pathname) } catch { return STATIC_ASSET.test(url) }
+}
 
 function pickRevenueField(rows: Row[], dateField: string | null): string | null {
   // Loại cột ngày (dateField + cột date-like khác, vd col_2 trùng "Created"): ngày parse ra
@@ -348,6 +355,7 @@ export async function POST(req: Request) {
   const candidates: { url: string; page_url: string | null; via_tab: string | null; req_url: string | null; path: string; arr: Row[]; kind: string; table_index: number | null; headers?: string[]; visible?: boolean }[] = []
   for (const cap of captured) {
     if (isTrackerUrl(cap.url)) continue // bỏ nhiễu tracker/support (bảng DOM host dashboard nên không dính)
+    if ((cap.kind ?? 'xhr') !== 'table' && isStaticAssetUrl(cap.url)) continue // bỏ file tĩnh (manifest/favicon/js...)
     const found: { path: string; arr: Row[] }[] = []
     findArrays(cap.payload, '', found)
     // Bảng HTML: mang header theo mọi candidate để dựng nhãn cột (col_N → tên header) khi map.

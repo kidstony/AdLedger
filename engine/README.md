@@ -21,6 +21,21 @@ Chạy migration `../supabase/migration_revenue_engine.sql` trong Supabase SQL E
 
 Trên máy dev đã có `.env.local` ở root repo thì không cần tạo `engine/.env` — engine tự đọc fallback.
 
+### Ping Optimizer v2 (tùy chọn nhưng nên bật)
+
+Sau mỗi chu kỳ sync doanh thu, worker gọi `POST <APP_URL>/api/optimize/analyze` để app
+chạy phân tích nền (phát hiện đột biến, đề xuất tối ưu, chấm phiếu test) trên dữ liệu vừa thu.
+Thêm vào `engine/.env`:
+
+```bash
+APP_URL=https://<app-cua-ban>.vercel.app   # URL app Next.js (không có / cuối)
+ANALYZE_SECRET=<chuoi-ngau-nhien-dai>      # PHẢI trùng env ANALYZE_SECRET trên Vercel
+# ANALYZE_FALLBACK_HOURS=6                 # nhịp ping dự phòng (mặc định 6h)
+```
+
+Thiếu 2 biến trên thì worker bỏ qua ping (không lỗi) — app vẫn tự phân tích khi
+Google Ads Script đẩy dữ liệu hoặc khi user mở trang Tối Ưu Camp.
+
 ## Thêm một network mới
 
 1. Copy `configs/_template.json` → `configs/<network_id>.json` (đọc chú thích `_comment` trong template).

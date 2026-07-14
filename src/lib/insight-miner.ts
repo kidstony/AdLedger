@@ -52,7 +52,8 @@ function fmtLabel(dim: Dim, value: string): string {
 }
 
 let seq = 0
-const sug = (s: Omit<OptimizationSuggestion, 'id'>): OptimizationSuggestion => ({ id: `ins-${++seq}`, ...s })
+const sug = (s: Omit<OptimizationSuggestion, 'id'>): OptimizationSuggestion =>
+  ({ ...s, id: `ins-${++seq}`, dedupeKey: s.dedupeKey ?? s.ruleKey })
 
 export function mineWinDayInsights(input: MinerInput): {
   analysis: WinDayAnalysis | null
@@ -136,6 +137,8 @@ export function mineWinDayInsights(input: MinerInput): {
   if (positives.length) {
     const top = positives.slice(0, INSIGHT_CFG.MAX_ITEMS)
     suggestions.push(sug({
+      ruleKey: 'insight_win_lift',
+      params: { lifts: top.map(l => ({ dim: l.dim, value: l.value, label: l.label, liftPp: l.liftPp, cost: l.cost })) },
       type: 'split_test', severity: 'medium', confidence: 'engagement', scope,
       title: `Giả thuyết — ngày thắng nghiêng về ${top.slice(0, 3).map(l => l.label).join(', ')}`,
       detail: `So ${winDays.length} ngày lãi với ${loseDays.length} ngày lỗ: ngày nào tiền quảng cáo dồn vào các phân khúc này thì ngày đó thường LÃI. Mới là tương quan (chưa chắc nhân quả) — đáng tách ra chạy riêng để biết chắc.`,
@@ -158,6 +161,8 @@ export function mineWinDayInsights(input: MinerInput): {
   if (negatives.length) {
     const top = negatives.slice(0, INSIGHT_CFG.MAX_ITEMS)
     suggestions.push(sug({
+      ruleKey: 'insight_lose_lift',
+      params: { lifts: top.map(l => ({ dim: l.dim, value: l.value, label: l.label, liftPp: l.liftPp, cost: l.cost })) },
       type: 'split_test', severity: 'medium', confidence: 'engagement', scope,
       title: `Giả thuyết — ${top.slice(0, 3).map(l => l.label).join(', ')} gắn với ngày lỗ`,
       detail: `Ngày nào tiền quảng cáo dồn vào các phân khúc này thì ngày đó thường LỖ (so ${loseDays.length} ngày lỗ với ${winDays.length} ngày lãi). Cân nhắc giảm bid / loại trừ thử rồi quan sát P&L.`,
@@ -202,6 +207,8 @@ export function mineWinDayInsights(input: MinerInput): {
       spikes.sort((a, b) => b.cost - a.cost)
       const top = spikes.slice(0, INSIGHT_CFG.MAX_ITEMS)
       suggestions.push(sug({
+        ruleKey: 'insight_spike_day',
+        params: { bestDate: bestDay.date, profit: bestDay.profit },
         type: 'split_test', severity: 'low', confidence: 'engagement', scope,
         title: `Giả thuyết — đột biến đúng ngày lãi nhất (${bestDay.date})`,
         detail: `Ngày lãi nhất (+${money(bestDay.profit)}) có phân khúc/cụm từ bùng chi tiêu bất thường so với các ngày khác. Có thể chính là nguồn tạo đột biến doanh thu — đáng test tách riêng.`,

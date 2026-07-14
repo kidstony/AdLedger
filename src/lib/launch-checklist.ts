@@ -37,7 +37,8 @@ const usdFmt = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximu
 const money = (n: number) => '$' + usdFmt.format(n)
 
 let seq = 0
-const sug = (s: Omit<OptimizationSuggestion, 'id'>): OptimizationSuggestion => ({ id: `ln-${++seq}`, ...s })
+const sug = (s: Omit<OptimizationSuggestion, 'id'>): OptimizationSuggestion =>
+  ({ ...s, id: `ln-${++seq}`, dedupeKey: s.dedupeKey ?? s.ruleKey })
 
 export function buildLaunchPlan(a: LaunchArgs): {
   plan: LaunchPlan | null
@@ -147,6 +148,7 @@ export function buildLaunchPlan(a: LaunchArgs): {
   const suggestions: OptimizationSuggestion[] = []
   if (stopLossHit && a.testBudget != null) {
     suggestions.push(sug({
+      ruleKey: 'launch_stoploss',
       type: 'cut', severity: 'high', confidence: 'roi',
       scope: { level: 'campaign', label: a.campaignLabel, campaign_id: a.campaign_id, project_id: a.project_id },
       title: 'Chạm ngân sách test mà chưa có doanh thu — DỪNG TEST',

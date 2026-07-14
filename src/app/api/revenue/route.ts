@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { after } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCallerProfile } from '@/lib/require-role'
 import { memberCanDo } from '@/lib/check-member-permission'
+import { markDirty, runAnalysis } from '@/lib/optimizer/engine'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -67,6 +69,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
   }
+
+  // Vừa nhập DT tay → phân tích lại SAU khi trả response, để đề xuất trên trang
+  // Tối Ưu Camp không bao giờ trễ hơn dữ liệu user vừa nhập.
+  const orgId = caller.organization_id ?? null
+  after(async () => {
+    try {
+      await markDirty(orgId)
+      await runAnalysis({ organizationId: orgId, trigger: 'revenue' })
+    } catch (e) {
+      console.error('[optimizer] revenue trigger failed:', e)
+    }
+  })
 
   return NextResponse.json({ success: true, count: rows.length })
 }

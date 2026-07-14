@@ -17,6 +17,10 @@ import LaunchChecklist from '@/components/optimize/LaunchChecklist'
 import NextSteps from '@/components/optimize/NextSteps'
 import BreakdownDataPanel from '@/components/optimize/BreakdownDataPanel'
 import BreakdownNetworkManager from '@/components/optimize/BreakdownNetworkManager'
+import ActionQueue from '@/components/optimize/ActionQueue'
+import TestTicketsPanel from '@/components/optimize/TestTicketsPanel'
+import AnomalyFeed from '@/components/optimize/AnomalyFeed'
+import ThresholdSettings from '@/components/optimize/ThresholdSettings'
 import type { BreakdownMeta, CampaignHealth, CampaignSettings, KeywordAgg, LaunchPlan, OptimizationSuggestion, SearchTermAgg, SegmentAgg, WinDayAnalysis } from '@/lib/types'
 
 interface OptimizeResponse {
@@ -36,15 +40,18 @@ interface OptimizeResponse {
   winDayAnalysis: WinDayAnalysis | null
   launchPlan: LaunchPlan | null
   breakdowns: { keywords: KeywordAgg[]; searchTerms: SearchTermAgg[]; segments: SegmentAgg[] }
+  // Optimizer v2 — đề xuất persist + đột biến + phiếu test (route trả thêm)
+  v2?: { persisted: boolean; lastRunAt: string | null; anomalies: unknown[]; tests: unknown[]; ruleStats: Record<string, unknown> }
   error?: string
   code?: string
 }
 
-type Mode = 'camp' | 'network' | 'advice'
+type Mode = 'camp' | 'network' | 'advice' | 'actions'
 const TABS: { key: Mode; label: string }[] = [
   { key: 'camp', label: 'Dữ liệu Camp' },
   { key: 'network', label: 'Dữ liệu Network' },
   { key: 'advice', label: 'Đề xuất tối ưu' },
+  { key: 'actions', label: 'Hành động & Test' },
 ]
 
 export default function OptimizePage() {
@@ -72,7 +79,7 @@ export default function OptimizePage() {
   const [ovLoading, setOvLoading] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
 
-  const isCampish = mode === 'camp' || mode === 'advice'
+  const isCampish = mode === 'camp' || mode === 'advice' || mode === 'actions'
   const netSelectedId = netProjectId || allProjects[0]?.project_id || ''
 
   const authFetch = async (url: string) => {
@@ -80,9 +87,10 @@ export default function OptimizePage() {
     return fetch(url, { headers: session ? { Authorization: `Bearer ${session.access_token}` } : {} }).then(r => r.json())
   }
 
-  // Chi tiết 1 camp (tab Camp/Đề xuất, khi đã chọn camp).
+  // Chi tiết 1 camp (tab Camp/Đề xuất, khi đã chọn camp). Tab Hành động & Test
+  // tự fetch API riêng (/actions, /tests, /anomalies) — không cần payload này.
   useEffect(() => {
-    if (!isCampish || !openId) return
+    if (!(mode === 'camp' || mode === 'advice') || !openId) return
     let cancelled = false
     const run = async () => {
       setLoading(true); setError(null)
@@ -99,7 +107,7 @@ export default function OptimizePage() {
     }
     run()
     return () => { cancelled = true }
-  }, [isCampish, openId, fromStr, toStr, refreshKey])
+  }, [mode, openId, fromStr, toStr, refreshKey])
 
   // Danh sách camp (tab Camp/Đề xuất, khi chưa chọn camp).
   useEffect(() => {
@@ -307,6 +315,31 @@ export default function OptimizePage() {
               </>
             )}
             {!error && !data && loadingBox}
+          </div>
+        ) : (
+          overview ? <PortfolioTable rows={overview} variant="advice" onSelect={setOpenId} /> : loadingBox
+        )
+      )}
+
+      {/* ── Tab Hành động & Test (Optimizer v2): hàng đợi đề xuất có vòng đời +
+             phiếu test + chỉ số bất thường + chỉnh ngưỡng ── */}
+      {mode === 'actions' && (
+        openId ? (
+          <div className="space-y-6">
+            {canManage && (
+              <div className="flex justify-end">
+                <ThresholdSettings />
+              </div>
+            )}
+            <ActionQueue projectId={openId} canManage={canManage} />
+            <section>
+              <h2 className="mb-2 text-sm font-semibold text-slate-700">Phiếu test</h2>
+              <TestTicketsPanel projectId={openId} canManage={canManage} />
+            </section>
+            <section>
+              <h2 className="mb-2 text-sm font-semibold text-slate-700">Chỉ số bất thường</h2>
+              <AnomalyFeed projectId={openId} canManage={canManage} />
+            </section>
           </div>
         ) : (
           overview ? <PortfolioTable rows={overview} variant="advice" onSelect={setOpenId} /> : loadingBox

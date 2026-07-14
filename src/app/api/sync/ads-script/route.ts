@@ -1,7 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { after } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { checkRateLimit } from '@/lib/rate-limit'
+import { markDirty, runAnalysis } from '@/lib/optimizer/engine'
+
+// Kích hoạt Optimizer v2 SAU khi trả response (after() — Google Ads Script có
+// timeout UrlFetchApp chặt, không được chặn). Engine tự chống chạy trùng bằng
+// claim lock 15 phút — script gửi ~6 POST liên tiếp thì chỉ POST đầu chạy thật.
+function triggerOptimizer(organizationId: string | null) {
+  after(async () => {
+    try {
+      await markDirty(organizationId)
+      await runAnalysis({ organizationId, trigger: 'webhook' })
+    } catch (e) {
+      console.error('[optimizer] webhook trigger failed:', e)
+    }
+  })
+}
 
 function secretMatches(received: string, expected: string): boolean {
   try {
@@ -239,6 +255,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
     await supabaseAdmin.from('sync_log').insert({ records: rows.length, status: 'success', message: 'campaign_metrics', organization_id: organizationId })
+    triggerOptimizer(organizationId)
     return NextResponse.json({ success: true, type: 'campaign_metrics', count: rows.length })
   }
 
@@ -330,6 +347,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
     await supabaseAdmin.from('sync_log').insert({ records: rows.length, status: 'success', message: 'segment_metrics', organization_id: organizationId })
+    triggerOptimizer(organizationId)
     return NextResponse.json({ success: true, type: 'segment_metrics', count: rows.length })
   }
 

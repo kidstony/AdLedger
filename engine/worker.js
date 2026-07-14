@@ -280,6 +280,8 @@ async function execute(cmd) {
       : cmd.type === 'discover' ? await handleDiscover(acct, cmd)
       : await handleFetch(acct, cmd.type === 'fetch_breakdown' ? 'breakdown' : 'revenue')
     await finish(cmd.id, r.ok ? 'done' : 'error', r.message)
+    // Vừa sync xong doanh thu/breakdown → hẹn ping Optimizer v2 (khi worker rảnh).
+    if (r.ok && (cmd.type === 'fetch' || cmd.type === 'fetch_breakdown')) noteSyncedForAnalyze()
     log.info(`${r.ok ? '✓' : '✗'} Lệnh ${cmd.type} ${acct.account_id}: ${r.message}`, acct.account_id)
   } catch (err) {
     await finish(cmd.id, 'error', err.message)
@@ -334,6 +336,47 @@ async function maybeAutoSync() {
   if (queued) log.info(`Auto-sync: đã xếp ${queued} lệnh (fetch + fetch_breakdown) cho các account đã kết nối.`)
 }
 
+// ── Ping Optimizer v2 (app Next.js) ─────────────────────────────────────────
+// Sau khi worker sync xong doanh thu → gọi POST /api/optimize/analyze để app
+// chạy phân tích (đột biến / đề xuất / phiếu test) trên dữ liệu VỪA thu. Ngoài
+// ra ping dự phòng mỗi ANALYZE_FALLBACK_HOURS (mặc định 6h) phòng khi webhook
+// Google Ads không chạy. App tự chống chạy trùng bằng claim lock 15 phút — ping
+// thừa vô hại. Cần APP_URL + ANALYZE_SECRET trong engine/.env (thiếu = tắt).
+const APP_URL = (process.env.APP_URL || '').trim().replace(/\/+$/, '')
+const ANALYZE_SECRET = (process.env.ANALYZE_SECRET || '').trim()
+const ANALYZE_MIN_GAP_MS = 10 * 60_000
+const ANALYZE_FALLBACK_MS = (Number(process.env.ANALYZE_FALLBACK_HOURS) || 6) * 3600_000
+// Mốc = lúc khởi động (không ping ngay khi boot — chưa có dữ liệu gì mới để phân tích);
+// ping thật sự bắn sau mỗi chu kỳ sync doanh thu, fallback mỗi ANALYZE_FALLBACK_HOURS.
+let lastAnalyzePing = Date.now()
+let syncedSinceAnalyze = false
+function noteSyncedForAnalyze() { syncedSinceAnalyze = true }
+async function maybeNotifyAnalyze(idle) {
+  if (!APP_URL || !ANALYZE_SECRET) return
+  const now = Date.now()
+  const due = (idle && syncedSinceAnalyze && now - lastAnalyzePing > ANALYZE_MIN_GAP_MS)
+    || (now - lastAnalyzePing > ANALYZE_FALLBACK_MS)
+  if (!due) return
+  lastAnalyzePing = now
+  syncedSinceAnalyze = false
+  try {
+    const res = await fetch(`${APP_URL}/api/optimize/analyze`, {
+      method: 'POST',
+      headers: { 'x-analyze-secret': ANALYZE_SECRET, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    if (res.status === 404) {
+      log.warn('Optimizer: app chưa có route /api/optimize/analyze (bản Optimizer v2 chưa deploy lên Vercel?) — sẽ thử lại ở chu kỳ sau.')
+    } else if (res.status === 403 || res.status === 401) {
+      log.warn('Optimizer: app từ chối ping (ANALYZE_SECRET hai bên không khớp?) — kiểm tra env trên Vercel và engine/.env.')
+    } else {
+      log.info(`Optimizer: ping phân tích → HTTP ${res.status}`)
+    }
+  } catch (e) {
+    log.warn(`Optimizer: ping phân tích lỗi: ${e.message}`)
+  }
+}
+
 async function main() {
   const logFile = initLogFile()
   // CHỈ 1 worker được chạy trên máy này. Thiết kế (inFlight, lastAutoCheck) đều in-memory
@@ -385,6 +428,7 @@ async function main() {
     try {
       await beat()
       await maybeAutoSync().catch((e) => log.warn(`auto-sync lỗi: ${e.message}`))
+      await maybeNotifyAnalyze(inFlight.size === 0).catch((e) => log.warn(`analyze ping lỗi: ${e.message}`))
       // Nạp đầy tối đa MAX_CONCURRENT lệnh song song. Mỗi account chỉ 1 lệnh cùng lúc (chung profile)
       // → loại account đang chạy khỏi lượt claim.
       while (inFlight.size < MAX_CONCURRENT) {

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getCallerProfile } from '@/lib/require-role'
+import { sendTelegramMessage } from '@/lib/telegram'
 
 export async function GET(req: Request) {
   const caller = await getCallerProfile(req)
@@ -76,10 +77,6 @@ export async function PUT(req: Request) {
   return NextResponse.json({ success: true })
 }
 
-export async function sendTelegramMessage(botToken: string, chatId: string, text: string) {
-  return fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
-  })
-}
+// sendTelegramMessage đã tách sang src/lib/telegram.ts (lib khác import không
+// nên kéo theo route file). Re-export để chỗ import cũ không vỡ.
+export { sendTelegramMessage }
